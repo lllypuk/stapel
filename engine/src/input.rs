@@ -70,12 +70,13 @@ mod tests {
     }
 
     #[test]
-    fn repeat_is_ignored() {
+    fn repeat_after_focus_return_is_not_a_press() {
         let mut i = Input::default();
         i.on_key(K, Pressed, false);
         i.end_tick();
+        i.focus_lost();
         i.on_key(K, Pressed, true);
-        assert!(!i.just_pressed(K));
+        assert!(!i.just_pressed(K) && !i.is_down(K));
     }
 
     #[test]

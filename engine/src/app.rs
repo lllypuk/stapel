@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
+use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
@@ -53,6 +53,7 @@ impl<G: Game> ApplicationHandler for App<G> {
         let clock = FixedClock::new(self.config.tick_hz, MAX_FRAME);
         let mut ctx = Context::new(clock.step());
         let game = G::init(&mut ctx);
+        window.request_redraw();
         self.running = Some(Running {
             window,
             renderer,
@@ -84,23 +85,17 @@ impl<G: Game> ApplicationHandler for App<G> {
                 }
             }
             WindowEvent::Focused(false) => r.ctx.input.focus_lost(),
-            WindowEvent::Resized(size) => r.renderer.resize(size),
+            WindowEvent::Resized(size) => {
+                r.renderer.resize(size);
+                r.resume_redraw();
+            }
+            WindowEvent::Occluded(occluded) => {
+                r.renderer.set_occluded(occluded);
+                r.resume_redraw();
+            }
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => r.frame(event_loop),
             _ => {}
-        }
-    }
-
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let Some(r) = self.running.as_ref() else {
-            return;
-        };
-        // Без поверхности `Poll` крутил бы пустой цикл; `Resized` разбудит `Wait`.
-        if r.renderer.is_available() {
-            event_loop.set_control_flow(ControlFlow::Poll);
-            r.window.request_redraw();
-        } else {
-            event_loop.set_control_flow(ControlFlow::Wait);
         }
     }
 }
@@ -128,6 +123,16 @@ impl<G: Game> Running<G> {
         }
         if let Some(tps) = self.tps.per_second() {
             self.ctx.time.tps = tps;
+        }
+        // Цикл стоит в `Wait`, и следующий кадр просим только отсюда: на Wayland с vsync winit
+        // отдаст его по сигналу композитора, а свёрнутому окну композитор кадров не даёт.
+        self.resume_redraw();
+    }
+
+    /// Цепочка кадров рвётся, пока поверхность недоступна; `Resized` и `Occluded` её возобновляют.
+    fn resume_redraw(&self) {
+        if self.renderer.is_available() {
+            self.window.request_redraw();
         }
     }
 }

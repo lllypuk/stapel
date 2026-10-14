@@ -28,6 +28,6 @@ pub struct Config {
 pub fn run<G: Game>(config: Config) -> Result<(), EventLoopError> {
     env_logger::init();
     let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run_app(&mut app::App::<G>::new(config))
 }

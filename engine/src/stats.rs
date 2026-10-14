@@ -18,15 +18,16 @@ impl RateCounter {
     /// Событие закрывает прошедшую секунду и уходит в счёт следующей.
     pub fn record(&mut self, now: Instant) {
         let start = *self.window_start.get_or_insert(now);
-        if now.duration_since(start) >= WINDOW {
-            self.report = Some(self.count);
+        let elapsed = now.duration_since(start);
+        if elapsed >= WINDOW {
+            self.report = Some((f64::from(self.count) / elapsed.as_secs_f64()).round() as u32);
             self.count = 0;
             self.window_start = Some(now);
         }
         self.count += 1;
     }
 
-    /// Число событий за последнюю закрытую секунду; отдаётся один раз.
+    /// Частота за последнее закрытое окно замера (не короче секунды); отдаётся один раз.
     pub fn per_second(&mut self) -> Option<u32> {
         self.report.take()
     }
@@ -49,6 +50,16 @@ mod tests {
         record_60(&mut c, t0);
         c.record(t0 + WINDOW);
         assert_eq!(c.per_second(), Some(60));
+    }
+
+    #[test]
+    fn longer_window_is_scaled_to_one_second() {
+        let t0 = Instant::now();
+        let mut c = RateCounter::new();
+        for i in 0..=5 {
+            c.record(t0 + Duration::from_millis(240) * i);
+        }
+        assert_eq!(c.per_second(), Some(4));
     }
 
     #[test]

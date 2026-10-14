@@ -14,7 +14,8 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    available: bool,
+    sized: bool,
+    occluded: bool,
 }
 
 /// Поверхность сломана так, что продолжать нельзя.
@@ -63,29 +64,37 @@ impl Renderer {
             device,
             queue,
             config,
-            available: false,
+            sized: false,
+            occluded: false,
         };
         renderer.resize(size);
         renderer
     }
 
-    /// Можно ли сейчас брать кадр; `false` у свёрнутого окна.
+    /// Можно ли сейчас брать кадр: у окна нет нулевой стороны и X11 не сообщил, что оно скрыто.
+    /// Свёрнутое окно на Wayland остаётся доступным: о сворачивании там не сообщают.
     pub fn is_available(&self) -> bool {
-        self.available
+        self.sized && !self.occluded
+    }
+
+    pub fn set_occluded(&mut self, occluded: bool) {
+        self.occluded = occluded;
     }
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
-        self.available = surface_available(size);
-        if self.available {
-            self.config.width = size.width;
-            self.config.height = size.height;
+        let max = self.device.limits().max_texture_dimension_2d;
+        let fitted = surface_size(size, max);
+        self.sized = fitted.is_some();
+        if let Some((w, h)) = fitted {
+            self.config.width = w;
+            self.config.height = h;
             self.surface.configure(&self.device, &self.config);
         }
     }
 
     /// `Ok(true)`, если кадр показан.
     pub fn render(&mut self, gfx: &Gfx) -> Result<bool, RenderError> {
-        if !self.available {
+        if !self.is_available() {
             return Ok(false);
         }
         let (frame, status) = split(self.surface.get_current_texture());
@@ -151,9 +160,9 @@ impl Renderer {
     }
 }
 
-/// wgpu паникует на `configure` с нулевой стороной.
-fn surface_available(size: PhysicalSize<u32>) -> bool {
-    size.width > 0 && size.height > 0
+/// Размер для `configure`: wgpu паникует на нулевой стороне и на стороне больше лимита устройства.
+fn surface_size(size: PhysicalSize<u32>, max: u32) -> Option<(u32, u32)> {
+    (size.width > 0 && size.height > 0).then(|| (size.width.min(max), size.height.min(max)))
 }
 
 /// `Color` линейный, поэтому нужна `*Srgb`-поверхность: она сама кодирует в sRGB.
@@ -226,10 +235,16 @@ mod tests {
 
     #[test]
     fn zero_side_makes_surface_unavailable() {
-        assert!(surface_available(PhysicalSize::new(800, 600)));
-        assert!(!surface_available(PhysicalSize::new(0, 600)));
-        assert!(!surface_available(PhysicalSize::new(800, 0)));
-        assert!(!surface_available(PhysicalSize::new(0, 0)));
+        assert_eq!(surface_size(PhysicalSize::new(800, 600), 8192), Some((800, 600)));
+        assert_eq!(surface_size(PhysicalSize::new(0, 600), 8192), None);
+        assert_eq!(surface_size(PhysicalSize::new(800, 0), 8192), None);
+        assert_eq!(surface_size(PhysicalSize::new(0, 0), 8192), None);
+    }
+
+    #[test]
+    fn size_is_clamped_to_device_limit() {
+        assert_eq!(surface_size(PhysicalSize::new(10240, 2880), 8192), Some((8192, 2880)));
+        assert_eq!(surface_size(PhysicalSize::new(800, 9000), 8192), Some((800, 8192)));
     }
 
     #[test]

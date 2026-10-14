@@ -57,6 +57,7 @@ mod tests {
         step_frame(&mut game, &mut ctx, &mut clock, step * 3);
         assert_eq!(game.index, 1);
 
+        ctx.input.focus_lost();
         ctx.input.on_key(KeyCode::Space, Pressed, true);
         step_frame(&mut game, &mut ctx, &mut clock, step * 3);
         step_frame(&mut game, &mut ctx, &mut clock, step * 3);
