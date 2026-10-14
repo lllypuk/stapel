@@ -8,6 +8,7 @@ pub mod renderer;
 pub mod sprite;
 pub mod sprite_pipeline;
 pub mod stats;
+pub mod text;
 
 pub use assets::{Assets, Font, Handle, PendingTexture, Texture, TextureKind};
 pub use camera::{Camera2D, Viewport, letterbox};
@@ -19,6 +20,7 @@ pub use renderer::{RenderError, Renderer};
 pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;
 pub use stats::RateCounter;
+pub use text::{FontData, Glyph};
 pub use winit::event::ElementState;
 pub use winit::keyboard::KeyCode;
 

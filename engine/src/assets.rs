@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
 use crate::frame::{linear_to_srgb, srgb_to_linear};
+use crate::text::{self, FontData};
 
 /// Индекс ресурса типа `T`; без поколения, пока индексы append-only.
 pub struct Handle<T> {
@@ -96,6 +97,8 @@ pub struct Assets {
     next_index: u32,
     pending: Vec<PendingTexture>,
     paths: HashMap<PathBuf, Handle<Texture>>,
+    fonts: Vec<FontData>,
+    font_keys: HashMap<(PathBuf, u32), Handle<Font>>,
 }
 
 impl Default for Assets {
@@ -104,6 +107,8 @@ impl Default for Assets {
             next_index: 0,
             pending: Vec::new(),
             paths: HashMap::new(),
+            fonts: Vec::new(),
+            font_keys: HashMap::new(),
         };
         assets.push(TextureKind::Color, 1, 1, vec![255; 4]);
         assets
@@ -135,11 +140,38 @@ impl Assets {
         handle
     }
 
+    /// Кэш по `(path, px)`: метрики зависят от размера. Ошибка — шрифт-заглушка без атласа и `warn`.
+    pub fn load_font(&mut self, path: impl AsRef<Path>, px: f32) -> Handle<Font> {
+        let path = path.as_ref();
+        let key = (path.to_path_buf(), px.to_bits());
+        if let Some(&h) = self.font_keys.get(&key) {
+            return h;
+        }
+        let raster = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|ttf| text::rasterize(&ttf, px).map_err(str::to_owned));
+        let font = match raster {
+            Ok(r) => FontData {
+                atlas: Some(self.add_coverage(r.width, r.height, &r.coverage)),
+                line_height: r.line_height,
+                glyphs: r.glyphs,
+            },
+            Err(e) => {
+                log::warn!("font {}: {e}", path.display());
+                FontData::stub(px)
+            }
+        };
+        let handle = Handle::new(self.fonts.len() as u32);
+        self.fonts.push(font);
+        self.font_keys.insert(key, handle);
+        handle
+    }
+
+    pub fn font(&self, handle: Handle<Font>) -> &FontData {
+        &self.fonts[handle.index as usize]
+    }
+
     /// Текстура покрытия из байта на texel: белый, уже премультиплицированный.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "атлас шрифта появится в Task 4")
-    )]
     pub(crate) fn add_coverage(
         &mut self,
         width: u32,
@@ -322,6 +354,63 @@ mod tests {
         let b = assets.load_texture(&path);
         assert_eq!(a, b);
         assert!(assets.take_pending().is_empty());
+    }
+
+    const FONT: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../assets/fonts/JetBrainsMono-Regular.ttf"
+    );
+
+    #[test]
+    fn font_has_printable_ascii_in_coverage_atlas() {
+        let mut assets = Assets::default();
+        let h = assets.load_font(FONT, 32.0);
+        let t = assets.take_pending().pop().unwrap();
+        let font = assets.font(h);
+        assert_eq!((Some(t.handle), t.kind), (font.atlas, TextureKind::Coverage));
+        for c in ' '..='~' {
+            let g = font.glyph(c).unwrap();
+            assert!(g.advance > 0.0, "{c:?}");
+            assert_eq!(g.width == 0.0, c == ' ', "{c:?}");
+        }
+        assert!(font.line_height > 32.0);
+    }
+
+    #[test]
+    fn font_is_cached_by_path_and_px() {
+        let mut assets = Assets::default();
+        let a = assets.load_font(FONT, 32.0);
+        let b = assets.load_font(FONT, 32.0);
+        let small = assets.load_font(FONT, 16.0);
+        assert_eq!(a, b);
+        assert_ne!(a, small);
+        assert_eq!(assets.take_pending().len(), 3);
+        let (big, small) = (assets.font(a), assets.font(small));
+        assert_ne!(big.atlas, small.atlas);
+        assert!(big.glyph('M').unwrap().advance > small.glyph('M').unwrap().advance);
+        assert!(big.line_height > small.line_height);
+    }
+
+    #[test]
+    fn missing_font_gives_stub_without_atlas() {
+        let mut assets = Assets::default();
+        let h = assets.load_font(temp_path("missing.ttf"), 10.0);
+        assert_eq!(assets.take_pending().len(), 1);
+        let font = assets.font(h);
+        assert_eq!(font.atlas, None);
+        assert_eq!(font.line_height, 12.0);
+        let g = font.glyph('A').unwrap();
+        assert_eq!((g.width, g.height, g.advance), (5.0, 7.0, 6.0));
+    }
+
+    #[test]
+    fn broken_font_gives_stub() {
+        let path = temp_path("broken.ttf");
+        std::fs::write(&path, b"not a font").unwrap();
+        let mut assets = Assets::default();
+        let h = assets.load_font(&path, 10.0);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(assets.font(h).atlas, None);
     }
 
     #[test]

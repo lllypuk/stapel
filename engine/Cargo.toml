@@ -12,3 +12,4 @@ env_logger.workspace = true
 glam.workspace = true
 bytemuck.workspace = true
 image.workspace = true
+fontdue.workspace = true
