@@ -82,11 +82,11 @@
 - Create: `clippy.toml`
 - Modify: `Cargo.toml`, `engine/Cargo.toml`, `engine/src/**/*.rs`
 
-- [ ] `[workspace.lints]` по Technical Details; `[lints] workspace = true` — пока только `engine`
-- [ ] исправить срабатывания движка: касты с усечением и знаком — проверенными преобразованиями или `#[expect]` с причиной; `# Panics`/`# Errors` в доках; `frame.rs:78` `allow` → `expect` с причиной; длинные функции `sprite_pipeline` — разбить или `#[expect(too_many_lines, reason)]`
-- [ ] существующие тесты не меняют ожиданий — поведение то же
-- [ ] проверка ворот: `dbg!` и `.unwrap()` вне теста роняют clippy
-- [ ] `make check` — зелёный
+- [x] `[workspace.lints]` по Technical Details; `[lints] workspace = true` — пока только `engine`
+- [x] исправить срабатывания движка: касты с усечением и знаком — проверенными преобразованиями или `#[expect]` с причиной; `# Panics`/`# Errors` в доках; `frame.rs:78` `allow` → `expect` с причиной; длинные функции `sprite_pipeline` — разбить или `#[expect(too_many_lines, reason)]`
+- [x] существующие тесты не меняют ожиданий — поведение то же
+- [x] проверка ворот: `dbg!` и `.unwrap()` вне теста роняют clippy
+- [x] `make check` — зелёный
 
 ### Task 3: Линты — игры
 

@@ -38,6 +38,9 @@ pub struct Config {
 }
 
 /// Открывает окно и крутит игру `G` до закрытия.
+///
+/// # Errors
+/// Если не создался или упал цикл событий `winit`.
 pub fn run<G: Game>(config: Config) -> Result<(), EventLoopError> {
     env_logger::init();
     let event_loop = EventLoop::new()?;

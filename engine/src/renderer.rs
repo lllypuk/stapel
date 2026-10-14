@@ -32,6 +32,8 @@ impl fmt::Display for RenderError {
 impl std::error::Error for RenderError {}
 
 impl Renderer {
+    /// # Panics
+    /// Без поверхности, адаптера, устройства или sRGB-формата поверхности.
     pub fn new(window: Arc<Window>, vsync: bool) -> Self {
         let instance = wgpu::Instance::new(
             wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(window.clone())),
@@ -101,6 +103,12 @@ impl Renderer {
     }
 
     /// `Ok(true)`, если кадр показан.
+    ///
+    /// # Errors
+    /// Ошибка валидации поверхности.
+    ///
+    /// # Panics
+    /// Если не пересоздалась потерянная поверхность.
     pub fn render(&mut self, gfx: &Gfx, assets: &mut Assets) -> Result<bool, RenderError> {
         // До проверки поверхности: иначе текстуры, загруженные при свёрнутом окне, ждали бы его показа.
         self.sprites.upload(assets);
@@ -108,7 +116,7 @@ impl Renderer {
             return Ok(false);
         }
         let (frame, status) = split(self.surface.get_current_texture());
-        match (action(status), frame) {
+        match (action(&status), frame) {
             (Action::Draw { reconfigure }, Some(frame)) => {
                 self.draw(frame, gfx);
                 if reconfigure {
@@ -161,12 +169,12 @@ fn surface_size(size: PhysicalSize<u32>, max: u32) -> Option<(u32, u32)> {
 
 /// `Color` линейный, поэтому нужна `*Srgb`-поверхность: она сама кодирует в sRGB.
 fn pick_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu::TextureFormat> {
-    formats.iter().copied().find(|f| f.is_srgb())
+    formats.iter().copied().find(wgpu::TextureFormat::is_srgb)
 }
 
 /// Тот же выбор, что у `AutoVsync`/`AutoNoVsync`, но явный, чтобы в лог попал настоящий режим.
 fn pick_present_mode(vsync: bool, modes: &[wgpu::PresentMode]) -> wgpu::PresentMode {
-    use wgpu::PresentMode::*;
+    use wgpu::PresentMode::{Fifo, FifoRelaxed, Immediate, Mailbox};
     let preferred: &[wgpu::PresentMode] = if vsync {
         &[FifoRelaxed, Fifo]
     } else {
@@ -204,7 +212,7 @@ fn split(cur: wgpu::CurrentSurfaceTexture) -> (Option<wgpu::SurfaceTexture>, wgp
     }
 }
 
-fn action(status: wgpu::SurfaceStatus) -> Action {
+fn action(status: &wgpu::SurfaceStatus) -> Action {
     use wgpu::SurfaceStatus as S;
     match status {
         S::Good => Action::Draw { reconfigure: false },
@@ -248,13 +256,13 @@ mod tests {
 
     #[test]
     fn status_to_action() {
-        assert_eq!(action(S::Good), Action::Draw { reconfigure: false });
-        assert_eq!(action(S::Suboptimal), Action::Draw { reconfigure: true });
-        assert_eq!(action(S::Timeout), Action::Skip);
-        assert_eq!(action(S::Occluded), Action::Skip);
-        assert_eq!(action(S::Outdated), Action::Reconfigure);
-        assert_eq!(action(S::Lost), Action::Recreate);
-        assert_eq!(action(S::Validation), Action::Fail);
+        assert_eq!(action(&S::Good), Action::Draw { reconfigure: false });
+        assert_eq!(action(&S::Suboptimal), Action::Draw { reconfigure: true });
+        assert_eq!(action(&S::Timeout), Action::Skip);
+        assert_eq!(action(&S::Occluded), Action::Skip);
+        assert_eq!(action(&S::Outdated), Action::Reconfigure);
+        assert_eq!(action(&S::Lost), Action::Recreate);
+        assert_eq!(action(&S::Validation), Action::Fail);
     }
 
     #[test]

@@ -4,6 +4,17 @@ use crate::app::MAX_FRAME;
 
 const WINDOW: Duration = Duration::from_secs(1);
 
+/// Округлённое число событий в секунду.
+fn per_second(count: u32, elapsed: Duration) -> u32 {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "elapsed ≥ WINDOW = 1 с, значит частота в [0, count]"
+    )]
+    let rate = (f64::from(count) / elapsed.as_secs_f64()).round() as u32;
+    rate
+}
+
 /// Счётчик событий в секунду (FPS, TPS).
 #[derive(Default)]
 pub struct RateCounter {
@@ -22,7 +33,7 @@ impl RateCounter {
         let start = *self.window_start.get_or_insert(now);
         let elapsed = now.duration_since(start);
         if elapsed >= WINDOW {
-            self.report = Some((f64::from(self.count) / elapsed.as_secs_f64()).round() as u32);
+            self.report = Some(per_second(self.count, elapsed));
             self.count = 0;
             self.window_start = Some(now);
         }
@@ -82,7 +93,7 @@ impl FrameStats {
         let elapsed = now.duration_since(start);
         if elapsed >= WINDOW {
             self.report = Some(FrameReport {
-                fps: (f64::from(self.count) / elapsed.as_secs_f64()).round() as u32,
+                fps: per_second(self.count, elapsed),
                 worst: self.worst,
                 min_sprites: self.min_sprites,
                 max_sprites: self.max_sprites,

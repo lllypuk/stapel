@@ -58,7 +58,7 @@ mod tests {
         let mut c = clock();
         let a = c.step() / 3;
         assert_eq!(c.advance(a), 0);
-        assert_eq!(c.advance(c.step() - a), 1);
+        assert_eq!(c.advance(c.step().checked_sub(a).unwrap()), 1);
         assert_eq!(c.advance(Duration::ZERO), 0);
     }
 
@@ -66,11 +66,14 @@ mod tests {
     fn long_frame_is_clamped_and_keeps_remainder() {
         let mut c = clock();
         let step = c.step();
-        let expected = (MAX_FRAME.as_nanos() / step.as_nanos()) as u32;
+        let expected = u32::try_from(MAX_FRAME.as_nanos() / step.as_nanos()).unwrap();
         assert_eq!(c.advance(Duration::from_secs(1)), expected);
-        let remainder = MAX_FRAME - step * expected;
+        let remainder = MAX_FRAME.checked_sub(step * expected).unwrap();
         assert!(remainder > Duration::ZERO);
-        assert_eq!(c.advance(step - remainder - Duration::from_nanos(1)), 0);
+        let rest = step
+            .checked_sub(remainder + Duration::from_nanos(1))
+            .unwrap();
+        assert_eq!(c.advance(rest), 0);
         assert_eq!(c.advance(Duration::from_nanos(1)), 1);
     }
 

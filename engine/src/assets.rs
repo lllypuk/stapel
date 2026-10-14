@@ -161,6 +161,10 @@ impl Assets {
                 FontData::stub(px)
             }
         };
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "u32::MAX шрифтов не поместится в память"
+        )]
         let handle = Handle::new(self.fonts.len() as u32);
         self.fonts.push(font);
         self.font_keys.insert(key, handle);
@@ -353,7 +357,7 @@ mod tests {
         assert_eq!(assets.take_pending().len(), 2);
         let b = assets.load_texture(&path);
         assert_eq!(a, b);
-        assert!(assets.take_pending().is_empty());
+        assert_eq!(assets.take_pending().len(), 0);
     }
 
     const FONT: &str = concat!(
@@ -420,6 +424,6 @@ mod tests {
     fn take_pending_drains_queue() {
         let mut assets = Assets::default();
         assert_eq!(assets.take_pending().len(), 1);
-        assert!(assets.take_pending().is_empty());
+        assert_eq!(assets.take_pending().len(), 0);
     }
 }

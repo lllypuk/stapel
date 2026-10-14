@@ -2,6 +2,10 @@ use super::Entity;
 
 const NONE: u32 = u32::MAX;
 
+fn to_u32(i: usize) -> u32 {
+    u32::try_from(i).expect("больше u32::MAX компонентов одного типа")
+}
+
 /// Плотное хранилище компонента `T`, индексируемое слотом сущности.
 pub struct SparseSet<T> {
     sparse: Vec<u32>,
@@ -57,7 +61,7 @@ impl<T> SparseSet<T> {
         }
         match self.sparse[slot] {
             NONE => {
-                self.sparse[slot] = self.dense.len() as u32;
+                self.sparse[slot] = to_u32(self.dense.len());
                 self.dense.push(value);
                 self.entities.push(e);
             }
@@ -73,7 +77,7 @@ impl<T> SparseSet<T> {
         let value = self.dense.swap_remove(i);
         self.entities.swap_remove(i);
         if let Some(moved) = self.entities.get(i) {
-            self.sparse[moved.index as usize] = i as u32;
+            self.sparse[moved.index as usize] = to_u32(i);
         }
         self.sparse[e.index as usize] = NONE;
         Some(value)
