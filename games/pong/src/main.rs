@@ -222,7 +222,6 @@ impl Game for Pong {
 }
 
 fn main() -> Result<(), engine::EventLoopError> {
-    let _ = Some(1).unwrap();
     engine::run::<Pong>(Config {
         title: "pong".into(),
         size: (1280, 720),
