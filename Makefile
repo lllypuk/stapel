@@ -1,6 +1,6 @@
 GAMES := $(notdir $(wildcard games/*))
 
-.PHONY: $(GAMES) test lint
+.PHONY: $(GAMES) test lint check
 
 # make pong; make pong NO_VSYNC=1
 $(GAMES):
@@ -11,3 +11,7 @@ test:
 
 lint:
 	cargo clippy --workspace --all-targets -- -D warnings
+
+check:
+	cargo fmt --all --check
+	$(MAKE) lint test

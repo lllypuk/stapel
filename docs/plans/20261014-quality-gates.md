@@ -69,11 +69,12 @@
 - Create: `rust-toolchain.toml`
 - Modify: `Makefile`
 
-- [ ] `rust-toolchain.toml`: `1.99.0`, компоненты `clippy`, `rustfmt`, `llvm-tools`
-- [ ] `cargo install cargo-binstall`, `~/.cargo/bin` в `PATH`; `cargo binstall cargo-llvm-cov cargo-mutants cargo-deny cargo-machete typos-cli`; версии записать в план
-- [ ] `make check` = `cargo fmt --all --check` + существующие clippy и тесты
-- [ ] проверка ворот: неотформатированная строка роняет `make check`
-- [ ] `make check` — зелёный
+- [x] `rust-toolchain.toml`: `1.99.0`, компоненты `clippy`, `rustfmt`, `llvm-tools`
+- [x] `cargo install cargo-binstall`, `~/.cargo/bin` в `PATH`; `cargo binstall cargo-llvm-cov cargo-mutants cargo-deny cargo-machete typos-cli`; версии записать в план
+  - версии: cargo-binstall 1.25.3, cargo-llvm-cov 0.9.1, cargo-mutants 27.1.0, cargo-deny 0.20.2, cargo-machete 0.9.2, typos-cli 1.51.1
+- [x] `make check` = `cargo fmt --all --check` + существующие clippy и тесты
+- [x] проверка ворот: неотформатированная строка роняет `make check`
+- [x] `make check` — зелёный
 
 ### Task 2: Линты — конфигурация и движок
 
