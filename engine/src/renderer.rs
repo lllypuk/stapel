@@ -53,7 +53,12 @@ impl Renderer {
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .expect("surface not supported by adapter");
-        config.format = pick_format(&caps.formats).expect("surface has no formats");
+        config.format = pick_format(&caps.formats).unwrap_or_else(|| {
+            panic!(
+                "surface has no sRGB format, linear colors would come out dark: {:?}",
+                caps.formats
+            )
+        });
         config.present_mode = pick_present_mode(vsync, &caps.present_modes);
         log::info!("surface: {:?}, {:?}", config.format, config.present_mode);
 
@@ -167,11 +172,7 @@ fn surface_size(size: PhysicalSize<u32>, max: u32) -> Option<(u32, u32)> {
 
 /// `Color` линейный, поэтому нужна `*Srgb`-поверхность: она сама кодирует в sRGB.
 fn pick_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu::TextureFormat> {
-    formats
-        .iter()
-        .copied()
-        .find(|f| f.is_srgb())
-        .or(formats.first().copied())
+    formats.iter().copied().find(|f| f.is_srgb())
 }
 
 /// Тот же выбор, что у `AutoVsync`/`AutoNoVsync`, но явный, чтобы в лог попал настоящий режим.
@@ -259,12 +260,12 @@ mod tests {
     }
 
     #[test]
-    fn prefers_srgb_format() {
+    fn picks_only_srgb_format() {
         assert_eq!(
             pick_format(&[F::Bgra8Unorm, F::Bgra8UnormSrgb]),
             Some(F::Bgra8UnormSrgb)
         );
-        assert_eq!(pick_format(&[F::Rgba16Float]), Some(F::Rgba16Float));
+        assert_eq!(pick_format(&[F::Rgba16Float, F::Bgra8Unorm]), None);
         assert_eq!(pick_format(&[]), None);
     }
 

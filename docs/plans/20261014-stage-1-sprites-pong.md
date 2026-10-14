@@ -49,11 +49,11 @@
 **Files:**
 - Modify: `Cargo.toml`, `engine/Cargo.toml`, `engine/src/renderer.rs`, `engine/src/lib.rs`
 
-- [ ] `glam`, `bytemuck` (`derive`), `image` (`default-features = false`, `png`) в `[workspace.dependencies]` и `engine`
-- [ ] переписать тест `prefers_srgb_format`: без sRGB-форматов → `None` (сейчас закрепляет `Rgba16Float → Some`)
-- [ ] `pick_format` — только `is_srgb()`; `Renderer::new` паникует с сообщением
-- [ ] `pub use glam::{Vec2, vec2}` в `engine`
-- [ ] тесты и clippy — зелёные
+- [x] `glam`, `bytemuck` (`derive`), `image` (`default-features = false`, `png`) в `[workspace.dependencies]` и `engine`
+- [x] переписать тест `prefers_srgb_format`: без sRGB-форматов → `None` (сейчас закрепляет `Rgba16Float → Some`)
+- [x] `pick_format` — только `is_srgb()`; `Renderer::new` паникует с сообщением
+- [x] `pub use glam::{Vec2, vec2}` в `engine`
+- [x] тесты и clippy — зелёные
 
 ### Task 2: Камера и letterbox
 

@@ -6,6 +6,7 @@ pub mod renderer;
 pub mod stats;
 
 pub use clock::FixedClock;
+pub use glam::{Vec2, vec2};
 pub use frame::{Color, Context, Game, Gfx, Time, step_frame};
 pub use input::Input;
 pub use renderer::{RenderError, Renderer};

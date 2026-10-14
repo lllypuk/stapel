@@ -9,3 +9,6 @@ wgpu.workspace = true
 pollster.workspace = true
 log.workspace = true
 env_logger.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+image.workspace = true
