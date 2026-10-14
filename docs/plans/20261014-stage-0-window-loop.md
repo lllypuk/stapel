@@ -135,11 +135,11 @@ games/clear-color/src/main.rs
 **Files:**
 - Modify: `games/clear-color/src/main.rs`
 
-- [ ] тест через `step_frame`: `Space` нажат перед кадром на 3 тика → цвет сменился ровно один раз; удержание на следующих кадрах цвет не меняет
-- [ ] палитра из нескольких цветов, `Space` → следующий
-- [ ] раз в секунду `log::info!` с FPS и TPS
-- [ ] `vsync` из переменной окружения: `NO_VSYNC=1` выключает
-- [ ] `cargo test` — зелёный
+- [x] тест через `step_frame`: `Space` нажат перед кадром на 3 тика → цвет сменился ровно один раз; удержание на следующих кадрах цвет не меняет
+- [x] палитра из нескольких цветов, `Space` → следующий
+- [x] раз в секунду `log::info!` с FPS и TPS
+- [x] `vsync` из переменной окружения: `NO_VSYNC=1` выключает
+- [x] `cargo test` — зелёный
 
 ### Task 9: Verify acceptance criteria
 - [ ] `cargo test --workspace` и `cargo clippy --workspace -- -D warnings`

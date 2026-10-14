@@ -10,6 +10,7 @@ pub use frame::{Color, Context, Game, Gfx, Time, step_frame};
 pub use input::Input;
 pub use renderer::{RenderError, Renderer};
 pub use stats::RateCounter;
+pub use winit::event::ElementState;
 pub use winit::keyboard::KeyCode;
 
 use winit::event_loop::{ControlFlow, EventLoop};
