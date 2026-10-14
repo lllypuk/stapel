@@ -73,10 +73,20 @@ impl<T> fmt::Debug for Handle<T> {
     }
 }
 
+/// Вид текстуры: от него зависят формат и сэмплер на GPU.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextureKind {
+    /// `Rgba8UnormSrgb`, сэмплер `Nearest`.
+    Color,
+    /// Линейное покрытие `[c, c, c, c]`: `Rgba8Unorm`, сэмплер `Linear`.
+    Coverage,
+}
+
 /// Декодированная текстура, ждущая заливки на GPU; `rgba` премультиплицирован.
 #[derive(Debug, PartialEq)]
 pub struct PendingTexture {
     pub handle: Handle<Texture>,
+    pub kind: TextureKind,
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
@@ -95,7 +105,7 @@ impl Default for Assets {
             pending: Vec::new(),
             paths: HashMap::new(),
         };
-        assets.push(1, 1, vec![255; 4]);
+        assets.push(TextureKind::Color, 1, 1, vec![255; 4]);
         assets
     }
 }
@@ -113,16 +123,32 @@ impl Assets {
                 let (w, h) = img.dimensions();
                 let mut rgba = img.into_raw();
                 premultiply(&mut rgba);
-                self.push(w, h, rgba)
+                self.push(TextureKind::Color, w, h, rgba)
             }
             Err(e) => {
                 log::warn!("texture {}: {e}", path.display());
                 let (w, h, rgba) = checkerboard();
-                self.push(w, h, rgba)
+                self.push(TextureKind::Color, w, h, rgba)
             }
         };
         self.paths.insert(path.to_path_buf(), handle);
         handle
+    }
+
+    /// Текстура покрытия из байта на texel: белый, уже премультиплицированный.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "атлас шрифта появится в Task 4")
+    )]
+    pub(crate) fn add_coverage(
+        &mut self,
+        width: u32,
+        height: u32,
+        coverage: &[u8],
+    ) -> Handle<Texture> {
+        assert_eq!(coverage.len(), (width * height) as usize);
+        let rgba = coverage.iter().flat_map(|&c| [c; 4]).collect();
+        self.push(TextureKind::Coverage, width, height, rgba)
     }
 
     /// Забирает всё, что накопилось с прошлого вызова.
@@ -130,11 +156,18 @@ impl Assets {
         std::mem::take(&mut self.pending)
     }
 
-    fn push(&mut self, width: u32, height: u32, rgba: Vec<u8>) -> Handle<Texture> {
+    fn push(
+        &mut self,
+        kind: TextureKind,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) -> Handle<Texture> {
         let handle = Handle::new(self.next_index);
         self.next_index += 1;
         self.pending.push(PendingTexture {
             handle,
+            kind,
             width,
             height,
             rgba,
@@ -195,6 +228,7 @@ mod tests {
             pending,
             [PendingTexture {
                 handle: Handle::WHITE,
+                kind: TextureKind::Color,
                 width: 1,
                 height: 1,
                 rgba: vec![255; 4],
@@ -211,8 +245,23 @@ mod tests {
         let h = assets.load_texture(&path);
         std::fs::remove_file(&path).unwrap();
         let t = assets.take_pending().pop().unwrap();
-        assert_eq!((t.handle, t.width, t.height), (h, 2, 1));
+        assert_eq!(
+            (t.handle, t.kind, t.width, t.height),
+            (h, TextureKind::Color, 2, 1)
+        );
         assert_eq!(t.rgba, [188, 188, 188, 128, 255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn coverage_is_not_premultiplied() {
+        let mut assets = Assets::default();
+        let h = assets.add_coverage(2, 1, &[128, 255]);
+        let t = assets.take_pending().pop().unwrap();
+        assert_eq!(
+            (t.handle, t.kind, t.width, t.height),
+            (h, TextureKind::Coverage, 2, 1)
+        );
+        assert_eq!(t.rgba, [128, 128, 128, 128, 255, 255, 255, 255]);
     }
 
     #[test]

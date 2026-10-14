@@ -1,4 +1,4 @@
-use crate::{Assets, Gfx, Instance, Viewport, batch};
+use crate::{Assets, Gfx, Instance, TextureKind, Viewport, batch};
 
 /// Начальный размер буфера инстансов в байтах.
 const INITIAL_CAPACITY: u64 = 1024;
@@ -9,7 +9,8 @@ pub struct SpritePipeline {
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
     texture_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
+    nearest: wgpu::Sampler,
+    linear: wgpu::Sampler,
     camera_buf: wgpu::Buffer,
     camera_group: wgpu::BindGroup,
     /// Индекс — `Handle<Texture>::index`.
@@ -113,21 +114,24 @@ impl SpritePipeline {
                 resource: camera_buf.as_entire_binding(),
             }],
         });
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("sprite"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        let sampler = |label, filter| {
+            device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some(label),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                mag_filter: filter,
+                min_filter: filter,
+                ..Default::default()
+            })
+        };
 
         Self {
             device: device.clone(),
             queue: queue.clone(),
             pipeline,
             texture_layout,
-            sampler,
+            nearest: sampler("sprite nearest", wgpu::FilterMode::Nearest),
+            linear: sampler("sprite linear", wgpu::FilterMode::Linear),
             camera_buf,
             camera_group,
             textures: Vec::new(),
@@ -144,6 +148,10 @@ impl SpritePipeline {
                 self.textures.len(),
                 "texture handles must come from one Assets in order"
             );
+            let (format, sampler) = match t.kind {
+                TextureKind::Color => (wgpu::TextureFormat::Rgba8UnormSrgb, &self.nearest),
+                TextureKind::Coverage => (wgpu::TextureFormat::Rgba8Unorm, &self.linear),
+            };
             let size = wgpu::Extent3d {
                 width: t.width,
                 height: t.height,
@@ -155,7 +163,7 @@ impl SpritePipeline {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
@@ -181,7 +189,7 @@ impl SpritePipeline {
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                            resource: wgpu::BindingResource::Sampler(sampler),
                         },
                     ],
                 }));
@@ -431,6 +439,7 @@ mod tests {
         let half = load_png(&mut assets, "half", 1, 1, &[255, 255, 255, 128]);
         let top = load_png(&mut assets, "top", 1, 1, &[255, 0, 255, 255]);
         let bottom = load_png(&mut assets, "bottom", 1, 1, &[0, 255, 255, 255]);
+        let coverage = assets.add_coverage(1, 1, &[128]);
         assert!(top < bottom, "by texture alone bottom would be drawn last");
 
         let bg = Color {
@@ -476,6 +485,7 @@ mod tests {
         ));
         let tint = Color { a: 0.5, ..white };
         gfx.draw_sprite(sprite(half, vec2(24.0, 24.0), 12.0, tint, 0));
+        gfx.draw_sprite(sprite(coverage, vec2(35.0, 28.0), 6.0, tint, 0));
         let last = Color::from_srgb8(200, 100, 50);
         gfx.draw_sprite(sprite(Handle::WHITE, vec2(48.0, 16.0), 16.0, last, 2));
 
@@ -516,6 +526,13 @@ mod tests {
             &img,
             "double premultiply",
             (24, 24),
+            [over(bg.r), over(bg.g), over(bg.b)],
+        );
+        // Покрытие 128 — то же, что премультиплицированный белый с α = 128/255.
+        assert_pixel(
+            &img,
+            "coverage",
+            (35, 28),
             [over(bg.r), over(bg.g), over(bg.b)],
         );
 
