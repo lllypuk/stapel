@@ -183,10 +183,15 @@
 **Files:**
 - Create: `.gitlab-ci.yml`
 
-- [ ] переменные, стадии и кэш по Technical Details
-- [ ] расписание раз в неделю на `main` (`glab api -X POST projects/11/pipeline_schedules`)
-- [ ] push ветки: пайплайн зелёный; намеренная поломка (clippy) в отдельном коммите роняет `lint`, затем откат
-- [ ] ручной запуск расписания: `mutants` зелёный
+- [x] переменные, стадии и кэш по Technical Details
+  - префикс кэша — `ci-$CI_IMAGE_TAG`, а не `$CI_IMAGE`: в ключе нельзя `/`. `lint` и `coverage` идут и по расписанию — новые advisory ловятся без коммитов; `mutants` — `needs: []`
+  - раннер пробрасывает `/dev/dri`: офскрин-тест ушёл на Intel GPU хоста; `VK_DRIVER_FILES` на `lvp_icd.json` возвращает lavapipe. `RUST_TEST_NOCAPTURE=1` в `coverage` — адаптер виден в логе
+- [x] расписание раз в неделю на `main` (`glab api -X POST projects/11/pipeline_schedules`)
+  - id 1, `0 3 * * 1` UTC; для проверки ref был `quality-gates`, затем переключён на `main` — до слияния ветки там нет `.gitlab-ci.yml`
+- [x] push ветки: пайплайн зелёный; намеренная поломка (clippy) в отдельном коммите роняет `lint`, затем откат
+  - первый прогон без кэша 29 мин (сеть раннера медленная), с кэшем ~3 мин; `unwrap_used` в Pong — `lint` failed за 47 с, `coverage` skipped
+- [x] ручной запуск расписания: `mutants` зелёный
+  - 809 мутантов за 19 мин на раннере: 729 caught, 80 unviable
 
 ### Task 11: Verify acceptance criteria
 - [ ] `make check`, `make cov`, `make mutants` локально — зелёные
