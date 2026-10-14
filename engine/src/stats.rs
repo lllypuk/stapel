@@ -1,5 +1,7 @@
 use std::time::{Duration, Instant};
 
+use crate::app::MAX_FRAME;
+
 const WINDOW: Duration = Duration::from_secs(1);
 
 /// Счётчик событий в секунду (FPS, TPS).
@@ -25,6 +27,12 @@ impl RateCounter {
             self.window_start = Some(now);
         }
         self.count += 1;
+    }
+
+    /// Пауза: открытое окно отбрасывается, иначе частота после неё занижена.
+    pub fn reset(&mut self) {
+        self.window_start = None;
+        self.count = 0;
     }
 
     /// Частота за последнее закрытое окно замера (не короче секунды); отдаётся один раз.
@@ -65,6 +73,11 @@ impl FrameStats {
             return;
         };
         let interval = now.duration_since(last);
+        if interval > MAX_FRAME {
+            self.reset();
+            self.last = Some(now);
+            return;
+        }
         let start = *self.window_start.get_or_insert(now);
         let elapsed = now.duration_since(start);
         if elapsed >= WINDOW {
@@ -89,9 +102,13 @@ impl FrameStats {
         self.count += 1;
     }
 
-    /// Кадр без рендера: иначе следующий интервал включит паузу, например сворачивание.
+    /// Пауза в рендере: открытое окно отбрасывается, иначе его fps и `worst` включат паузу.
+    /// Интервал длиннее `MAX_FRAME` — тоже пауза: свёрнутое окно на Wayland не даёт `Ok(false)`.
     pub fn reset(&mut self) {
-        self.last = None;
+        *self = Self {
+            report: self.report.take(),
+            ..Self::default()
+        };
     }
 
     /// Итог последнего закрытого окна; отдаётся один раз.
@@ -116,6 +133,21 @@ mod tests {
         let mut c = RateCounter::new();
         record_60(&mut c, t0);
         c.record(t0 + WINDOW);
+        assert_eq!(c.per_second(), Some(60));
+    }
+
+    #[test]
+    fn reset_discards_open_window() {
+        let t0 = Instant::now();
+        let mut c = RateCounter::new();
+        for i in 0..30 {
+            c.record(t0 + Duration::from_secs(1) * i / 60);
+        }
+        c.reset();
+        let t1 = t0 + Duration::from_secs(10);
+        record_60(&mut c, t1);
+        assert_eq!(c.per_second(), None);
+        c.record(t1 + WINDOW);
         assert_eq!(c.per_second(), Some(60));
     }
 
@@ -208,17 +240,35 @@ mod tests {
     }
 
     #[test]
-    fn interval_after_reset_is_not_counted() {
+    fn reset_starts_fresh_window() {
         let t0 = Instant::now();
         let mut s = FrameStats::new();
         s.record(t0, 0);
-        let mut end = frames(&mut s, t0, 0, 50, 1);
+        let mut end = frames(&mut s, t0, 0, 30, 9_000);
         s.reset();
+        end += 10_000;
+        s.record(ms(t0, end), 1);
+        end = frames(&mut s, t0, end, 100, 1);
+        assert_eq!(s.report(), None);
+        s.record(ms(t0, end + 10), 1);
+        let r = s.report().unwrap();
+        assert_eq!((r.fps, r.worst), (100, Duration::from_millis(10)));
+        assert_eq!((r.min_sprites, r.max_sprites), (1, 1));
+    }
+
+    #[test]
+    fn long_interval_is_pause_without_reset() {
+        let t0 = Instant::now();
+        let mut s = FrameStats::new();
+        s.record(t0, 0);
+        let mut end = frames(&mut s, t0, 0, 30, 9_000);
         end += 5_000;
         s.record(ms(t0, end), 1);
-        end = frames(&mut s, t0, end, 1, 1);
-        assert_eq!(s.report().unwrap().worst, Duration::from_millis(10));
-        frames(&mut s, t0, end, 100, 1);
-        assert_eq!(s.report().unwrap().worst, Duration::from_millis(10));
+        end = frames(&mut s, t0, end, 100, 1);
+        assert_eq!(s.report(), None);
+        s.record(ms(t0, end + 10), 1);
+        let r = s.report().unwrap();
+        assert_eq!((r.fps, r.worst), (100, Duration::from_millis(10)));
+        assert_eq!((r.min_sprites, r.max_sprites), (1, 1));
     }
 }

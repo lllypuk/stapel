@@ -11,7 +11,7 @@ use winit::window::{Window, WindowId};
 use crate::{Config, Context, FixedClock, FrameStats, Game, RateCounter, Renderer, step_frame};
 
 /// Ниже 4 FPS симуляция замедляется, а не догоняет лавиной тиков.
-const MAX_FRAME: Duration = Duration::from_millis(250);
+pub(crate) const MAX_FRAME: Duration = Duration::from_millis(250);
 
 /// Склейка событий `winit` с `step_frame` и `Renderer`.
 pub(crate) struct App<G> {
@@ -106,6 +106,9 @@ impl<G: Game> Running<G> {
         let dt = now - self.last_frame;
         self.last_frame = now;
 
+        if dt > MAX_FRAME {
+            self.tps.reset();
+        }
         let ticks = step_frame(&mut self.game, &mut self.ctx, &mut self.clock, dt);
         for _ in 0..ticks {
             self.tps.record(now);
