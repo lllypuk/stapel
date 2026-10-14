@@ -221,9 +221,9 @@
 - [x] `make pong`, `make clear-color` работают как прежде
 
 ### Task 14: [Final] Update documentation
-- [ ] `README.md`: запуск и управление Asteroids; строка про лог `clear-color` — лог теперь пишет движок
-- [ ] сверить `CLAUDE.md` (ECS в игре, хэндлы, текст) и `docs/design.md` с итоговым кодом
-- [ ] перенести план в `docs/plans/completed/`
+- [x] `README.md`: запуск и управление Asteroids; строка про лог `clear-color` — лог теперь пишет движок
+- [x] сверить `CLAUDE.md` (ECS в игре, хэндлы, текст) и `docs/design.md` с итоговым кодом
+- [x] перенести план в `docs/plans/completed/`
 
 ## Post-Completion
 - Проверка глазами: читаемость текста при окнах, не кратных 640×360; отсутствие тёмной каймы у глифов и частиц.
