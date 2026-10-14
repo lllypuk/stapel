@@ -150,6 +150,6 @@
 - [x] `cargo run -p clear-color` работает как прежде
 
 ### Task 10: [Final] Update documentation
-- [ ] `README.md`: запуск Pong и управление
-- [ ] сверить `CLAUDE.md` и `docs/design.md` с итоговым кодом
-- [ ] перенести план в `docs/plans/completed/`
+- [x] `README.md`: запуск Pong и управление
+- [x] сверить `CLAUDE.md` и `docs/design.md` с итоговым кодом
+- [x] перенести план в `docs/plans/completed/`

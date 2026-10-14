@@ -6,6 +6,7 @@
 
 ```sh
 cargo test --workspace
+RUST_LOG=info cargo run -p pong                   # Pong на двоих: W/S — левая ракетка, ↑/↓ — правая
 RUST_LOG=info cargo run -p clear-color            # Space меняет цвет фона, в логе FPS и TPS
 NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color # без vsync
 ```

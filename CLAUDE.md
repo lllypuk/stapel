@@ -11,6 +11,7 @@ cargo test --workspace
 cargo test -p engine input::tests::focus_lost_clears_held_keys   # один тест
 cargo clippy --workspace --all-targets -- -D warnings
 RUST_LOG=info cargo run -p clear-color                            # в логе FPS/TPS раз в секунду
+RUST_LOG=info cargo run -p pong
 NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color
 ```
 
