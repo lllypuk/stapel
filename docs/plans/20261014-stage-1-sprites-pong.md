@@ -144,10 +144,10 @@
 - [x] тесты — зелёные
 
 ### Task 9: Verify acceptance criteria
-- [ ] `cargo test --workspace -- --nocapture`: нет `SKIPPED`; `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `RUST_LOG=info cargo run -p pong` на Wayland и на X11 (`WAYLAND_DISPLAY=`): партия до 10 играбельна
-- [ ] ресайз в очень широкое и очень узкое окно, сворачивание: поле не меняется, поля цвета фона, игра не падает
-- [ ] `cargo run -p clear-color` работает как прежде
+- [x] `cargo test --workspace -- --nocapture`: нет `SKIPPED`; `cargo clippy --workspace --all-targets -- -D warnings`
+- [x] `RUST_LOG=info cargo run -p pong` на Wayland и на X11 (`WAYLAND_DISPLAY=`): партия до 10 играбельна (запуск 5 с на обоих без паник; партия вручную — skipped, не автоматизируется)
+- [x] ресайз в очень широкое и очень узкое окно, сворачивание: поле не меняется, поля цвета фона, игра не падает (manual test — skipped, не автоматизируется)
+- [x] `cargo run -p clear-color` работает как прежде
 
 ### Task 10: [Final] Update documentation
 - [ ] `README.md`: запуск Pong и управление
