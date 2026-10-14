@@ -75,7 +75,10 @@ impl SpritePipeline {
                     attributes: &wgpu::vertex_attr_array![
                         0 => Float32x2,
                         1 => Float32x2,
-                        2 => Float32x4,
+                        2 => Float32x2,
+                        3 => Float32x2,
+                        4 => Float32x2,
+                        5 => Float32x4,
                     ],
                 })],
             },
@@ -261,7 +264,7 @@ fn grow_capacity(current: u64, needed: u64) -> Option<u64> {
 mod tests {
     use super::*;
     use crate::frame::linear_to_srgb;
-    use crate::{Camera2D, Color, Sprite, TextureId, Vec2, vec2};
+    use crate::{Camera2D, Color, Rect, Sprite, TextureId, Vec2, vec2};
 
     const SIZE: u32 = 64;
     const TOL: u8 = 2;
@@ -313,6 +316,7 @@ mod tests {
             size: Vec2::splat(size),
             color,
             layer,
+            ..Default::default()
         }
     }
 
@@ -414,6 +418,16 @@ mod tests {
                 0, 0, 255, 255, 255, 255, 0, 255,
             ],
         );
+        let strip = load_png(
+            &mut assets,
+            "strip",
+            3,
+            2,
+            &[
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, //
+                255, 255, 0, 255, 0, 255, 255, 255, 255, 0, 255, 255,
+            ],
+        );
         let half = load_png(&mut assets, "half", 1, 1, &[255, 255, 255, 128]);
         let top = load_png(&mut assets, "top", 1, 1, &[255, 0, 255, 255]);
         let bottom = load_png(&mut assets, "bottom", 1, 1, &[0, 255, 255, 255]);
@@ -433,12 +447,7 @@ mod tests {
             },
             sprites: Vec::new(),
         };
-        let white = Color {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 1.0,
-        };
+        let white = Color::WHITE;
 
         // Заполнитель в нижнем слое: все проверяемые батчи начинаются за начальной ёмкостью.
         let filler = 40;
@@ -470,12 +479,30 @@ mod tests {
         let last = Color::from_srgb8(200, 100, 50);
         gfx.draw_sprite(sprite(TextureId::WHITE, vec2(48.0, 16.0), 16.0, last, 2));
 
+        // Снизу слева: квад 12×24 на 90° против часовой лежит 24×12, фрагмент — правые 2×2 texel'а.
+        gfx.draw_sprite(Sprite {
+            texture: strip,
+            pos: vec2(16.0, 7.0),
+            size: vec2(12.0, 24.0),
+            rotation: std::f32::consts::FRAC_PI_2,
+            uv: Rect {
+                min: vec2(1.0 / 3.0, 0.0),
+                max: Vec2::ONE,
+            },
+            ..Default::default()
+        });
+
         let img = render(&device, &queue, &mut assets, &gfx);
 
         assert_pixel(&img, "uv top-left", (8, 56), [255, 0, 0]);
         assert_pixel(&img, "uv top-right", (24, 56), [0, 255, 0]);
         assert_pixel(&img, "uv bottom-left", (8, 40), [0, 0, 255]);
         assert_pixel(&img, "uv bottom-right", (24, 40), [255, 255, 0]);
+
+        assert_pixel(&img, "rotated uv bottom-left", (10, 4), [0, 255, 0]);
+        assert_pixel(&img, "rotated uv top-left", (10, 10), [0, 0, 255]);
+        assert_pixel(&img, "rotated uv bottom-right", (22, 4), [0, 255, 255]);
+        assert_pixel(&img, "rotated uv top-right", (22, 10), [255, 0, 255]);
 
         assert_pixel(&img, "layer overlap", (48, 48), [255, 0, 255]);
         assert_pixel(&img, "layer bottom only", (56, 40), [0, 255, 255]);

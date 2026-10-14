@@ -9,7 +9,11 @@ struct Camera {
 struct InstanceIn {
     @location(0) pos: vec2<f32>,
     @location(1) size: vec2<f32>,
-    @location(2) color: vec4<f32>,
+    // `[cos, sin]`.
+    @location(2) rotation: vec2<f32>,
+    @location(3) uv_min: vec2<f32>,
+    @location(4) uv_max: vec2<f32>,
+    @location(5) color: vec4<f32>,
 }
 
 struct VsOut {
@@ -24,12 +28,14 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: InstanceIn) -> VsOut {
         vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),
         vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(1.0, 1.0),
     );
-    let uv = corners[vi];
-    // UV растёт вниз, мир — вверх.
-    let local = vec2(uv.x - 0.5, 0.5 - uv.y);
+    let corner = corners[vi];
+    // Угол квада растёт вниз, как UV, мир — вверх.
+    let local = vec2(corner.x - 0.5, 0.5 - corner.y) * inst.size;
+    let r = inst.rotation;
+    let world = inst.pos + vec2(local.x * r.x - local.y * r.y, local.x * r.y + local.y * r.x);
     var out: VsOut;
-    out.clip = camera.view_proj * vec4(inst.pos + local * inst.size, 0.0, 1.0);
-    out.uv = uv;
+    out.clip = camera.view_proj * vec4(world, 0.0, 1.0);
+    out.uv = mix(inst.uv_min, inst.uv_max, corner);
     out.color = inst.color;
     return out;
 }

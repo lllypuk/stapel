@@ -1,8 +1,6 @@
 use std::f32::consts::{FRAC_PI_3, FRAC_PI_6};
 
-use engine::{
-    Camera2D, Color, Config, Context, Game, Input, KeyCode, Sprite, TextureId, Vec2, vec2,
-};
+use engine::{Camera2D, Config, Context, Game, Input, KeyCode, Sprite, TextureId, Vec2, vec2};
 
 const TICK_HZ: u32 = 60;
 const DT: f32 = 1.0 / TICK_HZ as f32;
@@ -147,11 +145,9 @@ impl Pong {
 
 fn quad(pos: Vec2, size: Vec2) -> Sprite {
     Sprite {
-        texture: TextureId::WHITE,
         pos,
         size,
-        color: Color::from_srgb8(255, 255, 255),
-        layer: 0,
+        ..Default::default()
     }
 }
 

@@ -16,7 +16,7 @@ pub use frame::{Color, Context, Game, Gfx, Time, step_frame};
 pub use glam::{Vec2, vec2};
 pub use input::Input;
 pub use renderer::{RenderError, Renderer};
-pub use sprite::{Batch, Instance, Sprite, batch};
+pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;
 pub use stats::RateCounter;
 pub use winit::event::ElementState;

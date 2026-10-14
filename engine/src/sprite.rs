@@ -5,15 +5,43 @@ use glam::Vec2;
 
 use crate::{Color, TextureId};
 
-/// Осевой прямоугольник с текстурой; `pos` — центр в мировых единицах.
+/// Прямоугольник от `min` до `max`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rect {
+    pub min: Vec2,
+    pub max: Vec2,
+}
+
+/// Прямоугольник с текстурой; `pos` — центр в мировых единицах.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sprite {
     pub texture: TextureId,
     pub pos: Vec2,
     pub size: Vec2,
+    /// Радианы, против часовой вокруг `pos`.
+    pub rotation: f32,
+    /// Доли текстуры, `(0, 0)` — левый верхний угол.
+    pub uv: Rect,
     /// Линейный, не премультиплицированный.
     pub color: Color,
     pub layer: i32,
+}
+
+impl Default for Sprite {
+    fn default() -> Self {
+        Self {
+            texture: TextureId::WHITE,
+            pos: Vec2::ZERO,
+            size: Vec2::ONE,
+            rotation: 0.0,
+            uv: Rect {
+                min: Vec2::ZERO,
+                max: Vec2::ONE,
+            },
+            color: Color::WHITE,
+            layer: 0,
+        }
+    }
 }
 
 /// Данные одного спрайта в буфере инстансов.
@@ -22,6 +50,10 @@ pub struct Sprite {
 pub struct Instance {
     pub pos: [f32; 2],
     pub size: [f32; 2],
+    /// `[cos, sin]` угла поворота.
+    pub rotation: [f32; 2],
+    pub uv_min: [f32; 2],
+    pub uv_max: [f32; 2],
     pub color: [f32; 4],
 }
 
@@ -38,6 +70,9 @@ impl From<&Sprite> for Instance {
         Self {
             pos: s.pos.into(),
             size: s.size.into(),
+            rotation: [s.rotation.cos(), s.rotation.sin()],
+            uv_min: s.uv.min.into(),
+            uv_max: s.uv.max.into(),
             color: [c.r as f32, c.g as f32, c.b as f32, c.a as f32],
         }
     }
@@ -74,9 +109,9 @@ mod tests {
         Sprite {
             texture: TextureId(texture),
             pos: vec2(x, 0.0),
-            size: Vec2::ONE,
             color: Color::BLACK,
             layer,
+            ..Default::default()
         }
     }
 
@@ -152,8 +187,38 @@ mod tests {
             [Instance {
                 pos: [5.0, 0.0],
                 size: [2.0, 3.0],
+                rotation: [1.0, 0.0],
+                uv_min: [0.0, 0.0],
+                uv_max: [1.0, 1.0],
                 color: [0.25, 0.5, 0.75, 0.125],
             }]
         );
+    }
+
+    #[test]
+    fn default_sprite_is_white_full_texture() {
+        let s = Sprite::default();
+        assert_eq!(s.texture, TextureId::WHITE);
+        assert_eq!(s.color, Color::WHITE);
+        assert_eq!(s.uv.min, Vec2::ZERO);
+        assert_eq!(s.uv.max, Vec2::ONE);
+        assert_eq!(s.rotation, 0.0);
+    }
+
+    #[test]
+    fn instance_carries_rotation_and_uv() {
+        let s = Sprite {
+            rotation: std::f32::consts::FRAC_PI_6,
+            uv: Rect {
+                min: vec2(0.25, 0.5),
+                max: vec2(0.75, 1.0),
+            },
+            ..Default::default()
+        };
+        let i = Instance::from(&s);
+        assert!((i.rotation[0] - 3f32.sqrt() / 2.0).abs() < 1e-6);
+        assert!((i.rotation[1] - 0.5).abs() < 1e-6);
+        assert_eq!(i.uv_min, [0.25, 0.5]);
+        assert_eq!(i.uv_max, [0.75, 1.0]);
     }
 }

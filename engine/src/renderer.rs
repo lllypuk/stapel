@@ -140,10 +140,7 @@ impl Renderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let viewport = letterbox(
-            (self.config.width, self.config.height),
-            gfx.camera.aspect(),
-        );
+        let viewport = letterbox((self.config.width, self.config.height), gfx.camera.aspect());
         self.sprites.draw(&mut encoder, &view, viewport, gfx);
         self.queue.submit([encoder.finish()]);
         // На Wayland это ограничивает `RedrawRequested` частотой монитора, даже без vsync.

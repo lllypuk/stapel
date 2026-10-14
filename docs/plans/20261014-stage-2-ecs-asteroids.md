@@ -90,12 +90,12 @@
 **Files:**
 - Modify: `engine/src/sprite.rs`, `engine/src/sprite.wgsl`, `engine/src/sprite_pipeline.rs`, `engine/src/frame.rs`, `engine/src/lib.rs`, `games/pong/src/main.rs`, `docs/design.md`
 
-- [ ] тесты: `Sprite::default()` — белый tint, uv `0..1`, `WHITE`; `Instance::from` — `cos/sin` поворота, `uv_min/uv_max`; `batch` не меняет поведение
-- [ ] `Rect`, поля `Sprite`, `Instance`, vertex attributes, `InstanceIn` и шейдер: геометрия от угла, UV отдельно
-- [ ] офскрин-тест: старые проверки сохранены; неквадратный спрайт, повёрнутый на 90°, с асимметричным UV-фрагментом — цвета в ожидаемых углах
-- [ ] Pong и литералы тестов — через `..Default::default()`
-- [ ] `docs/design.md`, «Рендер»: строка «Этап 1: осевой прямоугольник…» — поворот и UV-подпрямоугольник появились
-- [ ] тесты — зелёные
+- [x] тесты: `Sprite::default()` — белый tint, uv `0..1`, `WHITE`; `Instance::from` — `cos/sin` поворота, `uv_min/uv_max`; `batch` не меняет поведение
+- [x] `Rect`, поля `Sprite`, `Instance`, vertex attributes, `InstanceIn` и шейдер: геометрия от угла, UV отдельно
+- [x] офскрин-тест: старые проверки сохранены; неквадратный спрайт, повёрнутый на 90°, с асимметричным UV-фрагментом — цвета в ожидаемых углах
+- [x] Pong и литералы тестов — через `..Default::default()`
+- [x] `docs/design.md`, «Рендер»: строка «Этап 1: осевой прямоугольник…» — поворот и UV-подпрямоугольник появились
+- [x] тесты — зелёные
 
 ### Task 2: Хэндлы и кэш путей
 

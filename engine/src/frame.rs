@@ -18,6 +18,12 @@ impl Color {
         b: 0.0,
         a: 1.0,
     };
+    pub const WHITE: Color = Color {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    };
 
     /// Непрозрачный цвет из 8-битных sRGB-компонент.
     pub fn from_srgb8(r: u8, g: u8, b: u8) -> Self {
@@ -201,11 +207,8 @@ mod tests {
     fn previous_sprites_vanish_even_without_ticks() {
         let (mut g, mut ctx, mut clock, step) = setup();
         let s = Sprite {
-            texture: crate::TextureId::WHITE,
-            pos: Vec2::ZERO,
-            size: Vec2::ONE,
             color: Color::BLACK,
-            layer: 0,
+            ..Default::default()
         };
         ctx.gfx.draw_sprite(s);
         ctx.gfx.draw_sprite(s);
