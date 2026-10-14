@@ -1,14 +1,28 @@
+//! Учебный 2D-движок: окно, фиксированный тик, спрайты и текст через wgpu.
+#![deny(missing_docs)]
+
 mod app;
+/// Текстуры и шрифты по хэндлам.
 pub mod assets;
+/// Ортокамера и вписывание кадра в окно.
 pub mod camera;
+/// Фиксированный шаг симуляции.
 pub mod clock;
+/// Сущности, компоненты и отложенные команды.
 pub mod ecs;
+/// Контекст кадра, трейт `Game` и шаг кадра.
 pub mod frame;
+/// Клавиатура по тикам.
 pub mod input;
+/// Поверхность окна и рендер кадра.
 pub mod renderer;
+/// Спрайты и их батчинг в инстансы.
 pub mod sprite;
+/// GPU-путь спрайтов.
 pub mod sprite_pipeline;
+/// Счётчики FPS, TPS и времени кадра.
 pub mod stats;
+/// Растеризация шрифтов и раскладка строк в спрайты.
 pub mod text;
 
 pub use assets::{Assets, Font, Handle, PendingTexture, Texture, TextureKind};
@@ -30,10 +44,15 @@ use winit::event_loop::{ControlFlow, EventLoop};
 
 pub use winit::error::EventLoopError;
 
+/// Параметры окна и цикла для `run`.
 pub struct Config {
+    /// Заголовок окна.
     pub title: String,
+    /// Начальный размер окна в логических пикселях.
     pub size: (u32, u32),
+    /// Тиков `update` в секунду.
     pub tick_hz: u32,
+    /// `false` — показ кадров без ожидания vsync.
     pub vsync: bool,
 }
 

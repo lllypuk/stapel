@@ -8,6 +8,7 @@ pub struct FixedClock {
 }
 
 impl FixedClock {
+    /// Тик длиной `1 / tick_hz`; кадр длиннее `max_frame` засчитывается как `max_frame`.
     pub fn new(tick_hz: u32, max_frame: Duration) -> Self {
         Self {
             step: Duration::from_secs_f64(1.0 / f64::from(tick_hz)),
@@ -16,6 +17,7 @@ impl FixedClock {
         }
     }
 
+    /// Длина тика.
     pub fn step(&self) -> Duration {
         self.step
     }

@@ -15,18 +15,26 @@ fn to_u32(px: usize) -> u32 {
 /// Глиф шрифта; метрики в пикселях растеризации, Y вверх от baseline.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Glyph {
+    /// Область глифа в атласе.
     pub uv: Rect,
+    /// Сдвиг левого края от пера.
     pub xmin: f32,
+    /// Сдвиг нижнего края от baseline.
     pub ymin: f32,
+    /// Ширина битмапа.
     pub width: f32,
+    /// Высота битмапа.
     pub height: f32,
+    /// Сдвиг пера к следующему глифу.
     pub advance: f32,
 }
 
 /// Шрифт одного размера; `atlas == None` — заглушка, глифы рисуются текстурой `WHITE`.
 #[derive(Debug, PartialEq)]
 pub struct FontData {
+    /// Текстура покрытия со всеми глифами.
     pub atlas: Option<Handle<Texture>>,
+    /// Шаг строки в пикселях растеризации.
     pub line_height: f32,
     pub(crate) glyphs: Vec<Glyph>,
 }

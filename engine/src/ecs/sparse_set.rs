@@ -29,26 +29,32 @@ impl<T> SparseSet<T> {
         (i != NONE && self.entities[i as usize] == e).then_some(i as usize)
     }
 
+    /// Компонент `e`; `None`, если его нет.
     pub fn get(&self, e: Entity) -> Option<&T> {
         self.position(e).map(|i| &self.dense[i])
     }
 
+    /// Компонент `e` на запись.
     pub fn get_mut(&mut self, e: Entity) -> Option<&mut T> {
         self.position(e).map(|i| &mut self.dense[i])
     }
 
+    /// Пары сущность–компонент; порядок меняется при удалении.
     pub fn iter(&self) -> impl Iterator<Item = (Entity, &T)> {
         self.entities.iter().copied().zip(&self.dense)
     }
 
+    /// Пары сущность–компонент на запись.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (Entity, &mut T)> {
         self.entities.iter().copied().zip(&mut self.dense)
     }
 
+    /// Число компонентов.
     pub fn len(&self) -> usize {
         self.dense.len()
     }
 
+    /// Нет ни одного компонента.
     pub fn is_empty(&self) -> bool {
         self.dense.is_empty()
     }

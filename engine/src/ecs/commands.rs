@@ -17,10 +17,12 @@ impl Commands {
         self.spawns.push(Box::new(f));
     }
 
+    /// Удаляет `e` в `apply`; повтор — no-op.
     pub fn despawn(&mut self, e: Entity) {
         self.despawns.insert(e);
     }
 
+    /// Поставлена ли `e` на удаление.
     pub fn is_pending(&self, e: Entity) -> bool {
         self.despawns.contains(&e)
     }

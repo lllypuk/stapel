@@ -87,10 +87,12 @@ impl Renderer {
         self.sized && !self.occluded
     }
 
+    /// X11 сообщил, скрыто ли окно.
     pub fn set_occluded(&mut self, occluded: bool) {
         self.occluded = occluded;
     }
 
+    /// Перенастраивает поверхность под новый размер окна.
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         let max = self.device.limits().max_texture_dimension_2d;
         let fitted = surface_size(size, max);

@@ -35,6 +35,7 @@ impl World {
             .or_insert_with(|| Box::new(RefCell::new(SparseSet::<T>::default())));
     }
 
+    /// Новая сущность без компонентов.
     pub fn spawn(&mut self) -> Entity {
         self.entities.spawn()
     }
@@ -57,6 +58,7 @@ impl World {
         }
     }
 
+    /// Жива ли `e`; устаревшая копия после `despawn` — нет.
     pub fn is_alive(&self, e: Entity) -> bool {
         self.entities.is_alive(e)
     }

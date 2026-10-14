@@ -5,19 +5,25 @@ use crate::{Assets, Camera2D, FixedClock, Font, Handle, Input, Sprite, Vec2, tex
 /// Линейный RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Color {
+    /// Красный.
     pub r: f64,
+    /// Зелёный.
     pub g: f64,
+    /// Синий.
     pub b: f64,
+    /// Непрозрачность.
     pub a: f64,
 }
 
 impl Color {
+    /// Непрозрачный чёрный.
     pub const BLACK: Color = Color {
         r: 0.0,
         g: 0.0,
         b: 0.0,
         a: 1.0,
     };
+    /// Непрозрачный белый.
     pub const WHITE: Color = Color {
         r: 1.0,
         g: 1.0,
@@ -70,12 +76,16 @@ pub(crate) fn linear_to_srgb(c: f64) -> u8 {
 /// Что нарисовать в этом кадре; игра заполняет в `draw`.
 #[derive(Default)]
 pub struct Gfx {
+    /// Цвет заливки кадра.
     pub clear_color: Color,
+    /// Камера, через которую рисуются спрайты.
     pub camera: Camera2D,
+    /// Спрайты кадра; очищается перед `draw`.
     pub sprites: Vec<Sprite>,
 }
 
 impl Gfx {
+    /// Добавляет спрайт в кадр.
     pub fn draw_sprite(&mut self, sprite: Sprite) {
         self.sprites.push(sprite);
     }
@@ -102,22 +112,33 @@ impl Gfx {
 }
 
 #[derive(Default)]
+/// Время симуляции и замеры частоты.
 pub struct Time {
+    /// Длина тика.
     pub step: Duration,
+    /// Тиков с запуска.
     pub ticks: u64,
+    /// Кадров в секунду за последнее окно замера.
     pub fps: u32,
+    /// Тиков в секунду за последнее окно замера.
     pub tps: u32,
 }
 
 #[derive(Default)]
+/// Всё, что движок даёт игре.
 pub struct Context {
+    /// Клавиатура текущего тика.
     pub input: Input,
+    /// Время и частоты.
     pub time: Time,
+    /// Что нарисовать в этом кадре.
     pub gfx: Gfx,
+    /// Текстуры и шрифты.
     pub assets: Assets,
 }
 
 impl Context {
+    /// Контекст с тиком длиной `step`.
     pub fn new(step: Duration) -> Self {
         Self {
             time: Time {
@@ -129,8 +150,11 @@ impl Context {
     }
 }
 
+/// Игра, которую крутит `run`.
 pub trait Game {
+    /// Создаёт игру и грузит её ресурсы.
     fn init(ctx: &mut Context) -> Self;
+    /// Один фиксированный тик симуляции.
     fn update(&mut self, ctx: &mut Context);
     /// `alpha` — доля шага после последнего тика, для интерполяции.
     fn draw(&mut self, ctx: &mut Context, alpha: f32);

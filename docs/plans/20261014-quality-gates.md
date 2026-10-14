@@ -103,10 +103,10 @@
 **Files:**
 - Modify: `engine/src/lib.rs`, `engine/src/**/*.rs`, `Makefile`
 
-- [ ] `#![deny(missing_docs)]` в движке; одна строка на каждый публичный элемент без дока (правило лаконичности из `~/.claude/CLAUDE.md`)
-- [ ] `make check` + `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
-- [ ] проверка ворот: битая внутридоковая ссылка и публичная функция без дока роняют `make check`
-- [ ] `make check` — зелёный
+- [x] `#![deny(missing_docs)]` в движке; одна строка на каждый публичный элемент без дока (правило лаконичности из `~/.claude/CLAUDE.md`)
+- [x] `make check` + `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
+- [x] проверка ворот: битая внутридоковая ссылка и публичная функция без дока роняют `make check`
+- [x] `make check` — зелёный
 
 ### Task 5: typos, machete, deny
 

@@ -24,6 +24,7 @@ pub struct RateCounter {
 }
 
 impl RateCounter {
+    /// Счётчик без событий.
     pub fn new() -> Self {
         Self::default()
     }
@@ -55,9 +56,13 @@ impl RateCounter {
 /// Итог окна кадров: интервалы между успешными `render` и спрайты тех же кадров.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameReport {
+    /// Кадров в секунду.
     pub fps: u32,
+    /// Самый длинный интервал между кадрами.
     pub worst: Duration,
+    /// Наименьшее число спрайтов в кадре.
     pub min_sprites: usize,
+    /// Наибольшее число спрайтов в кадре.
     pub max_sprites: usize,
 }
 
@@ -74,6 +79,7 @@ pub struct FrameStats {
 }
 
 impl FrameStats {
+    /// Статистика без кадров.
     pub fn new() -> Self {
         Self::default()
     }

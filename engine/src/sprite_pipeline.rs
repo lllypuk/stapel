@@ -20,6 +20,7 @@ pub struct SpritePipeline {
 }
 
 impl SpritePipeline {
+    /// Пайплайн для рендера в цель формата `format`.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::include_wgsl!("sprite.wgsl"));
 

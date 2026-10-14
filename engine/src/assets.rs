@@ -86,13 +86,19 @@ pub enum TextureKind {
 /// Декодированная текстура, ждущая заливки на GPU; `rgba` премультиплицирован.
 #[derive(Debug, PartialEq)]
 pub struct PendingTexture {
+    /// Чей это хэндл.
     pub handle: Handle<Texture>,
+    /// Формат и сэмплер на GPU.
     pub kind: TextureKind,
+    /// Ширина в texel.
     pub width: u32,
+    /// Высота в texel.
     pub height: u32,
+    /// Пиксели построчно, 4 байта на texel.
     pub rgba: Vec<u8>,
 }
 
+/// Реестр текстур и шрифтов; новые текстуры ждут заливки на GPU до `take_pending`.
 pub struct Assets {
     next_index: u32,
     pending: Vec<PendingTexture>,
@@ -171,6 +177,7 @@ impl Assets {
         handle
     }
 
+    /// Данные шрифта по хэндлу.
     pub fn font(&self, handle: Handle<Font>) -> &FontData {
         &self.fonts[handle.index as usize]
     }
