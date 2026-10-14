@@ -70,9 +70,9 @@ games/clear-color/src/main.rs
 **Files:**
 - Create: `engine/src/clock.rs`
 
-- [ ] тесты: `dt` = `step` → 1 тик; `a`, затем `step - a` → 0, затем 1 тик; `dt` = 1 с → тиков `max_frame / step`, остаток сохраняется; `alpha` в `[0, 1)`; `tick_hz = 30` → шаг ≈ 1/30 с
-- [ ] реализация `FixedClock::new(tick_hz, max_frame)`, `advance`, `alpha`
-- [ ] `cargo test` — зелёный
+- [x] тесты: `dt` = `step` → 1 тик; `a`, затем `step - a` → 0, затем 1 тик; `dt` = 1 с → тиков `max_frame / step`, остаток сохраняется; `alpha` в `[0, 1)`; `tick_hz = 30` → шаг ≈ 1/30 с
+- [x] реализация `FixedClock::new(tick_hz, max_frame)`, `advance`, `alpha`
+- [x] `cargo test` — зелёный
 
 ### Task 3: Снимок ввода — `Input`
 
