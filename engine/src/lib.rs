@@ -1,13 +1,15 @@
 mod app;
+pub mod camera;
 pub mod clock;
 pub mod frame;
 pub mod input;
 pub mod renderer;
 pub mod stats;
 
+pub use camera::{Camera2D, Viewport, letterbox};
 pub use clock::FixedClock;
-pub use glam::{Vec2, vec2};
 pub use frame::{Color, Context, Game, Gfx, Time, step_frame};
+pub use glam::{Vec2, vec2};
 pub use input::Input;
 pub use renderer::{RenderError, Renderer};
 pub use stats::RateCounter;

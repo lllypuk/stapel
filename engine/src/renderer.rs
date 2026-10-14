@@ -236,7 +236,10 @@ mod tests {
 
     #[test]
     fn zero_side_makes_surface_unavailable() {
-        assert_eq!(surface_size(PhysicalSize::new(800, 600), 8192), Some((800, 600)));
+        assert_eq!(
+            surface_size(PhysicalSize::new(800, 600), 8192),
+            Some((800, 600))
+        );
         assert_eq!(surface_size(PhysicalSize::new(0, 600), 8192), None);
         assert_eq!(surface_size(PhysicalSize::new(800, 0), 8192), None);
         assert_eq!(surface_size(PhysicalSize::new(0, 0), 8192), None);
@@ -244,8 +247,14 @@ mod tests {
 
     #[test]
     fn size_is_clamped_to_device_limit() {
-        assert_eq!(surface_size(PhysicalSize::new(10240, 2880), 8192), Some((8192, 2880)));
-        assert_eq!(surface_size(PhysicalSize::new(800, 9000), 8192), Some((800, 8192)));
+        assert_eq!(
+            surface_size(PhysicalSize::new(10240, 2880), 8192),
+            Some((8192, 2880))
+        );
+        assert_eq!(
+            surface_size(PhysicalSize::new(800, 9000), 8192),
+            Some((800, 8192))
+        );
     }
 
     #[test]
