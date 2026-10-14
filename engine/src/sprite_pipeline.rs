@@ -12,7 +12,7 @@ pub struct SpritePipeline {
     sampler: wgpu::Sampler,
     camera_buf: wgpu::Buffer,
     camera_group: wgpu::BindGroup,
-    /// Индекс — `TextureId`.
+    /// Индекс — `Handle<Texture>::index`.
     textures: Vec<wgpu::BindGroup>,
     instances: wgpu::Buffer,
     capacity: u64,
@@ -140,9 +140,9 @@ impl SpritePipeline {
     pub fn upload(&mut self, assets: &mut Assets) {
         for t in assets.take_pending() {
             assert_eq!(
-                t.id.0 as usize,
+                t.handle.index as usize,
                 self.textures.len(),
-                "texture ids must come from one Assets in order"
+                "texture handles must come from one Assets in order"
             );
             let size = wgpu::Extent3d {
                 width: t.width,
@@ -240,7 +240,7 @@ impl SpritePipeline {
         pass.set_bind_group(0, &self.camera_group, &[]);
         pass.set_vertex_buffer(0, self.instances.slice(..));
         for b in batches {
-            pass.set_bind_group(1, &self.textures[b.texture.0 as usize], &[]);
+            pass.set_bind_group(1, &self.textures[b.texture.index as usize], &[]);
             pass.draw(0..6, b.range);
         }
     }
@@ -264,7 +264,7 @@ fn grow_capacity(current: u64, needed: u64) -> Option<u64> {
 mod tests {
     use super::*;
     use crate::frame::linear_to_srgb;
-    use crate::{Camera2D, Color, Rect, Sprite, TextureId, Vec2, vec2};
+    use crate::{Camera2D, Color, Handle, Rect, Sprite, Texture, Vec2, vec2};
 
     const SIZE: u32 = 64;
     const TOL: u8 = 2;
@@ -298,7 +298,7 @@ mod tests {
         )
     }
 
-    fn load_png(assets: &mut Assets, name: &str, w: u32, h: u32, rgba: &[u8]) -> TextureId {
+    fn load_png(assets: &mut Assets, name: &str, w: u32, h: u32, rgba: &[u8]) -> Handle<Texture> {
         let path = std::env::temp_dir().join(format!(
             "engine-sprite-pipeline-{}-{name}.png",
             std::process::id()
@@ -309,7 +309,7 @@ mod tests {
         id
     }
 
-    fn sprite(texture: TextureId, pos: Vec2, size: f32, color: Color, layer: i32) -> Sprite {
+    fn sprite(texture: Handle<Texture>, pos: Vec2, size: f32, color: Color, layer: i32) -> Sprite {
         Sprite {
             texture,
             pos,
@@ -454,7 +454,7 @@ mod tests {
         assert!(filler * size_of::<Instance>() as u64 > INITIAL_CAPACITY);
         for _ in 0..filler {
             gfx.draw_sprite(sprite(
-                TextureId::WHITE,
+                Handle::WHITE,
                 vec2(60.0, 4.0),
                 2.0,
                 Color::BLACK,
@@ -468,7 +468,7 @@ mod tests {
         gfx.draw_sprite(sprite(bottom, vec2(52.0, 44.0), 16.0, white, 0));
         // Нижняя половина.
         gfx.draw_sprite(sprite(
-            TextureId::WHITE,
+            Handle::WHITE,
             vec2(8.0, 24.0),
             12.0,
             Color::from_srgb8(128, 128, 128),
@@ -477,7 +477,7 @@ mod tests {
         let tint = Color { a: 0.5, ..white };
         gfx.draw_sprite(sprite(half, vec2(24.0, 24.0), 12.0, tint, 0));
         let last = Color::from_srgb8(200, 100, 50);
-        gfx.draw_sprite(sprite(TextureId::WHITE, vec2(48.0, 16.0), 16.0, last, 2));
+        gfx.draw_sprite(sprite(Handle::WHITE, vec2(48.0, 16.0), 16.0, last, 2));
 
         // Снизу слева: квад 12×24 на 90° против часовой лежит 24×12, фрагмент — правые 2×2 texel'а.
         gfx.draw_sprite(Sprite {

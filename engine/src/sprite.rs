@@ -3,7 +3,8 @@ use std::ops::Range;
 use bytemuck::{Pod, Zeroable};
 use glam::Vec2;
 
-use crate::{Color, TextureId};
+use crate::Color;
+use crate::assets::{Handle, Texture};
 
 /// Прямоугольник от `min` до `max`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -15,7 +16,7 @@ pub struct Rect {
 /// Прямоугольник с текстурой; `pos` — центр в мировых единицах.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sprite {
-    pub texture: TextureId,
+    pub texture: Handle<Texture>,
     pub pos: Vec2,
     pub size: Vec2,
     /// Радианы, против часовой вокруг `pos`.
@@ -30,7 +31,7 @@ pub struct Sprite {
 impl Default for Sprite {
     fn default() -> Self {
         Self {
-            texture: TextureId::WHITE,
+            texture: Handle::WHITE,
             pos: Vec2::ZERO,
             size: Vec2::ONE,
             rotation: 0.0,
@@ -60,7 +61,7 @@ pub struct Instance {
 /// Подряд идущие инстансы одной текстуры — один draw call.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Batch {
-    pub texture: TextureId,
+    pub texture: Handle<Texture>,
     pub range: Range<u32>,
 }
 
@@ -107,7 +108,7 @@ mod tests {
 
     fn sprite(texture: u32, layer: i32, x: f32) -> Sprite {
         Sprite {
-            texture: TextureId(texture),
+            texture: Handle::new(texture),
             pos: vec2(x, 0.0),
             color: Color::BLACK,
             layer,
@@ -124,7 +125,7 @@ mod tests {
                     .iter()
                     .map(|i| {
                         let s = sprites.iter().find(|s| s.pos.x == i.pos[0]).unwrap();
-                        (s.layer, b.texture.0, i.pos[0])
+                        (s.layer, b.texture.index, i.pos[0])
                     })
             })
             .collect()
@@ -160,7 +161,7 @@ mod tests {
         let (instances, batches) = batch(&s);
         let got: Vec<_> = batches
             .iter()
-            .map(|b| (b.texture.0, b.range.clone()))
+            .map(|b| (b.texture.index, b.range.clone()))
             .collect();
         assert_eq!(got, [(1, 0..2), (2, 2..3), (1, 3..4), (2, 4..5)]);
         assert_eq!(instances.len(), s.len());
@@ -198,7 +199,7 @@ mod tests {
     #[test]
     fn default_sprite_is_white_full_texture() {
         let s = Sprite::default();
-        assert_eq!(s.texture, TextureId::WHITE);
+        assert_eq!(s.texture, Handle::WHITE);
         assert_eq!(s.color, Color::WHITE);
         assert_eq!(s.uv.min, Vec2::ZERO);
         assert_eq!(s.uv.max, Vec2::ONE);

@@ -1,35 +1,99 @@
-use std::path::Path;
+use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
+use std::path::{Path, PathBuf};
 
 use crate::frame::{linear_to_srgb, srgb_to_linear};
 
-/// Индекс текстуры; без поколения, потому что текстуры не выгружаются.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TextureId(pub u32);
+/// Индекс ресурса типа `T`; без поколения, пока индексы append-only.
+pub struct Handle<T> {
+    pub(crate) index: u32,
+    _marker: PhantomData<T>,
+}
 
-impl TextureId {
+/// Маркер текстурного хэндла.
+pub enum Texture {}
+
+/// Маркер хэндла шрифта.
+pub enum Font {}
+
+impl<T> Handle<T> {
+    pub(crate) const fn new(index: u32) -> Self {
+        Self {
+            index,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl Handle<Texture> {
     /// Белая 1×1, резервируется в `Assets::default`.
-    pub const WHITE: TextureId = TextureId(0);
+    pub const WHITE: Self = Self::new(0);
+}
+
+impl<T> Clone for Handle<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Handle<T> {}
+
+impl<T> PartialEq for Handle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
+    }
+}
+
+impl<T> Eq for Handle<T> {}
+
+impl<T> PartialOrd for Handle<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T> Ord for Handle<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.index.cmp(&other.index)
+    }
+}
+
+impl<T> Hash for Handle<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.index.hash(state);
+    }
+}
+
+impl<T> fmt::Debug for Handle<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Handle({})", self.index)
+    }
 }
 
 /// Декодированная текстура, ждущая заливки на GPU; `rgba` премультиплицирован.
 #[derive(Debug, PartialEq)]
 pub struct PendingTexture {
-    pub id: TextureId,
+    pub handle: Handle<Texture>,
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
 }
 
 pub struct Assets {
-    next_id: u32,
+    next_index: u32,
     pending: Vec<PendingTexture>,
+    paths: HashMap<PathBuf, Handle<Texture>>,
 }
 
 impl Default for Assets {
     fn default() -> Self {
         let mut assets = Self {
-            next_id: 0,
+            next_index: 0,
             pending: Vec::new(),
+            paths: HashMap::new(),
         };
         assets.push(1, 1, vec![255; 4]);
         assets
@@ -37,10 +101,13 @@ impl Default for Assets {
 }
 
 impl Assets {
-    /// Ошибка чтения или декодирования даёт шахматку и `warn` в лог, а не панику.
-    pub fn load_texture(&mut self, path: impl AsRef<Path>) -> TextureId {
+    /// Повторный путь отдаёт прежний хэндл; ошибка чтения или декодирования — шахматку и `warn`.
+    pub fn load_texture(&mut self, path: impl AsRef<Path>) -> Handle<Texture> {
         let path = path.as_ref();
-        match image::open(path) {
+        if let Some(&h) = self.paths.get(path) {
+            return h;
+        }
+        let handle = match image::open(path) {
             Ok(img) => {
                 let img = img.into_rgba8();
                 let (w, h) = img.dimensions();
@@ -53,7 +120,9 @@ impl Assets {
                 let (w, h, rgba) = checkerboard();
                 self.push(w, h, rgba)
             }
-        }
+        };
+        self.paths.insert(path.to_path_buf(), handle);
+        handle
     }
 
     /// Забирает всё, что накопилось с прошлого вызова.
@@ -61,16 +130,16 @@ impl Assets {
         std::mem::take(&mut self.pending)
     }
 
-    fn push(&mut self, width: u32, height: u32, rgba: Vec<u8>) -> TextureId {
-        let id = TextureId(self.next_id);
-        self.next_id += 1;
+    fn push(&mut self, width: u32, height: u32, rgba: Vec<u8>) -> Handle<Texture> {
+        let handle = Handle::new(self.next_index);
+        self.next_index += 1;
         self.pending.push(PendingTexture {
-            id,
+            handle,
             width,
             height,
             rgba,
         });
-        id
+        handle
     }
 }
 
@@ -125,7 +194,7 @@ mod tests {
         assert_eq!(
             pending,
             [PendingTexture {
-                id: TextureId::WHITE,
+                handle: Handle::WHITE,
                 width: 1,
                 height: 1,
                 rgba: vec![255; 4],
@@ -139,10 +208,10 @@ mod tests {
         let src = [255, 255, 255, 128, 255, 0, 0, 255];
         image::save_buffer(&path, &src, 2, 1, image::ExtendedColorType::Rgba8).unwrap();
         let mut assets = Assets::default();
-        let id = assets.load_texture(&path);
+        let h = assets.load_texture(&path);
         std::fs::remove_file(&path).unwrap();
         let t = assets.take_pending().pop().unwrap();
-        assert_eq!((t.id, t.width, t.height), (id, 2, 1));
+        assert_eq!((t.handle, t.width, t.height), (h, 2, 1));
         assert_eq!(t.rgba, [188, 188, 188, 128, 255, 0, 0, 255]);
     }
 
@@ -164,11 +233,46 @@ mod tests {
     }
 
     #[test]
-    fn ids_are_sequential() {
+    fn white_is_index_zero() {
+        assert_eq!(Handle::<Texture>::WHITE.index, 0);
+    }
+
+    #[test]
+    fn different_paths_get_sequential_handles() {
         let mut assets = Assets::default();
         let a = assets.load_texture(temp_path("a.png"));
         let b = assets.load_texture(temp_path("b.png"));
-        assert_eq!((a, b), (TextureId(1), TextureId(2)));
+        assert_eq!((a.index, b.index), (1, 2));
+    }
+
+    #[test]
+    fn same_path_is_loaded_once() {
+        let path = temp_path("cached.png");
+        image::save_buffer(
+            &path,
+            &[0, 0, 0, 255],
+            1,
+            1,
+            image::ExtendedColorType::Rgba8,
+        )
+        .unwrap();
+        let mut assets = Assets::default();
+        let a = assets.load_texture(&path);
+        let b = assets.load_texture(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(assets.take_pending().len(), 2);
+    }
+
+    #[test]
+    fn missing_file_is_cached_too() {
+        let path = temp_path("missing-twice.png");
+        let mut assets = Assets::default();
+        let a = assets.load_texture(&path);
+        assert_eq!(assets.take_pending().len(), 2);
+        let b = assets.load_texture(&path);
+        assert_eq!(a, b);
+        assert!(assets.take_pending().is_empty());
     }
 
     #[test]

@@ -1,6 +1,8 @@
 use std::f32::consts::{FRAC_PI_3, FRAC_PI_6};
 
-use engine::{Camera2D, Config, Context, Game, Input, KeyCode, Sprite, TextureId, Vec2, vec2};
+use engine::{
+    Camera2D, Config, Context, Game, Handle, Input, KeyCode, Sprite, Texture, Vec2, vec2,
+};
 
 const TICK_HZ: u32 = 60;
 const DT: f32 = 1.0 / TICK_HZ as f32;
@@ -35,7 +37,7 @@ struct Pong {
     vel: Vec2,
     score: [u32; 2],
     serve_up: bool,
-    ball_tex: TextureId,
+    ball_tex: Handle<Texture>,
 }
 
 fn paddle_x(side: usize) -> f32 {
@@ -70,7 +72,7 @@ impl Pong {
             vel: Vec2::ZERO,
             score: [0; 2],
             serve_up: true,
-            ball_tex: TextureId::WHITE,
+            ball_tex: Handle::WHITE,
         };
         p.serve(0);
         p

@@ -102,10 +102,10 @@
 **Files:**
 - Modify: `engine/src/assets.rs`, `engine/src/sprite.rs`, `engine/src/sprite_pipeline.rs`, `engine/src/lib.rs`, `games/pong/src/main.rs`, `docs/design.md`
 
-- [ ] тесты: один путь дважды → один хэндл и одна запись в очереди; разные пути → разные; отсутствующий файл → шахматка, повтор того же пути не грузит её снова; `WHITE` — индекс 0
-- [ ] `Handle<T>`, маркеры `Texture`, `Font`; `TextureId` → `Handle<Texture>` по всему движку и Pong
-- [ ] `docs/design.md`, «Ресурсы»: поколения отложены до выгрузки, append-only индексы — инвариант
-- [ ] тесты — зелёные
+- [x] тесты: один путь дважды → один хэндл и одна запись в очереди; разные пути → разные; отсутствующий файл → шахматка, повтор того же пути не грузит её снова; `WHITE` — индекс 0
+- [x] `Handle<T>`, маркеры `Texture`, `Font`; `TextureId` → `Handle<Texture>` по всему движку и Pong
+- [x] `docs/design.md`, «Ресурсы»: поколения отложены до выгрузки, append-only индексы — инвариант
+- [x] тесты — зелёные
 
 ### Task 3: Текстуры покрытия
 

@@ -9,7 +9,7 @@ pub mod sprite;
 pub mod sprite_pipeline;
 pub mod stats;
 
-pub use assets::{Assets, PendingTexture, TextureId};
+pub use assets::{Assets, Font, Handle, PendingTexture, Texture};
 pub use camera::{Camera2D, Viewport, letterbox};
 pub use clock::FixedClock;
 pub use frame::{Color, Context, Game, Gfx, Time, step_frame};
