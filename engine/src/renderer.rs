@@ -4,9 +4,9 @@ use std::sync::Arc;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-use crate::{Color, Gfx};
+use crate::{Assets, Gfx, SpritePipeline, letterbox};
 
-/// Поверхность окна и GPU-устройство; кадр — очистка цветом `Gfx::clear_color`.
+/// Поверхность окна и GPU-устройство; кадр рисует `SpritePipeline` во вписанный вьюпорт.
 pub struct Renderer {
     window: Arc<Window>,
     instance: wgpu::Instance,
@@ -14,6 +14,7 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    sprites: SpritePipeline,
     sized: bool,
     occluded: bool,
 }
@@ -61,6 +62,7 @@ impl Renderer {
         });
         config.present_mode = pick_present_mode(vsync, &caps.present_modes);
         log::info!("surface: {:?}, {:?}", config.format, config.present_mode);
+        let sprites = SpritePipeline::new(&device, &queue, config.format);
 
         let mut renderer = Self {
             window,
@@ -69,6 +71,7 @@ impl Renderer {
             device,
             queue,
             config,
+            sprites,
             sized: false,
             occluded: false,
         };
@@ -98,14 +101,16 @@ impl Renderer {
     }
 
     /// `Ok(true)`, если кадр показан.
-    pub fn render(&mut self, gfx: &Gfx) -> Result<bool, RenderError> {
+    pub fn render(&mut self, gfx: &Gfx, assets: &mut Assets) -> Result<bool, RenderError> {
+        // До проверки поверхности: иначе текстуры, загруженные при свёрнутом окне, ждали бы его показа.
+        self.sprites.upload(assets);
         if !self.is_available() {
             return Ok(false);
         }
         let (frame, status) = split(self.surface.get_current_texture());
         match (action(status), frame) {
             (Action::Draw { reconfigure }, Some(frame)) => {
-                self.draw(frame, gfx.clear_color);
+                self.draw(frame, gfx);
                 if reconfigure {
                     self.surface.configure(&self.device, &self.config);
                 }
@@ -128,31 +133,18 @@ impl Renderer {
         }
     }
 
-    fn draw(&self, frame: wgpu::SurfaceTexture, color: Color) {
+    fn draw(&mut self, frame: wgpu::SurfaceTexture, gfx: &Gfx) {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("clear"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: color.r,
-                        g: color.g,
-                        b: color.b,
-                        a: color.a,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        });
+        let viewport = letterbox(
+            (self.config.width, self.config.height),
+            gfx.camera.aspect(),
+        );
+        self.sprites.draw(&mut encoder, &view, viewport, gfx);
         self.queue.submit([encoder.finish()]);
         // На Wayland это ограничивает `RedrawRequested` частотой монитора, даже без vsync.
         if matches!(

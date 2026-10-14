@@ -17,9 +17,9 @@ NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color
 ## Архитектура
 
 - Движок — фреймворк: `winit` владеет циклом, `engine::run::<G>(Config)` запускает `app::App`, игра реализует трейт `Game { init, update, draw(alpha) }`.
-- Кадр: `RedrawRequested` → `step_frame` (N фиксированных тиков `update` по `FixedClock`, после каждого — `Input::end_tick`, затем один `draw(alpha)`) → `Renderer::render(&ctx.gfx)` → в конце кадра `request_redraw` следующего. Цикл в `ControlFlow::Wait`; `Poll` не возвращать — на Wayland с vsync он крутит ядро на 100%.
-- Граница тестируемости: всё, что не требует окна и GPU (`clock`, `input`, `stats`, `step_frame`, чистые функции `renderer`), — юнит-тесты в `#[cfg(test)]` того же файла. `app.rs` и GPU-вызовы — тонкая склейка, проверяется запуском игры.
-- Рисование immediate-mode: игра каждый кадр заполняет `ctx.gfx`, `Renderer` об играх и будущем ECS не знает.
+- Кадр: `RedrawRequested` → `step_frame` (N фиксированных тиков `update` по `FixedClock`, после каждого — `Input::end_tick`, затем один `draw(alpha)`) → `Renderer::render(&ctx.gfx, &mut ctx.assets)` (заливка новых текстур, затем `SpritePipeline::draw` во вьюпорт `letterbox`) → в конце кадра `request_redraw` следующего. Цикл в `ControlFlow::Wait`; `Poll` не возвращать — на Wayland с vsync он крутит ядро на 100%.
+- Граница тестируемости: всё, что не требует окна и GPU (`clock`, `input`, `stats`, `step_frame`, `camera`, `assets`, `batch`, чистые функции `renderer`), — юнит-тесты в `#[cfg(test)]` того же файла. GPU-путь спрайтов — офскрин-тест `SpritePipeline` на реальном адаптере (пропуск только без адаптера, с `SKIPPED`). `app.rs` и работа с поверхностью — тонкая склейка, проверяется запуском игры.
+- Рисование immediate-mode: игра каждый кадр заполняет `ctx.gfx`, текстуры грузит один раз в `init` через `ctx.assets`, `Renderer` об играх и будущем ECS не знает.
 - `Color` линейный; поверхность `*Srgb`. Цвета из sRGB — через `Color::from_srgb8`.
 
 ## Правила

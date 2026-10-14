@@ -110,7 +110,7 @@ impl<G: Game> Running<G> {
         for _ in 0..ticks {
             self.tps.record(now);
         }
-        match self.renderer.render(&self.ctx.gfx) {
+        match self.renderer.render(&self.ctx.gfx, &mut self.ctx.assets) {
             Ok(true) => self.fps.record(now),
             Ok(false) => {}
             Err(e) => {

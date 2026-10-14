@@ -114,10 +114,10 @@
 **Files:**
 - Modify: `engine/src/renderer.rs`, `engine/src/app.rs`, `CLAUDE.md`
 
-- [ ] `Renderer` владеет `SpritePipeline`; `render(&Gfx, &mut Assets)`: `upload` до проверки доступности поверхности, затем кадр поверхности → `letterbox` → `SpritePipeline::draw`; собственный clear pass `Renderer` удаляется
-- [ ] `App` передаёт `&mut ctx.assets`
-- [ ] `CLAUDE.md`: новая сигнатура `render`, `ctx.assets`, офскрин-тест как часть границы тестируемости
-- [ ] тестов нет: путь покрыт тестами задач 2–5; `clear-color` по-прежнему запускается и меняет цвет
+- [x] `Renderer` владеет `SpritePipeline`; `render(&Gfx, &mut Assets)`: `upload` до проверки доступности поверхности, затем кадр поверхности → `letterbox` → `SpritePipeline::draw`; собственный clear pass `Renderer` удаляется
+- [x] `App` передаёт `&mut ctx.assets`
+- [x] `CLAUDE.md`: новая сигнатура `render`, `ctx.assets`, офскрин-тест как часть границы тестируемости
+- [x] тестов нет: путь покрыт тестами задач 2–5; `clear-color` по-прежнему запускается и меняет цвет (запуск: 60 FPS без ошибок валидации; смена цвета глазами не проверялась)
 
 ### Task 7: Логика Pong
 
