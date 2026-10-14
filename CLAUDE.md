@@ -12,6 +12,7 @@ cargo test -p engine input::tests::focus_lost_clears_held_keys   # один те
 cargo clippy --workspace --all-targets -- -D warnings
 RUST_LOG=info cargo run -p clear-color                            # в логе FPS/TPS раз в секунду
 RUST_LOG=info cargo run -p pong
+make pong                                                         # любая игра из games/, release; make test, make lint
 NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color
 ```
 

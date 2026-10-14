@@ -26,7 +26,7 @@ const SCORE_POS: Vec2 = vec2(60.0, 140.0);
 const SEGMENTS: [u8; 10] = [0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F];
 const KEYS: [(KeyCode, KeyCode); 2] = [
     (KeyCode::KeyW, KeyCode::KeyS),
-    (KeyCode::ArrowUp, KeyCode::ArrowDown),
+    (KeyCode::KeyO, KeyCode::KeyL),
 ];
 
 /// Состояние партии; индекс 0 — левый игрок, 1 — правый.
@@ -299,11 +299,11 @@ mod tests {
     #[test]
     fn paddle_moves_by_key_and_stays_in_field() {
         let mut p = Pong::new();
-        p.tick(&input(&[KeyCode::KeyW, KeyCode::ArrowDown]));
+        p.tick(&input(&[KeyCode::KeyW, KeyCode::KeyL]));
         assert!((p.paddles[0] - 5.0).abs() < EPS && (p.paddles[1] + 5.0).abs() < EPS);
 
         for _ in 0..100 {
-            p.tick(&input(&[KeyCode::KeyW, KeyCode::ArrowDown]));
+            p.tick(&input(&[KeyCode::KeyW, KeyCode::KeyL]));
         }
         assert_eq!(p.paddles, [150.0, -150.0]);
     }
@@ -373,7 +373,7 @@ mod tests {
     #[test]
     fn moving_paddle_catches_ball_by_corner() {
         let mut p = pong(vec2(290.0, 34.0), vec2(MAX_SPEED, 0.0));
-        p.tick(&input(&[KeyCode::ArrowDown]));
+        p.tick(&input(&[KeyCode::KeyL]));
         assert!(p.vel.x < 0.0);
     }
 
