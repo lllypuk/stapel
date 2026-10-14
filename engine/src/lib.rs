@@ -6,6 +6,7 @@ pub mod frame;
 pub mod input;
 pub mod renderer;
 pub mod sprite;
+pub mod sprite_pipeline;
 pub mod stats;
 
 pub use assets::{Assets, PendingTexture, TextureId};
@@ -16,6 +17,7 @@ pub use glam::{Vec2, vec2};
 pub use input::Input;
 pub use renderer::{RenderError, Renderer};
 pub use sprite::{Batch, Instance, Sprite, batch};
+pub use sprite_pipeline::SpritePipeline;
 pub use stats::RateCounter;
 pub use winit::event::ElementState;
 pub use winit::keyboard::KeyCode;

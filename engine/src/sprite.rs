@@ -123,7 +123,10 @@ mod tests {
             sprite(2, 1, 4.0),
         ];
         let (instances, batches) = batch(&s);
-        let got: Vec<_> = batches.iter().map(|b| (b.texture.0, b.range.clone())).collect();
+        let got: Vec<_> = batches
+            .iter()
+            .map(|b| (b.texture.0, b.range.clone()))
+            .collect();
         assert_eq!(got, [(1, 0..2), (2, 2..3), (1, 3..4), (2, 4..5)]);
         assert_eq!(instances.len(), s.len());
     }
