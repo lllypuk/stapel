@@ -33,7 +33,7 @@
 ## Technical Details
 
 ### ECS (`engine/src/ecs/`)
-- `Entity { index: u32, gen: u32 }`; аллокатор со списком свободных, `despawn` увеличивает поколение; `is_alive(e)` сравнивает поколение.
+- `Entity { index: u32, generation: u32 }` (`gen` — ключевое слово в edition 2024); аллокатор со списком свободных, `despawn` увеличивает поколение; `is_alive(e)` сравнивает поколение.
 - `SparseSet<T>`: `sparse: Vec<u32>` (`NONE = u32::MAX`), `dense: Vec<T>`, `entities: Vec<Entity>`. `get`/`get_mut` сравнивают полный `Entity`. Удаление — `swap_remove` с правкой `sparse` перенесённого. `insert`/`remove` — `pub(crate)`: вставка в пустой слот не знает о живости и создала бы призрачную сущность.
 - Публично снаружи `World`: `get`, `get_mut`, `iter() -> (Entity, &T)`, `iter_mut`, `len`.
 - `World`: `register::<T>()` (в `init`, до обходов), `spawn() -> Entity`, `insert(e, T)` (паника на мёртвую `e` и незарегистрированный тип), `despawn(e)` (no-op на мёртвую), `is_alive`, `storage::<T>() -> Ref<SparseSet<T>>`, `storage_mut::<T>() -> RefMut<SparseSet<T>>` — паника с `type_name` на незарегистрированный тип.
@@ -146,10 +146,10 @@
 - Create: `engine/src/ecs/mod.rs`, `engine/src/ecs/entity.rs`, `engine/src/ecs/sparse_set.rs`, `engine/src/ecs/world.rs`
 - Modify: `engine/src/lib.rs`, `docs/design.md`
 
-- [ ] тесты: повтор индекса после despawn с новым поколением; устаревшая `Entity` → `None` в `get`; `swap_remove` правит `sparse` перенесённого, удаление последнего; despawn удаляет из всех хранилищ; `insert` в мёртвую — паника; незарегистрированный тип — паника с именем; `Ref<A>` + `RefMut<B>` одновременно — ок; два `storage_mut::<A>` — `#[should_panic]`
-- [ ] `Entity`, аллокатор, `SparseSet`, `ErasedStorage`, `World`
-- [ ] `docs/design.md`, «Молчаливые поломки»: вставка в слот мёртвой сущности
-- [ ] тесты — зелёные
+- [x] тесты: повтор индекса после despawn с новым поколением; устаревшая `Entity` → `None` в `get`; `swap_remove` правит `sparse` перенесённого, удаление последнего; despawn удаляет из всех хранилищ; `insert` в мёртвую — паника; незарегистрированный тип — паника с именем; `Ref<A>` + `RefMut<B>` одновременно — ок; два `storage_mut::<A>` — `#[should_panic]`
+- [x] `Entity`, аллокатор, `SparseSet`, `ErasedStorage`, `World`
+- [x] `docs/design.md`, «Молчаливые поломки»: вставка в слот мёртвой сущности
+- [x] тесты — зелёные
 
 ### Task 7: Буфер команд
 
