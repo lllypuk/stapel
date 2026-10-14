@@ -27,7 +27,7 @@ check:
 	typos
 	$(MAKE) lint doc deps test
 
-# app.rs и renderer.rs — склейка с окном; порог только вверх.
+# app.rs и renderer.rs — склейка с окном, чистая логика поверхности — в surface.rs; порог только вверх.
 cov:
 	cargo llvm-cov --workspace --ignore-filename-regex 'engine/src/(app|renderer)\.rs' --fail-under-lines 98
 

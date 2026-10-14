@@ -1,7 +1,7 @@
 # Склейка с окном и циклом событий: проверяется запуском игры.
 exclude_globs = ["engine/src/app.rs"]
 exclude_re = [
-    # impl Renderer — склейка с поверхностью; чистые функции renderer.rs мутируются.
+    # impl Renderer — склейка с поверхностью; её чистая логика в surface.rs мутируется.
     "Renderer::",
     # fn main игр и engine::run открывают окно; глоб по main.rs выключил бы логику игр.
     "replace main -> ",

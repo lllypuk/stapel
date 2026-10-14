@@ -22,6 +22,7 @@ pub mod sprite;
 pub mod sprite_pipeline;
 /// Счётчики FPS, TPS и времени кадра.
 pub mod stats;
+mod surface;
 /// Растеризация шрифтов и раскладка строк в спрайты.
 pub mod text;
 
