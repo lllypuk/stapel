@@ -137,11 +137,11 @@
 - Modify: `games/pong/src/main.rs`
 - Create: `games/pong/assets/ball.png`
 
-- [ ] тест таблицы сегментов: `8` — все 7, `1` — 2 сегмента, у каждой цифры 0–9 свой набор
-- [ ] `ball.png` 10×10 с полупрозрачным краем — одноразовым скриптом на stdlib Python, скрипт не коммитится
-- [ ] `init`: камера 640×360, `load_texture` по `concat!(env!("CARGO_MANIFEST_DIR"), "/assets/ball.png")` (не относительно cwd), `TextureId` хранится в игре
-- [ ] `draw`: пунктир по центру, мяч текстурой `ball.png` слоем выше пунктира, цифры счёта
-- [ ] тесты — зелёные
+- [x] тест таблицы сегментов: `8` — все 7, `1` — 2 сегмента, у каждой цифры 0–9 свой набор
+- [x] `ball.png` 10×10 с полупрозрачным краем — одноразовым скриптом на stdlib Python, скрипт не коммитится
+- [x] `init`: камера 640×360, `load_texture` по `concat!(env!("CARGO_MANIFEST_DIR"), "/assets/ball.png")` (не относительно cwd), `TextureId` хранится в игре
+- [x] `draw`: пунктир по центру, мяч текстурой `ball.png` слоем выше пунктира, цифры счёта
+- [x] тесты — зелёные
 
 ### Task 9: Verify acceptance criteria
 - [ ] `cargo test --workspace -- --nocapture`: нет `SKIPPED`; `cargo clippy --workspace --all-targets -- -D warnings`
