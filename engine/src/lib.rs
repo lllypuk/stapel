@@ -21,7 +21,7 @@ pub use input::Input;
 pub use renderer::{RenderError, Renderer};
 pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;
-pub use stats::RateCounter;
+pub use stats::{FrameReport, FrameStats, RateCounter};
 pub use text::{FontData, Glyph};
 pub use winit::event::ElementState;
 pub use winit::keyboard::KeyCode;

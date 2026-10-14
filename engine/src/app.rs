@@ -8,7 +8,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
-use crate::{Config, Context, FixedClock, Game, RateCounter, Renderer, step_frame};
+use crate::{Config, Context, FixedClock, FrameStats, Game, RateCounter, Renderer, step_frame};
 
 /// Ниже 4 FPS симуляция замедляется, а не догоняет лавиной тиков.
 const MAX_FRAME: Duration = Duration::from_millis(250);
@@ -26,7 +26,7 @@ struct Running<G> {
     ctx: Context,
     clock: FixedClock,
     last_frame: Instant,
-    fps: RateCounter,
+    frames: FrameStats,
     tps: RateCounter,
 }
 
@@ -61,7 +61,7 @@ impl<G: Game> ApplicationHandler for App<G> {
             ctx,
             clock,
             last_frame: Instant::now(),
-            fps: RateCounter::new(),
+            frames: FrameStats::new(),
             tps: RateCounter::new(),
         });
     }
@@ -111,18 +111,28 @@ impl<G: Game> Running<G> {
             self.tps.record(now);
         }
         match self.renderer.render(&self.ctx.gfx, &mut self.ctx.assets) {
-            Ok(true) => self.fps.record(now),
-            Ok(false) => {}
+            Ok(true) => self
+                .frames
+                .record(Instant::now(), self.ctx.gfx.sprites.len()),
+            Ok(false) => self.frames.reset(),
             Err(e) => {
                 log::error!("{e}");
                 event_loop.exit();
             }
         }
-        if let Some(fps) = self.fps.per_second() {
-            self.ctx.time.fps = fps;
-        }
         if let Some(tps) = self.tps.per_second() {
             self.ctx.time.tps = tps;
+        }
+        if let Some(f) = self.frames.report() {
+            self.ctx.time.fps = f.fps;
+            log::info!(
+                "fps {} tps {} worst {:.1}ms sprites {}..{}",
+                f.fps,
+                self.ctx.time.tps,
+                f.worst.as_secs_f64() * 1e3,
+                f.min_sprites,
+                f.max_sprites
+            );
         }
         // Цикл стоит в `Wait`, и следующий кадр просим только отсюда: на Wayland с vsync winit
         // отдаст его по сигналу композитора, а свёрнутому окну композитор кадров не даёт.

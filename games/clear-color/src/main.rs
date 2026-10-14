@@ -4,24 +4,16 @@ const PALETTE: [[u8; 3]; 4] = [[30, 30, 46], [180, 60, 60], [60, 160, 90], [70, 
 
 struct ClearColor {
     index: usize,
-    ticks_per_second: u64,
 }
 
 impl Game for ClearColor {
-    fn init(ctx: &mut Context) -> Self {
-        Self {
-            index: 0,
-            ticks_per_second: (1.0 / ctx.time.step.as_secs_f64()).round() as u64,
-        }
+    fn init(_ctx: &mut Context) -> Self {
+        Self { index: 0 }
     }
 
     fn update(&mut self, ctx: &mut Context) {
         if ctx.input.just_pressed(KeyCode::Space) {
             self.index = (self.index + 1) % PALETTE.len();
-        }
-        let t = &ctx.time;
-        if t.ticks > 0 && t.ticks.is_multiple_of(self.ticks_per_second) {
-            log::info!("fps {} tps {}", t.fps, t.tps);
         }
     }
 

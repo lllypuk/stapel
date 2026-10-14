@@ -166,10 +166,10 @@
 **Files:**
 - Modify: `engine/src/stats.rs`, `engine/src/app.rs`, `engine/src/lib.rs`, `games/clear-color/src/main.rs`, `docs/design.md`
 
-- [ ] тесты `FrameStats`: окно ≥ 1 с; `worst` — самый длинный интервал окна, интервал через границу — в новом окне; `min/max_sprites` по кадрам окна; после сброса (`Ok(false)`) первый интервал не считается; отдаётся один раз
-- [ ] `FrameStats`; `app.rs`: `record(Instant::now(), sprites)` после `Ok(true)`, сброс на `Ok(false)`, лог в одну строку, `ctx.time.fps` из `FrameStats`; убрать лог `clear-color`
-- [ ] `docs/design.md`, «Молчаливые поломки»: FPS окна не говорит о нагрузке кадра
-- [ ] тесты — зелёные
+- [x] тесты `FrameStats`: окно ≥ 1 с; `worst` — самый длинный интервал окна, интервал через границу — в новом окне; `min/max_sprites` по кадрам окна; после сброса (`Ok(false)`) первый интервал не считается; отдаётся один раз
+- [x] `FrameStats`; `app.rs`: `record(Instant::now(), sprites)` после `Ok(true)`, сброс на `Ok(false)`, лог в одну строку, `ctx.time.fps` из `FrameStats`; убрать лог `clear-color`
+- [x] `docs/design.md`, «Молчаливые поломки»: FPS окна не говорит о нагрузке кадра
+- [x] тесты — зелёные
 
 ### Task 9: Asteroids — корабль, пули, перенос
 
