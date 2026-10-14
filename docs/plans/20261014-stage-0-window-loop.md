@@ -79,9 +79,9 @@ games/clear-color/src/main.rs
 **Files:**
 - Create: `engine/src/input.rs`
 
-- [ ] тесты: нажатие → `just_pressed` до `end_tick`, после — только `is_down`; событие с `repeat = true` игнорируется (иначе удержание клавиши «нажимает» её много раз); нажатие и отпускание до тика → в тике `just_pressed` и `just_released`, `is_down == false` (короткий тап не теряется); отпускание → `just_released` один тик; `focus_lost` → `down` пуст (иначе клавиша, отпущенная в другом окне, «залипает»)
-- [ ] реализация `on_key`, `focus_lost`, `is_down`, `just_pressed`, `just_released`, `end_tick`
-- [ ] `cargo test` — зелёный
+- [x] тесты: нажатие → `just_pressed` до `end_tick`, после — только `is_down`; событие с `repeat = true` игнорируется (иначе удержание клавиши «нажимает» её много раз); нажатие и отпускание до тика → в тике `just_pressed` и `just_released`, `is_down == false` (короткий тап не теряется); отпускание → `just_released` один тик; `focus_lost` → `down` пуст (иначе клавиша, отпущенная в другом окне, «залипает»)
+- [x] реализация `on_key`, `focus_lost`, `is_down`, `just_pressed`, `just_released`, `end_tick`
+- [x] `cargo test` — зелёный
 
 ### Task 4: Счётчик частоты — `RateCounter`
 
