@@ -124,11 +124,11 @@ games/clear-color/src/main.rs
 - Create: `engine/src/app.rs`
 - Modify: `engine/src/lib.rs`
 
-- [ ] `run::<G>(Config)`: `env_logger`, `EventLoop`, `ControlFlow::Poll`, `run_app`
-- [ ] `resumed`: окно и `Renderer` создаются один раз (повторный вызов ничего не делает), затем `G::init`
-- [ ] `window_event`: `KeyboardInput` → `Input::on_key`, события с `is_synthetic` отбрасываются (X11 присылает фальшивое нажатие при возврате фокуса); `Focused(false)` → `Input::focus_lost`; `Resized` → `Renderer::resize`; `CloseRequested` → `exit`; `RedrawRequested` → `step_frame`, `render`, счётчики → `ctx.time` (FPS считает только показанные кадры)
-- [ ] `about_to_wait` → `request_redraw`, только если поверхность доступна (иначе свёрнутое окно крутит пустые кадры на 100% CPU)
-- [ ] тестов нет: логика покрыта задачами 2–5, склейка проверяется в Task 9; `cargo test` и `cargo clippy` — зелёные
+- [x] `run::<G>(Config)`: `env_logger`, `EventLoop`, `ControlFlow::Poll`, `run_app`
+- [x] `resumed`: окно и `Renderer` создаются один раз (повторный вызов ничего не делает), затем `G::init`
+- [x] `window_event`: `KeyboardInput` → `Input::on_key`, события с `is_synthetic` отбрасываются (X11 присылает фальшивое нажатие при возврате фокуса); `Focused(false)` → `Input::focus_lost`; `Resized` → `Renderer::resize`; `CloseRequested` → `exit`; `RedrawRequested` → `step_frame`, `render`, счётчики → `ctx.time` (FPS считает только показанные кадры)
+- [x] `about_to_wait` → `request_redraw`, только если поверхность доступна (иначе свёрнутое окно крутит пустые кадры на 100% CPU); ➕ без поверхности `ControlFlow::Wait`, иначе `Poll` всё равно крутит пустой цикл событий
+- [x] тестов нет: логика покрыта задачами 2–5, склейка проверяется в Task 9; `cargo test` и `cargo clippy` — зелёные
 
 ### Task 8: Игра `clear-color`
 
