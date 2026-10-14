@@ -5,6 +5,8 @@ variables:
   # Без них офскрин-тест пропустился бы или ушёл на GL, и упали бы покрытие и мутанты.
   REQUIRE_GPU: "1"
   WGPU_BACKEND: vulkan
+  # Раннер пробрасывает /dev/dri: без этого тест шёл бы на GPU хоста, а не на lavapipe.
+  VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.json
   # cache:paths — только внутри проекта; не .cargo — там mutants.toml.
   CARGO_HOME: $CI_PROJECT_DIR/.cargo-ci
 
