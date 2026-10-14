@@ -105,6 +105,11 @@ mod tests {
     }
 
     #[test]
+    fn aspect_is_width_over_height() {
+        assert!((pong().aspect() - 16.0 / 9.0).abs() < EPS);
+    }
+
+    #[test]
     fn offset_center_moves_world() {
         let cam = Camera2D {
             center: vec2(100.0, 50.0),

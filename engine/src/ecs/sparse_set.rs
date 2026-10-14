@@ -124,6 +124,16 @@ mod tests {
     }
 
     #[test]
+    fn insert_twice_replaces() {
+        let mut set = SparseSet::default();
+        let a = entity(3, 0);
+        set.insert(a, 'a');
+        set.insert(a, 'A');
+        assert_eq!(set.get(a), Some(&'A'));
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
     fn remove_last() {
         let mut set = SparseSet::default();
         let (a, b) = (entity(0, 0), entity(1, 0));

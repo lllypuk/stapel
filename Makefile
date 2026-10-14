@@ -3,7 +3,7 @@ export PATH := $(HOME)/.cargo/bin:$(PATH)
 
 GAMES := $(notdir $(wildcard games/*))
 
-.PHONY: $(GAMES) test lint doc deps check
+.PHONY: $(GAMES) test lint doc deps check cov
 
 # make pong; make pong NO_VSYNC=1
 $(GAMES):
@@ -26,3 +26,7 @@ check:
 	cargo fmt --all --check
 	typos
 	$(MAKE) lint doc deps test
+
+# app.rs и renderer.rs — склейка с окном; порог только вверх.
+cov:
+	cargo llvm-cov --workspace --ignore-filename-regex 'engine/src/(app|renderer)\.rs' --fail-under-lines 94
