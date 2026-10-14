@@ -111,10 +111,10 @@ games/clear-color/src/main.rs
 **Files:**
 - Create: `engine/src/renderer.rs`
 
-- [ ] тесты чистых функций: размер с нулевой шириной **или** высотой → поверхность недоступна, кадр не берётся (wgpu паникует на `configure` с нулём); результат `get_current_texture()` (`CurrentSurfaceTexture` в wgpu 30) → действие: `Success` → рисовать; `Suboptimal` → рисовать, переконфигурировать после `present` (не раньше: пока жива текстура, `configure` нельзя); `Timeout`/`Occluded` → пропустить кадр; `Outdated` → `configure`; `Lost` → пересоздать `Surface` и `configure`; `Validation` → ошибка в лог и выход
-- [ ] `Renderer::new(Arc<Window>, vsync)`: instance → surface → adapter → device/queue (`pollster::block_on`), формат поверхности — `*Srgb`, `PresentMode::AutoVsync` / `AutoNoVsync`; выбранный present mode в лог (`AutoNoVsync` может откатиться на `Fifo`)
-- [ ] `resize(size)`, `render(&Gfx) -> bool` (кадр показан или нет): текстура поверхности → render pass с `LoadOp::Clear(clear_color)` → `submit` → `window.pre_present_notify()` → `present`
-- [ ] `cargo test` — зелёный
+- [x] тесты чистых функций: размер с нулевой шириной **или** высотой → поверхность недоступна, кадр не берётся (wgpu паникует на `configure` с нулём); результат `get_current_texture()` (`CurrentSurfaceTexture` в wgpu 30) → действие: `Success` → рисовать; `Suboptimal` → рисовать, переконфигурировать после `present` (не раньше: пока жива текстура, `configure` нельзя); `Timeout`/`Occluded` → пропустить кадр; `Outdated` → `configure`; `Lost` → пересоздать `Surface` и `configure`; `Validation` → ошибка в лог и выход; ➕ тесты выбора `*Srgb`-формата и present mode
+- [x] `Renderer::new(Arc<Window>, vsync)`: instance → surface → adapter → device/queue (`pollster::block_on`), формат поверхности — `*Srgb`, present mode выбирается явно по порядку `AutoVsync` / `AutoNoVsync` (сам `Auto*` разрешается внутри wgpu, и в лог попал бы не настоящий режим); выбранный режим в лог (без vsync может откатиться на `Fifo`)
+- [x] `resize(size)`, `render(&Gfx) -> Result<bool, RenderError>` (кадр показан или нет; `Err` на `Validation` — `App` пишет в лог и выходит): текстура поверхности → render pass с `LoadOp::Clear(clear_color)` → `submit` → `window.pre_present_notify()` → `queue.present` (в wgpu 30 `present` у `Queue`)
+- [x] `cargo test` — зелёный
 
 ### Task 7: `App` и `engine::run`
 
