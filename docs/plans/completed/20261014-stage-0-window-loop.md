@@ -150,8 +150,8 @@ games/clear-color/src/main.rs
 - [x] ресайз и сворачивание не роняют игру; свёрнутое окно не грузит CPU (вручную не проверено: нужна работа с окнами)
 
 ### Task 10: [Final] Update documentation
-- [ ] `README.md`: что это, как собрать и запустить, ссылка на `docs/design.md`
-- [ ] перенести план в `docs/plans/completed/`
+- [x] `README.md`: что это, как собрать и запустить, ссылка на `docs/design.md`
+- [x] перенести план в `docs/plans/completed/`
 
 ## Post-Completion
 - Проверить на Wayland и X11 (`WAYLAND_DISPLAY= cargo run -p clear-color` принудительно включает X11), если доступны оба.
