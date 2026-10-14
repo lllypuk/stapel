@@ -98,11 +98,11 @@ games/clear-color/src/main.rs
 - Create: `engine/src/frame.rs`
 - Modify: `engine/src/lib.rs`
 
-- [ ] тесты с фейковой игрой, которая считает вызовы: кадр на 2 шага → 2 `update`, 1 `draw`; нажатие перед кадром на 2 тика → `just_pressed` видит только первый `update`; кадр на 0 тиков → `just_pressed` доживает до следующего кадра; `time.ticks` растёт на число тиков
-- [ ] тест `Color::from_srgb8`: 0 → 0.0, 255 → 1.0, 128 → ≈0.216
-- [ ] `Color` (линейный RGBA, `f64`, как в `wgpu::Color`), `Gfx { clear_color }`, `Time`, `Context`, трейт `Game`
-- [ ] `step_frame`
-- [ ] `cargo test` — зелёный
+- [x] тесты с фейковой игрой, которая считает вызовы: кадр на 2 шага → 2 `update`, 1 `draw`; нажатие перед кадром на 2 тика → `just_pressed` видит только первый `update`; кадр на 0 тиков → `just_pressed` доживает до следующего кадра; `time.ticks` растёт на число тиков
+- [x] тест `Color::from_srgb8`: 0 → 0.0, 255 → 1.0, 128 → ≈0.216
+- [x] `Color` (линейный RGBA, `f64`, как в `wgpu::Color`), `Gfx { clear_color }`, `Time`, `Context`, трейт `Game`
+- [x] `step_frame`
+- [x] `cargo test` — зелёный
 
 ### Task 6: `Renderer` — очистка экрана через wgpu
 
