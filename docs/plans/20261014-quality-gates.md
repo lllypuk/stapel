@@ -194,9 +194,12 @@
   - 809 мутантов за 19 мин на раннере: 729 caught, 80 unviable
 
 ### Task 11: Verify acceptance criteria
-- [ ] `make check`, `make cov`, `make mutants` локально — зелёные
-- [ ] пайплайн на ветке зелёный; в логе `coverage` офскрин-тест выполнен на llvmpipe через Vulkan, `SKIPPED` нет
-- [ ] каждая проверка из Tasks 1–8 хотя бы раз уронила сборку намеренно (отмечено в задачах)
+- [x] `make check`, `make cov`, `make mutants` локально — зелёные
+  - покрытие 98,72%; 809 мутантов за 8 мин: 729 caught, 80 unviable
+- [x] пайплайн на ветке зелёный; в логе `coverage` офскрин-тест выполнен на llvmpipe через Vulkan, `SKIPPED` нет
+  - пайплайн #1012 (`e5f2f20`): `llvmpipe (LLVM 19.1.7)`, `backend: Vulkan`, `offscreen_render ... ok`
+- [x] каждая проверка из Tasks 1–8 хотя бы раз уронила сборку намеренно (отмечено в задачах)
+  - `cargo deny` в Task 5 не ломали: без `MIT` в `allow` (копия `deny.toml`, `--config`) — `licenses FAILED`, 71 rejected
 
 ### Task 12: [Final] Update documentation
 - [ ] `CLAUDE.md`, «Команды»: `make check` (нужна сеть — advisory-db), `make cov`, `make mutants`, `REQUIRE_GPU` и `WGPU_BACKEND`; «Правила»: исключения из линтов — `#[expect(.., reason)]` (`cfg_attr(not(test), ..)`, если линт зависит от тестовой сборки), порог покрытия только вверх, выживший мутант — тест или исключение с причиной, тег `CI_IMAGE` поднимается вместе с `ci/Dockerfile`
