@@ -1,4 +1,5 @@
 mod app;
+pub mod assets;
 pub mod camera;
 pub mod clock;
 pub mod frame;
@@ -6,6 +7,7 @@ pub mod input;
 pub mod renderer;
 pub mod stats;
 
+pub use assets::{Assets, PendingTexture, TextureId};
 pub use camera::{Camera2D, Viewport, letterbox};
 pub use clock::FixedClock;
 pub use frame::{Color, Context, Game, Gfx, Time, step_frame};

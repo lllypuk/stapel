@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{FixedClock, Input};
+use crate::{Assets, FixedClock, Input};
 
 /// Линейный RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -36,13 +36,23 @@ impl Default for Color {
     }
 }
 
-fn srgb_to_linear(c: u8) -> f64 {
+pub(crate) fn srgb_to_linear(c: u8) -> f64 {
     let c = f64::from(c) / 255.0;
     if c <= 0.04045 {
         c / 12.92
     } else {
         ((c + 0.055) / 1.055).powf(2.4)
     }
+}
+
+pub(crate) fn linear_to_srgb(c: f64) -> u8 {
+    let c = c.clamp(0.0, 1.0);
+    let s = if c <= 0.0031308 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    };
+    (s * 255.0).round() as u8
 }
 
 /// Что нарисовать в этом кадре; игра заполняет в `draw`.
@@ -64,6 +74,7 @@ pub struct Context {
     pub input: Input,
     pub time: Time,
     pub gfx: Gfx,
+    pub assets: Assets,
 }
 
 impl Context {
@@ -181,5 +192,12 @@ mod tests {
         let c = Color::from_srgb8(0, 255, 128);
         assert_eq!((c.r, c.g, c.a), (0.0, 1.0, 1.0));
         assert!((c.b - 0.216).abs() < 1e-3, "b = {}", c.b);
+    }
+
+    #[test]
+    fn srgb8_roundtrips_through_linear() {
+        for c in 0..=255 {
+            assert_eq!(linear_to_srgb(srgb_to_linear(c)), c);
+        }
     }
 }
