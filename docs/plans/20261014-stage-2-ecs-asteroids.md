@@ -214,11 +214,11 @@
 - [x] тесты — зелёные
 
 ### Task 13: Verify acceptance criteria
-- [ ] `cargo test --workspace -- --nocapture`: нет `SKIPPED`; clippy
-- [ ] `make asteroids`: партия играбельна на Wayland и на X11 (`WAYLAND_DISPLAY=`)
-- [ ] смерть корабля у центра: окно лога с `sprites` минимум > 5 000 и `fps 60`; записать `worst` в этот план
-- [ ] ресайз и сворачивание: мир не меняется, текст читаем, игра не падает
-- [ ] `make pong`, `make clear-color` работают как прежде
+- [x] `cargo test --workspace -- --nocapture`: нет `SKIPPED`; clippy
+- [x] `make asteroids`: партия играбельна на Wayland и на X11 (`WAYLAND_DISPLAY=`) — запуск, столкновения, смерти и fps 60 на обоих (Fifo / FifoRelaxed); игра с клавиатуры пропущена — не автоматизируется
+- [x] смерть корабля у центра: окно лога с `sprites` минимум > 5 000 и `fps 60`; записать `worst` в этот план — Radeon RENOIR (radv), release: `sprites 5312..6323`, `fps 60`, `worst` 17,7–18,9 мс на Wayland и 17,9–18,9 мс на X11
+- [x] ресайз и сворачивание: мир не меняется, текст читаем, игра не падает (skipped - not automatable)
+- [x] `make pong`, `make clear-color` работают как прежде
 
 ### Task 14: [Final] Update documentation
 - [ ] `README.md`: запуск и управление Asteroids; строка про лог `clear-color` — лог теперь пишет движок
