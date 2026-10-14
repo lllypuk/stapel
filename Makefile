@@ -1,6 +1,9 @@
+# cargo-binstall ставит typos сюда же, а не в PATH.
+export PATH := $(HOME)/.cargo/bin:$(PATH)
+
 GAMES := $(notdir $(wildcard games/*))
 
-.PHONY: $(GAMES) test lint doc check
+.PHONY: $(GAMES) test lint doc deps check
 
 # make pong; make pong NO_VSYNC=1
 $(GAMES):
@@ -15,6 +18,11 @@ lint:
 doc:
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
+deps:
+	cargo machete
+	cargo deny check
+
 check:
 	cargo fmt --all --check
-	$(MAKE) lint doc test
+	typos
+	$(MAKE) lint doc deps test

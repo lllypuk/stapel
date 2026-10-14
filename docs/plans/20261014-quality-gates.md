@@ -114,11 +114,11 @@
 - Create: `deny.toml`
 - Modify: `Makefile`, `engine/Cargo.toml`, `games/*/Cargo.toml`
 
-- [ ] `typos`: прогнать, исправить найденное; `_typos.toml` — только при ложных срабатываниях
-- [ ] `publish = false` во всех крейтах; `deny.toml` по Technical Details, белый список — из фактического дерева
-- [ ] `make check` + `typos`, `cargo machete`, `cargo deny check`
-- [ ] проверка ворот: опечатка в идентификаторе и неиспользуемая зависимость роняют `make check`
-- [ ] `make check` — зелёный
+- [x] `typos`: прогнать, исправить найденное; `_typos.toml` — только при ложных срабатываниях
+- [x] `publish = false` во всех крейтах; `deny.toml` по Technical Details, белый список — из фактического дерева
+- [x] `make check` + `typos`, `cargo machete`, `cargo deny check`
+- [x] проверка ворот: опечатка в идентификаторе и неиспользуемая зависимость роняют `make check`
+- [x] `make check` — зелёный
 
 ### Task 6: Офскрин-тест не пропускается под `REQUIRE_GPU`
 
