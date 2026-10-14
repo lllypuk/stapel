@@ -378,6 +378,13 @@ mod tests {
     }
 
     #[test]
+    fn paddle_moving_into_ball_is_swept_relatively() {
+        let mut p = pong(vec2(290.0, 37.0), vec2(MAX_SPEED, 0.0));
+        p.tick(&input(&[KeyCode::KeyO]));
+        assert!(p.vel.x < 0.0);
+    }
+
+    #[test]
     fn fast_ball_does_not_pass_still_paddle() {
         let mut p = pong(vec2(200.0, 10.0), vec2(MAX_SPEED, 0.0));
         for _ in 0..30 {
