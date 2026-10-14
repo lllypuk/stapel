@@ -125,9 +125,9 @@
 **Files:**
 - Modify: `engine/src/sprite_pipeline.rs`
 
-- [ ] без адаптера: `REQUIRE_GPU=1` → `panic!`, иначе `SKIPPED` как сейчас
-- [ ] проверка: `WGPU_BACKEND=vulkan REQUIRE_GPU=1 VK_ICD_FILENAMES=/nonexistent cargo test -p engine sprite_pipeline` падает; без `REQUIRE_GPU` — пропускает (без `WGPU_BACKEND` адаптер нашёлся бы через GL)
-- [ ] `make check` — зелёный
+- [x] без адаптера: `REQUIRE_GPU=1` → `panic!`, иначе `SKIPPED` как сейчас
+- [x] проверка: `WGPU_BACKEND=vulkan REQUIRE_GPU=1 VK_ICD_FILENAMES=/nonexistent cargo test -p engine sprite_pipeline` падает; без `REQUIRE_GPU` — пропускает (без `WGPU_BACKEND` адаптер нашёлся бы через GL)
+- [x] `make check` — зелёный
 
 ### Task 7: Покрытие с порогом
 

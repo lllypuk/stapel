@@ -309,6 +309,10 @@ mod tests {
         ) {
             Ok(a) => a,
             Err(e) => {
+                assert!(
+                    std::env::var("REQUIRE_GPU").as_deref() != Ok("1"),
+                    "REQUIRE_GPU=1, but no GPU adapter: {e}"
+                );
                 eprintln!("SKIPPED: no GPU adapter: {e}");
                 return None;
             }
