@@ -94,7 +94,7 @@ impl Pong {
         let old = self.paddles;
         let limit = HALF_FIELD.y - PADDLE_HALF.y;
         for (y, (up, down)) in self.paddles.iter_mut().zip(KEYS) {
-            let dir = input.is_down(up) as i32 - input.is_down(down) as i32;
+            let dir = i32::from(input.is_down(up)) - i32::from(input.is_down(down));
             *y = (*y + dir as f32 * PADDLE_SPEED * DT).clamp(-limit, limit);
         }
 
@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(SEGMENTS[8].count_ones(), 7);
         assert_eq!(SEGMENTS[1].count_ones(), 2);
         let mut sets = SEGMENTS.to_vec();
-        sets.sort();
+        sets.sort_unstable();
         sets.dedup();
         assert_eq!(sets.len(), 10);
         assert_eq!(digit(8, Vec2::ZERO).count(), 7);

@@ -93,10 +93,10 @@
 **Files:**
 - Modify: `games/*/Cargo.toml`, `games/asteroids/src/main.rs`, `games/pong/src/main.rs`, `games/clear-color/src/main.rs`
 
-- [ ] `[lints] workspace = true` во всех играх
-- [ ] исправить срабатывания: `unwrap` в Asteroids, касты, `bool as i32` → `i32::from`
-- [ ] тесты игр без изменения ожиданий
-- [ ] `make check` — зелёный
+- [x] `[lints] workspace = true` во всех играх
+- [x] исправить срабатывания: `unwrap` в Asteroids, касты, `bool as i32` → `i32::from`
+- [x] тесты игр без изменения ожиданий
+- [x] `make check` — зелёный
 
 ### Task 4: rustdoc и документация публичного API
 
