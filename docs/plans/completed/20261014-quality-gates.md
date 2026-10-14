@@ -202,10 +202,10 @@
   - `cargo deny` в Task 5 не ломали: без `MIT` в `allow` (копия `deny.toml`, `--config`) — `licenses FAILED`, 71 rejected
 
 ### Task 12: [Final] Update documentation
-- [ ] `CLAUDE.md`, «Команды»: `make check` (нужна сеть — advisory-db), `make cov`, `make mutants`, `REQUIRE_GPU` и `WGPU_BACKEND`; «Правила»: исключения из линтов — `#[expect(.., reason)]` (`cfg_attr(not(test), ..)`, если линт зависит от тестовой сборки), порог покрытия только вверх, выживший мутант — тест или исключение с причиной, тег `CI_IMAGE` поднимается вместе с `ci/Dockerfile`
-- [ ] `README.md`: установка инструментов
-- [ ] `docs/design.md`, последняя строка раздела «Этапы»: как проверяется чистая логика (покрытие с порогом, мутанты)
-- [ ] перенести план в `docs/plans/completed/`
+- [x] `CLAUDE.md`, «Команды»: `make check` (нужна сеть — advisory-db), `make cov`, `make mutants`, `REQUIRE_GPU` и `WGPU_BACKEND`; «Правила»: исключения из линтов — `#[expect(.., reason)]` (`cfg_attr(not(test), ..)`, если линт зависит от тестовой сборки), порог покрытия только вверх, выживший мутант — тест или исключение с причиной, тег `CI_IMAGE` поднимается вместе с `ci/Dockerfile`
+- [x] `README.md`: установка инструментов
+- [x] `docs/design.md`, последняя строка раздела «Этапы»: как проверяется чистая логика (покрытие с порогом, мутанты)
+- [x] перенести план в `docs/plans/completed/`
 
 ## Post-Completion
 - Раз в неделю смотреть результат расписания `mutants`; при росте времени прогона — сузить скоуп в `.cargo/mutants.toml`.

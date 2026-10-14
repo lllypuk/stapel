@@ -15,3 +15,17 @@ NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color # без vsync
 С `RUST_LOG=info` движок раз в секунду пишет в лог FPS, TPS, худший кадр и число спрайтов. `make <игра>` — release-сборка.
 
 Платформа — Linux (Wayland, X11), нужен Vulkan.
+
+## Проверки
+
+Версия Rust и компоненты закреплены в `rust-toolchain.toml`, rustup поставит их сам. Инструменты — в `~/.cargo/bin` (Makefile добавляет его в `PATH`), версии те же, что в `ci/Dockerfile`:
+
+```sh
+cargo install cargo-binstall
+cargo binstall --locked cargo-llvm-cov@0.9.1 cargo-mutants@27.1.0 cargo-deny@0.20.2 cargo-machete@0.9.2 typos-cli@1.51.1
+make check    # линты, документация, зависимости, тесты
+make cov      # покрытие с порогом
+make mutants  # мутационное тестирование
+```
+
+CI — `.gitlab-ci.yml`: на каждый push линты и `make cov` (он же прогон тестов, офскрин-тест — на lavapipe), мутанты — по расписанию раз в неделю.

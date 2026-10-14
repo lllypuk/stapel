@@ -14,6 +14,10 @@ RUST_LOG=info cargo run -p clear-color                            # движок
 RUST_LOG=info cargo run -p pong
 make asteroids                                                    # любая игра из games/, release; make test, make lint
 NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color
+make check                                                        # fmt, typos, clippy, doc, machete, deny, тесты; deny качает advisory-db — нужна сеть
+make cov                                                          # покрытие строк с порогом
+make mutants                                                      # мутанты, ~8 мин; исключения — .cargo/mutants.toml
+REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine sprite_pipeline   # офскрин-тест без адаптера падает, а не пропускается; без WGPU_BACKEND найдётся адаптер GL
 ```
 
 ## Архитектура
@@ -28,4 +32,8 @@ NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color
 ## Правила
 
 - Функция появляется в движке только когда она нужна игре текущего этапа (`docs/design.md`, таблица «Этапы»). Изменение решения из дизайна — вместе с правкой `docs/design.md`.
+- Исключение из линта — локальный `#[expect(lint, reason = "...")]`, не `allow`; если линт срабатывает по-разному в тестовой сборке (`unwrap_used`, `print_stderr`, `dead_code`) — `#[cfg_attr(not(test), expect(..))]`, иначе `--all-targets` упадёт на `unfulfilled_lint_expectations`.
+- Порог покрытия в `make cov` — только вверх; снижение — осознанное решение в коммите.
+- Выживший мутант — тест, который его убивает, или исключение в `.cargo/mutants.toml` с причиной.
+- Тег `CI_IMAGE` в `.gitlab-ci.yml` поднимается вместе с правкой `ci/Dockerfile`; образ собирается и пушится вручную.
 - Ревью веток — `revmux`; профиль проекта для него — `.revmux/profile.md`, архив раундов `.revmux/tasks/` в git не попадает.
