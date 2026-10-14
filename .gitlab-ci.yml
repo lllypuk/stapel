@@ -1,0 +1,55 @@
+# Образ — ci/Dockerfile, собирается и пушится вручную; тег поднимается вместе с его правкой.
+variables:
+  CI_IMAGE_TAG: "1"
+  CI_IMAGE: $CI_REGISTRY_IMAGE/ci:$CI_IMAGE_TAG
+  # Без них офскрин-тест пропустился бы или ушёл на GL, и упали бы покрытие и мутанты.
+  REQUIRE_GPU: "1"
+  WGPU_BACKEND: vulkan
+  # cache:paths — только внутри проекта; не .cargo — там mutants.toml.
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo-ci
+
+image: $CI_IMAGE
+
+stages: [lint, coverage, mutants]
+
+# В ключе нет / из CI_IMAGE: GitLab его не принимает.
+.cache: &cache
+  key:
+    files: [Cargo.lock, rust-toolchain.toml]
+    prefix: ci-$CI_IMAGE_TAG
+  paths: [target/, .cargo-ci/registry/]
+  # target/ с llvm-cov-target — гигабайты; пишет только coverage.
+  policy: pull
+
+default:
+  cache: *cache
+
+lint:
+  stage: lint
+  script:
+    - cargo fmt --all --check
+    - typos
+    - make lint doc deps
+
+coverage:
+  stage: coverage
+  variables:
+    # Лог показывает адаптер офскрин-теста.
+    RUST_TEST_NOCAPTURE: "1"
+  cache:
+    <<: *cache
+    policy: pull-push
+  script:
+    - make cov
+
+mutants:
+  stage: mutants
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  needs: []
+  script:
+    - make mutants
+  artifacts:
+    when: always
+    paths: [mutants.out/]
+    expire_in: 2 weeks

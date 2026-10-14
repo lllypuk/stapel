@@ -1,3 +1,4 @@
 /target
 /.revmux/tasks/
 /mutants.out*
+/.cargo-ci/
