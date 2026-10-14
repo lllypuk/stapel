@@ -2,7 +2,8 @@ use std::f32::consts::TAU;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use engine::{
-    Camera2D, Commands, Config, Context, Entity, Game, Input, KeyCode, Sprite, Vec2, World, vec2,
+    Camera2D, Color, Commands, Config, Context, Entity, Game, Input, KeyCode, Sprite, Vec2, World,
+    vec2,
 };
 
 const TICK_HZ: u32 = 60;
@@ -28,6 +29,14 @@ const WAVE_CLEARANCE: f32 = 120.0;
 const LIVES: u32 = 3;
 const RESPAWN_DELAY: u32 = 2 * TICK_HZ;
 const INVULNERABLE: u32 = 2 * TICK_HZ;
+const PARTICLE_SIZE: f32 = 2.0;
+const PARTICLE_SPEED: (f32, f32) = (20.0, 150.0);
+const ASTEROID_PARTICLES: [u32; 3] = [300, 150, 75];
+/// Секунды.
+const ASTEROID_PARTICLE_TTL: (f32, f32) = (0.5, 2.0);
+const SHIP_PARTICLES: u32 = 6_000;
+/// Секунды; короче — и после смерти корабля > 5 000 частиц держится меньше окна статистики.
+const SHIP_PARTICLE_TTL: (f32, f32) = (3.0, 4.0);
 
 /// Положение и угол на начало и конец тика; угол не нормализуется, иначе lerp через 2π крутит назад.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -71,6 +80,17 @@ struct Size(Vec2);
 struct Lifetime(u32);
 
 struct Bullet;
+
+/// Полное время жизни в тиках; остаток — в `Lifetime`.
+struct Particle {
+    ttl: u32,
+}
+
+impl Particle {
+    fn alpha(&self, left: &Lifetime) -> f32 {
+        left.0 as f32 / self.ttl as f32
+    }
+}
 
 /// Индекс размера в `ASTEROID_*`: 0 — большой.
 struct Asteroid(usize);
@@ -170,6 +190,24 @@ fn spawn_asteroid(w: &mut World, tier: usize, pos: Vec2, (vel, spin): (Vec2, f32
     e
 }
 
+/// Взрыв одной командой; свой ГПСЧ из `seed`, иначе взрывы одного тика совпали бы.
+fn explosion(seed: u64, pos: Vec2, count: u32, (lo, hi): (f32, f32)) -> impl FnOnce(&mut World) {
+    move |w| {
+        let mut rng = Rng::new(seed);
+        for _ in 0..count {
+            let vel = Vec2::from_angle(rng.range(0.0, TAU))
+                * rng.range(PARTICLE_SPEED.0, PARTICLE_SPEED.1);
+            let ttl = ((rng.range(lo, hi) * TICK_HZ as f32) as u32).max(1);
+            let e = w.spawn();
+            w.insert(e, Transform::at(pos, 0.0));
+            w.insert(e, Velocity(vel));
+            w.insert(e, Size(Vec2::splat(PARTICLE_SIZE)));
+            w.insert(e, Lifetime(ttl));
+            w.insert(e, Particle { ttl });
+        }
+    }
+}
+
 /// Случайные скорость и вращение астероида размера `tier`.
 fn asteroid_motion(rng: &mut Rng, tier: usize) -> (Vec2, f32) {
     let (lo, hi) = ASTEROID_SPEED[tier];
@@ -188,6 +226,7 @@ impl Asteroids {
         world.register::<Lifetime>();
         world.register::<Bullet>();
         world.register::<Asteroid>();
+        world.register::<Particle>();
         let ship = world.spawn();
         world.insert(ship, Transform::at(Vec2::ZERO, 0.0));
         world.insert(ship, Velocity(Vec2::ZERO));
@@ -390,11 +429,17 @@ impl Asteroids {
         }
     }
 
-    /// Очки и раскол; сам астероид уже в очереди на удаление.
+    /// Очки, раскол и взрыв; сам астероид уже в очереди на удаление.
     fn destroy_asteroid(&mut self, a: Entity) {
         let tier = self.world.storage::<Asteroid>().get(a).unwrap().0;
         let pos = self.world.storage::<Transform>().get(a).unwrap().pos;
         self.score += ASTEROID_SCORE[tier];
+        self.cmds.spawn(explosion(
+            self.rng.next(),
+            pos,
+            ASTEROID_PARTICLES[tier],
+            ASTEROID_PARTICLE_TTL,
+        ));
         let next = tier + 1;
         if next < ASTEROID_RADIUS.len() {
             let fragments = [
@@ -418,6 +463,18 @@ impl Asteroids {
                 respawn_in: RESPAWN_DELAY,
             }
         };
+        let pos = self
+            .world
+            .storage::<Transform>()
+            .get(self.ship)
+            .unwrap()
+            .pos;
+        self.cmds.spawn(explosion(
+            self.rng.next(),
+            pos,
+            SHIP_PARTICLES,
+            SHIP_PARTICLE_TTL,
+        ));
         self.world
             .storage_mut::<Velocity>()
             .get_mut(self.ship)
@@ -479,6 +536,8 @@ impl Game for Asteroids {
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
         let transforms = self.world.storage::<Transform>();
         let sizes = self.world.storage::<Size>();
+        let particles = self.world.storage::<Particle>();
+        let lifetimes = self.world.storage::<Lifetime>();
         for (e, t) in transforms.iter() {
             let Some(size) = sizes.get(e) else {
                 continue;
@@ -487,10 +546,17 @@ impl Game for Asteroids {
                 continue;
             }
             let (pos, rotation) = t.lerp(alpha);
+            let a = particles
+                .get(e)
+                .map_or(1.0, |p| p.alpha(lifetimes.get(e).unwrap()));
             ctx.gfx.draw_sprite(Sprite {
                 pos,
                 size: size.0,
                 rotation,
+                color: Color {
+                    a: a as f64,
+                    ..Color::WHITE
+                },
                 ..Default::default()
             });
         }
@@ -841,5 +907,106 @@ mod tests {
         assert_eq!(g.state, ShipState::Alive);
         assert_eq!((g.lives, g.score, g.wave), (LIVES, 0, 1));
         assert_eq!(asteroids(&g).len(), WAVE_START as usize);
+    }
+
+    fn particles(g: &Asteroids) -> Vec<(Transform, Vec2, f32)> {
+        let transforms = g.world.storage::<Transform>();
+        let vels = g.world.storage::<Velocity>();
+        let lifetimes = g.world.storage::<Lifetime>();
+        g.world
+            .storage::<Particle>()
+            .iter()
+            .map(|(e, p)| {
+                let t = *transforms.get(e).unwrap();
+                (
+                    t,
+                    vels.get(e).unwrap().0,
+                    p.alpha(lifetimes.get(e).unwrap()),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn big_asteroid_explodes_into_300_particles_from_one_command() {
+        let mut g = game();
+        let mut cmds = Commands::default();
+        let pos = vec2(10.0, 20.0);
+        cmds.spawn(explosion(
+            7,
+            pos,
+            ASTEROID_PARTICLES[0],
+            ASTEROID_PARTICLE_TTL,
+        ));
+        cmds.apply(&mut g.world);
+        let ps = particles(&g);
+        assert_eq!(ps.len(), 300);
+        let (lo, hi) = PARTICLE_SPEED;
+        for (t, vel, alpha) in ps {
+            assert_eq!((t.pos, t.prev), (pos, pos));
+            assert!((lo..hi).contains(&vel.length()));
+            assert_eq!(alpha, 1.0);
+        }
+        let (lo, hi) = ASTEROID_PARTICLE_TTL;
+        let ttl = (lo * TICK_HZ as f32) as u32..=(hi * TICK_HZ as f32) as u32;
+        for (_, left) in g.world.storage::<Lifetime>().iter() {
+            assert!(ttl.contains(&left.0));
+        }
+
+        let mut g = game();
+        asteroid(&mut g, 0, vec2(100.0, 0.0));
+        spawn_bullet(&mut g.world, vec2(60.0, 0.0), vec2(BULLET_SPEED, 0.0), 0.0);
+        g.tick(&Input::default());
+        assert_eq!(particles(&g).len(), 300);
+    }
+
+    #[test]
+    fn two_explosions_in_one_tick_differ() {
+        let mut g = game();
+        asteroid(&mut g, 0, vec2(100.0, 0.0));
+        asteroid(&mut g, 0, vec2(100.0, 0.0));
+        spawn_bullet(&mut g.world, vec2(60.0, 0.0), vec2(BULLET_SPEED, 0.0), 0.0);
+        spawn_bullet(&mut g.world, vec2(60.0, 1.0), vec2(BULLET_SPEED, 0.0), 0.0);
+        g.tick(&Input::default());
+        assert_eq!(g.score, 2 * ASTEROID_SCORE[0]);
+        let vels: std::collections::HashSet<_> = particles(&g)
+            .into_iter()
+            .map(|(_, v, _)| (v.x.to_bits(), v.y.to_bits()))
+            .collect();
+        assert_eq!(vels.len(), 2 * ASTEROID_PARTICLES[0] as usize);
+    }
+
+    #[test]
+    fn particle_fades_with_ttl_then_disappears() {
+        let mut g = game();
+        let ttl = TICK_HZ / 2;
+        g.cmds.spawn(explosion(3, vec2(50.0, 50.0), 1, (0.5, 0.5)));
+        g.cmds.apply(&mut g.world);
+        let mut last = particles(&g)[0].2;
+        assert_eq!(last, 1.0);
+        for _ in 1..ttl {
+            g.tick(&Input::default());
+            let alpha = particles(&g)[0].2;
+            assert!(alpha < last && alpha > 0.0);
+            last = alpha;
+        }
+        g.tick(&Input::default());
+        assert!(particles(&g).is_empty());
+        assert_eq!(g.world.storage::<Transform>().len(), 1);
+    }
+
+    #[test]
+    fn ship_death_holds_over_5000_particles_for_two_seconds() {
+        let mut g = Asteroids::new(42);
+        g.next_wave();
+        asteroid(&mut g, 2, vec2(3.0, 0.0));
+        g.tick(&Input::default());
+        assert!(matches!(g.state, ShipState::Dead { .. }));
+        let mut streak = 0;
+        while particles(&g).len() > 5_000 {
+            streak += 1;
+            g.tick(&Input::default());
+        }
+        assert!(streak >= 2 * TICK_HZ, "streak {streak}");
     }
 }
