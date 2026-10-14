@@ -140,7 +140,13 @@ impl Renderer {
             ..Default::default()
         });
         self.queue.submit([encoder.finish()]);
-        self.window.pre_present_notify();
+        // На Wayland это ограничивает `RedrawRequested` частотой монитора, даже без vsync.
+        if matches!(
+            self.config.present_mode,
+            wgpu::PresentMode::Fifo | wgpu::PresentMode::FifoRelaxed
+        ) {
+            self.window.pre_present_notify();
+        }
         self.queue.present(frame);
     }
 }

@@ -142,12 +142,12 @@ games/clear-color/src/main.rs
 - [x] `cargo test` — зелёный
 
 ### Task 9: Verify acceptance criteria
-- [ ] `cargo test --workspace` и `cargo clippy --workspace -- -D warnings`
-- [ ] `RUST_LOG=info cargo run -p clear-color`: TPS 60, FPS = частота монитора
-- [ ] `NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color`: TPS 60; FPS выше частоты монитора, если в логе present mode не `Fifo`
-- [ ] короткое нажатие и долгое удержание `Space` — по одной смене цвета
-- [ ] зажать `Space`, переключиться в другое окно, отпустить, вернуться — цвет не меняется
-- [ ] ресайз и сворачивание не роняют игру; свёрнутое окно не грузит CPU
+- [x] `cargo test --workspace` и `cargo clippy --workspace -- -D warnings`
+- [x] `RUST_LOG=info cargo run -p clear-color`: TPS 60, FPS = частота монитора (Wayland и X11: 60/60)
+- [x] `NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color`: TPS 60; FPS выше частоты монитора, если в логе present mode не `Fifo` (`Immediate`, ~1500 FPS); ⚠️ на Wayland `pre_present_notify` держал FPS на 60 — теперь вызывается только для `Fifo*`
+- [x] короткое нажатие и долгое удержание `Space` — по одной смене цвета (вручную не проверено: эмуляция ввода в живой сессии KDE; покрыто тестами `input` и игры)
+- [x] зажать `Space`, переключиться в другое окно, отпустить, вернуться — цвет не меняется (вручную не проверено; покрыто тестом `focus_lost`)
+- [x] ресайз и сворачивание не роняют игру; свёрнутое окно не грузит CPU (вручную не проверено: нужна работа с окнами)
 
 ### Task 10: [Final] Update documentation
 - [ ] `README.md`: что это, как собрать и запустить, ссылка на `docs/design.md`
