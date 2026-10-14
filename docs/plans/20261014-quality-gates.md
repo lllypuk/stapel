@@ -59,7 +59,7 @@
 - `image: $CI_IMAGE`, `CI_IMAGE: $CI_REGISTRY_IMAGE/ci:1`. Глобальные `variables`: `REQUIRE_GPU=1`, `WGPU_BACKEND=vulkan`, `CARGO_HOME=$CI_PROJECT_DIR/.cargo-ci` (`cache:paths` только внутри проекта; не `.cargo` — там `mutants.toml`, cargo прочитал бы каталог как свой). Инструменты образа — в `/usr/local/cargo/bin`, в `PATH`.
 - Стадии: `lint` (fmt, clippy, doc, typos, machete, deny) → `coverage`. `mutants` — `rules: if $CI_PIPELINE_SOURCE == "schedule"`.
 - Кэш: `target/` и `.cargo-ci/registry`, `key: {files: [Cargo.lock, rust-toolchain.toml], prefix: $CI_IMAGE}`; `target/` с `llvm-cov-target` — гигабайты, поэтому `policy: pull` во всех job, кроме `coverage`.
-- `ci/Dockerfile`: `rust:1.99.0-trixie` (mesa 25; в bookworm lavapipe 22.3 — риск, что wgpu 30 его не примет), `libvulkan1`, `mesa-vulkan-drivers`; `COPY rust-toolchain.toml` + `rustup show` — компоненты ровно из него; инструменты версий из Task 1.
+- `ci/Dockerfile`: `rust:1.99.0-trixie` (mesa 25; в bookworm lavapipe 22.3 — риск, что wgpu 30 его не примет), `libvulkan1`, `mesa-vulkan-drivers`; `COPY rust-toolchain.toml` + `rustup toolchain install` — компоненты ровно из него (`rustup show` с 1.28 не доустанавливает); инструменты версий из Task 1.
 
 ## Implementation Steps
 
@@ -166,12 +166,17 @@
 ### Task 9: CI-образ
 
 **Files:**
-- Create: `ci/Dockerfile`
+- Create: `ci/Dockerfile`, `.dockerignore`
 
-- [ ] `ci/Dockerfile` по Technical Details
-- [ ] локально: `docker build`, в контейнере `make check` и `make cov` проходят, лог офскрин-теста показывает адаптер llvmpipe на Vulkan. Расхождение пикселей с эталоном — ⚠️ блокер, `TOL` не расширять
-- [ ] в контейнере замерить `make mutants`; если > 60 мин — сузить скоуп, записать в план
-- [ ] `docker login registry.gitlab.shatrov.tech`, push `ci:1`
+- [x] `ci/Dockerfile` по Technical Details
+  - `.dockerignore` пускает в контекст только `rust-toolchain.toml`: buildx нет, legacy builder слал бы 9 ГБ `target/`
+- [x] локально: `docker build`, в контейнере `make check` и `make cov` проходят, лог офскрин-теста показывает адаптер llvmpipe на Vulkan. Расхождение пикселей с эталоном — ⚠️ блокер, `TOL` не расширять
+  - `docker build --network host`: в bridge-сети этой машины загрузки ~45 КБ/с и apt зависает
+  - адаптер `llvmpipe (LLVM 19.1.7)`, `backend: Vulkan`, Mesa 25.0.7; пиксели совпали; покрытие 98,72%
+- [x] в контейнере замерить `make mutants`; если > 60 мин — сузить скоуп, записать в план
+  - 809 мутантов за 7 мин 47 с (16 ядер, `-j 4`): 729 caught, 80 unviable; скоуп не сужался. Без `CARGO_TARGET_DIR`: общий каталог сборки для копий `-j` исказил бы результат
+- [x] `docker login registry.gitlab.shatrov.tech`, push `ci:1`
+  - OAuth-токен `glab` registry не принимает: временный deploy-токен проекта (`read_registry` + `write_registry`, без `read_registry` push — denied), после push отозван, `docker logout`
 
 ### Task 10: `.gitlab-ci.yml`
 

@@ -1,0 +1,3 @@
+# Образу нужен только rust-toolchain.toml; без этого legacy builder шлёт в контекст target/.
+*
+!rust-toolchain.toml
