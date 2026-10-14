@@ -35,11 +35,15 @@ impl World {
             .or_insert_with(|| Box::new(RefCell::new(SparseSet::<T>::default())));
     }
 
+    /// Новая сущность без компонентов.
     pub fn spawn(&mut self) -> Entity {
         self.entities.spawn()
     }
 
-    /// Паника на мёртвую `e`: вставка в её слот дала бы призрачную сущность в обходе.
+    /// Вставляет компонент `T` сущности `e`, заменяя прежний.
+    ///
+    /// # Panics
+    /// На мёртвую `e`: вставка в её слот дала бы призрачную сущность в обходе.
     pub fn insert<T: 'static>(&mut self, e: Entity, value: T) {
         assert!(self.is_alive(e), "insert в мёртвую {e:?}");
         self.storage_mut::<T>().insert(e, value);
@@ -54,16 +58,25 @@ impl World {
         }
     }
 
+    /// Жива ли `e`; устаревшая копия после `despawn` — нет.
     pub fn is_alive(&self, e: Entity) -> bool {
         self.entities.is_alive(e)
     }
 
+    /// Хранилище компонентов `T` на чтение.
+    ///
+    /// # Panics
+    /// Если оно уже взято на запись.
     pub fn storage<T: 'static>(&self) -> Ref<'_, SparseSet<T>> {
         self.cell::<T>()
             .try_borrow()
             .unwrap_or_else(|_| panic!("хранилище {} занято на запись", type_name::<T>()))
     }
 
+    /// Хранилище компонентов `T` на запись.
+    ///
+    /// # Panics
+    /// Если оно уже взято.
     pub fn storage_mut<T: 'static>(&self) -> RefMut<'_, SparseSet<T>> {
         self.cell::<T>()
             .try_borrow_mut()

@@ -9,15 +9,20 @@ use crate::assets::{Handle, Texture};
 /// Прямоугольник от `min` до `max`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
+    /// Угол с меньшими координатами.
     pub min: Vec2,
+    /// Угол с большими координатами.
     pub max: Vec2,
 }
 
 /// Прямоугольник с текстурой; `pos` — центр в мировых единицах.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sprite {
+    /// Текстура; `Handle::WHITE` — сплошной цвет.
     pub texture: Handle<Texture>,
+    /// Центр.
     pub pos: Vec2,
+    /// Ширина и высота в мировых единицах.
     pub size: Vec2,
     /// Радианы, против часовой вокруг `pos`.
     pub rotation: f32,
@@ -25,6 +30,7 @@ pub struct Sprite {
     pub uv: Rect,
     /// Линейный, не премультиплицированный.
     pub color: Color,
+    /// Больший слой рисуется поверх.
     pub layer: i32,
 }
 
@@ -49,19 +55,26 @@ impl Default for Sprite {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct Instance {
+    /// Центр в мире.
     pub pos: [f32; 2],
+    /// Размер в мире.
     pub size: [f32; 2],
     /// `[cos, sin]` угла поворота.
     pub rotation: [f32; 2],
+    /// `Sprite::uv.min`.
     pub uv_min: [f32; 2],
+    /// `Sprite::uv.max`.
     pub uv_max: [f32; 2],
+    /// Линейный RGBA.
     pub color: [f32; 4],
 }
 
 /// Подряд идущие инстансы одной текстуры — один draw call.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Batch {
+    /// Текстура батча.
     pub texture: Handle<Texture>,
+    /// Индексы инстансов батча.
     pub range: Range<u32>,
 }
 
@@ -74,6 +87,7 @@ impl From<&Sprite> for Instance {
             rotation: [s.rotation.cos(), s.rotation.sin()],
             uv_min: s.uv.min.into(),
             uv_max: s.uv.max.into(),
+            #[expect(clippy::cast_possible_truncation, reason = "GPU берёт цвет в f32")]
             color: [c.r as f32, c.g as f32, c.b as f32, c.a as f32],
         }
     }
@@ -88,6 +102,10 @@ pub fn batch(sprites: &[Sprite]) -> (Vec<Instance>, Vec<Batch>) {
     let mut batches: Vec<Batch> = Vec::new();
     for i in order {
         let s = &sprites[i];
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "u32::MAX спрайтов не поместится в память"
+        )]
         let n = instances.len() as u32;
         match batches.last_mut() {
             Some(b) if b.texture == s.texture => b.range.end = n + 1,
@@ -124,6 +142,10 @@ mod tests {
                 instances[b.range.start as usize..b.range.end as usize]
                     .iter()
                     .map(|i| {
+                        #[expect(
+                            clippy::float_cmp,
+                            reason = "координата скопирована без вычислений"
+                        )]
                         let s = sprites.iter().find(|s| s.pos.x == i.pos[0]).unwrap();
                         (s.layer, b.texture.index, i.pos[0])
                     })

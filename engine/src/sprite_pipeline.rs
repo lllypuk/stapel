@@ -20,6 +20,7 @@ pub struct SpritePipeline {
 }
 
 impl SpritePipeline {
+    /// Пайплайн для рендера в цель формата `format`.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::include_wgsl!("sprite.wgsl"));
 
@@ -63,42 +64,7 @@ impl SpritePipeline {
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("sprite"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<Instance>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![
-                        0 => Float32x2,
-                        1 => Float32x2,
-                        2 => Float32x2,
-                        3 => Float32x2,
-                        4 => Float32x2,
-                        5 => Float32x4,
-                    ],
-                })],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline = render_pipeline(device, &shader, &layout, format);
 
         let camera_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera"),
@@ -141,6 +107,9 @@ impl SpritePipeline {
     }
 
     /// Заливает на GPU текстуры, загруженные с прошлого вызова.
+    ///
+    /// # Panics
+    /// Если текстуры пришли не из того же `Assets`, что прошлые.
     pub fn upload(&mut self, assets: &mut Assets) {
         for t in assets.take_pending() {
             assert_eq!(
@@ -254,6 +223,50 @@ impl SpritePipeline {
     }
 }
 
+fn render_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("sprite"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: size_of::<Instance>() as u64,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &wgpu::vertex_attr_array![
+                    0 => Float32x2,
+                    1 => Float32x2,
+                    2 => Float32x2,
+                    3 => Float32x2,
+                    4 => Float32x2,
+                    5 => Float32x4,
+                ],
+            })],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 fn instance_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("sprite instances"),
@@ -296,6 +309,10 @@ mod tests {
         ) {
             Ok(a) => a,
             Err(e) => {
+                assert!(
+                    std::env::var("REQUIRE_GPU").as_deref() != Ok("1"),
+                    "REQUIRE_GPU=1, but no GPU adapter: {e}"
+                );
                 eprintln!("SKIPPED: no GPU adapter: {e}");
                 return None;
             }
@@ -411,6 +428,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "одна сцена: разбиение разнесло бы спрайты и их проверяемые пиксели"
+    )]
     fn offscreen_render() {
         let Some((device, queue)) = gpu() else {
             return;

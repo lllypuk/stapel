@@ -12,6 +12,7 @@ pub struct Input {
 }
 
 impl Input {
+    /// Учитывает событие клавиши; автоповтор игнорируется.
     pub fn on_key(&mut self, code: KeyCode, state: ElementState, repeat: bool) {
         if repeat {
             return;
@@ -35,18 +36,22 @@ impl Input {
         self.down.clear();
     }
 
+    /// Клавиша удерживается.
     pub fn is_down(&self, code: KeyCode) -> bool {
         self.down.contains(&code)
     }
 
+    /// Нажата с прошлого тика.
     pub fn just_pressed(&self, code: KeyCode) -> bool {
         self.pressed.contains(&code)
     }
 
+    /// Отпущена с прошлого тика.
     pub fn just_released(&self, code: KeyCode) -> bool {
         self.released.contains(&code)
     }
 
+    /// Сбрасывает нажатия и отпускания тика.
     pub fn end_tick(&mut self) {
         self.pressed.clear();
         self.released.clear();

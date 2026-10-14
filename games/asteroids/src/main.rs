@@ -52,6 +52,7 @@ const FONT_PATH: &str = concat!(
 const HUD_PX: f32 = 32.0;
 const HUD_SCALE: f32 = 0.5;
 const HUD_MARGIN: f32 = 6.0;
+const SHIP: &str = "корабль не удаляется из мира";
 
 /// Положение и угол на начало и конец тика; угол не нормализуется, иначе lerp через 2π крутит назад.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -203,6 +204,10 @@ fn text_width(font: &FontData, text: &str, scale: f32) -> f32 {
 }
 
 /// Ближайшее `t ∈ [0, 1]`, при котором точка на отрезке `from → to` входит в круг радиуса `r` с центром в нуле.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "a, b, c — коэффициенты квадратного уравнения"
+)]
 fn sweep_circle(from: Vec2, to: Vec2, r: f32) -> Option<f32> {
     let c = from.length_squared() - r * r;
     if c <= 0.0 {
@@ -246,6 +251,11 @@ fn explosion(seed: u64, pos: Vec2, count: u32, (lo, hi): (f32, f32)) -> impl FnO
         for _ in 0..count {
             let vel = Vec2::from_angle(rng.range(0.0, TAU))
                 * rng.range(PARTICLE_SPEED.0, PARTICLE_SPEED.1);
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "lo и hi — положительные секунды, тиков меньше u32::MAX"
+            )]
             let ttl = ((rng.range(lo, hi) * TICK_HZ as f32) as u32).max(1);
             let e = w.spawn();
             w.insert(e, Transform::at(pos, 0.0));
@@ -339,11 +349,11 @@ impl Asteroids {
             .world
             .storage_mut::<Transform>()
             .get_mut(self.ship)
-            .unwrap() = Transform::at(Vec2::ZERO, 0.0);
+            .expect(SHIP) = Transform::at(Vec2::ZERO, 0.0);
         self.world
             .storage_mut::<Velocity>()
             .get_mut(self.ship)
-            .unwrap()
+            .expect(SHIP)
             .0 = Vec2::ZERO;
         self.state = ShipState::Alive;
         self.invulnerable = INVULNERABLE;
@@ -357,7 +367,7 @@ impl Asteroids {
                 self.world
                     .storage::<Transform>()
                     .get(self.ship)
-                    .unwrap()
+                    .expect(SHIP)
                     .pos
             }
             _ => Vec2::ZERO,
@@ -378,20 +388,21 @@ impl Asteroids {
     }
 
     fn control(&mut self, input: &Input) {
-        let turn = input.is_down(KeyCode::KeyA) as i32 - input.is_down(KeyCode::KeyD) as i32;
+        let turn =
+            i32::from(input.is_down(KeyCode::KeyA)) - i32::from(input.is_down(KeyCode::KeyD));
         self.world
             .storage_mut::<Spin>()
             .get_mut(self.ship)
-            .unwrap()
+            .expect(SHIP)
             .0 = turn as f32 * TURN_SPEED;
         let forward = self
             .world
             .storage::<Transform>()
             .get(self.ship)
-            .unwrap()
+            .expect(SHIP)
             .forward();
         let mut vels = self.world.storage_mut::<Velocity>();
-        let vel = &mut vels.get_mut(self.ship).unwrap().0;
+        let vel = &mut vels.get_mut(self.ship).expect(SHIP).0;
         if input.is_down(KeyCode::KeyW) {
             *vel += forward * THRUST * DT;
         }
@@ -421,8 +432,17 @@ impl Asteroids {
             return;
         }
         self.cooldown = FIRE_COOLDOWN;
-        let ship = *self.world.storage::<Transform>().get(self.ship).unwrap();
-        let ship_vel = self.world.storage::<Velocity>().get(self.ship).unwrap().0;
+        let ship = *self
+            .world
+            .storage::<Transform>()
+            .get(self.ship)
+            .expect(SHIP);
+        let ship_vel = self
+            .world
+            .storage::<Velocity>()
+            .get(self.ship)
+            .expect(SHIP)
+            .0;
         let dir = ship.forward();
         let pos = ship.pos + dir * SHIP_RADIUS;
         let vel = dir * BULLET_SPEED + ship_vel;
@@ -441,12 +461,14 @@ impl Asteroids {
             let bullets = self.world.storage::<Bullet>();
             let cmds = &mut self.cmds;
             let nearest = |cmds: &Commands, mover: Entity, r: f32| {
-                let m = transforms.get(mover).unwrap();
+                let m = transforms
+                    .get(mover)
+                    .expect("движущееся тело живо до apply");
                 asteroids
                     .iter()
                     .filter(|&(a, _)| !cmds.is_pending(a))
                     .filter_map(|(a, tier)| {
-                        let t = transforms.get(a).unwrap();
+                        let t = transforms.get(a).expect("у астероида есть Transform");
                         sweep_circle(m.prev - t.prev, m.pos - t.pos, r + ASTEROID_RADIUS[tier.0])
                             .map(|hit| (hit, a))
                     })
@@ -482,8 +504,18 @@ impl Asteroids {
 
     /// Очки, раскол и взрыв; сам астероид уже в очереди на удаление.
     fn destroy_asteroid(&mut self, a: Entity) {
-        let tier = self.world.storage::<Asteroid>().get(a).unwrap().0;
-        let pos = self.world.storage::<Transform>().get(a).unwrap().pos;
+        let tier = self
+            .world
+            .storage::<Asteroid>()
+            .get(a)
+            .expect("астероид удаляется только в apply")
+            .0;
+        let pos = self
+            .world
+            .storage::<Transform>()
+            .get(a)
+            .expect("астероид удаляется только в apply")
+            .pos;
         self.score += ASTEROID_SCORE[tier];
         self.cmds.spawn(explosion(
             self.rng.next(),
@@ -518,7 +550,7 @@ impl Asteroids {
             .world
             .storage::<Transform>()
             .get(self.ship)
-            .unwrap()
+            .expect(SHIP)
             .pos;
         self.cmds.spawn(explosion(
             self.rng.next(),
@@ -529,7 +561,7 @@ impl Asteroids {
         self.world
             .storage_mut::<Velocity>()
             .get_mut(self.ship)
-            .unwrap()
+            .expect(SHIP)
             .0 = Vec2::ZERO;
     }
 
@@ -583,7 +615,7 @@ impl Asteroids {
                 (self.art.bullet, BULLET_LAYER, Color::WHITE)
             } else if let Some(p) = particles.get(e) {
                 let color = Color {
-                    a: p.alpha(lifetimes.get(e).unwrap()) as f64,
+                    a: f64::from(p.alpha(lifetimes.get(e).expect("у частицы есть Lifetime"))),
                     ..Color::from_srgb8(255, 190, 110)
                 };
                 (self.art.particle, PARTICLE_LAYER, color)
@@ -649,6 +681,10 @@ impl Game for Asteroids {
             center: Vec2::ZERO,
             size: HALF_WORLD * 2.0,
         };
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "для сида хватает младших 64 бит"
+        )]
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(1, |d| d.as_nanos() as u64);
@@ -808,7 +844,7 @@ mod tests {
         }
         assert_eq!(bullets(&g).len(), 1);
         g.tick(&Input::default());
-        assert!(bullets(&g).is_empty());
+        assert_eq!(bullets(&g).len(), 0);
         assert_eq!(g.world.storage::<Transform>().len(), 1);
     }
 
@@ -973,7 +1009,7 @@ mod tests {
             g.tick(&input(&[KeyCode::Space]));
         }
         assert_eq!(g.state, ShipState::Alive);
-        assert!(bullets(&g).is_empty());
+        assert_eq!(bullets(&g).len(), 0);
         let t = ship(&g);
         assert_eq!(t.pos, Vec2::ZERO);
         assert_eq!(t.prev, t.pos);
@@ -1066,6 +1102,11 @@ mod tests {
             assert_eq!(alpha, 1.0);
         }
         let (lo, hi) = ASTEROID_PARTICLE_TTL;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "границы TTL — положительные секунды"
+        )]
         let ttl = (lo * TICK_HZ as f32) as u32..=(hi * TICK_HZ as f32) as u32;
         for (_, left) in g.world.storage::<Lifetime>().iter() {
             assert!(ttl.contains(&left.0));
@@ -1109,7 +1150,7 @@ mod tests {
             last = alpha;
         }
         g.tick(&Input::default());
-        assert!(particles(&g).is_empty());
+        assert_eq!(particles(&g).len(), 0);
         assert_eq!(g.world.storage::<Transform>().len(), 1);
     }
 
@@ -1166,7 +1207,9 @@ mod tests {
         assert!((rock.rotation - 2.25).abs() < EPS);
         assert_eq!(of(BULLET_LAYER).next().unwrap().rotation, 0.5);
         assert_eq!(of(PARTICLE_LAYER).count(), 5);
-        assert!(of(PARTICLE_LAYER).all(|s| s.color.a == 1.0));
+        for s in of(PARTICLE_LAYER) {
+            assert_eq!(s.color.a, 1.0);
+        }
 
         g.invulnerable = BLINK;
         assert_eq!(draw(&g).len(), 7);

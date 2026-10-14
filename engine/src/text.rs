@@ -8,21 +8,33 @@ const FIRST: char = ' ';
 const LAST: char = '~';
 const MIN_ATLAS_WIDTH: u32 = 512;
 
+fn to_u32(px: usize) -> u32 {
+    u32::try_from(px).expect("глиф больше u32::MAX пикселей")
+}
+
 /// Глиф шрифта; метрики в пикселях растеризации, Y вверх от baseline.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Glyph {
+    /// Область глифа в атласе.
     pub uv: Rect,
+    /// Сдвиг левого края от пера.
     pub xmin: f32,
+    /// Сдвиг нижнего края от baseline.
     pub ymin: f32,
+    /// Ширина битмапа.
     pub width: f32,
+    /// Высота битмапа.
     pub height: f32,
+    /// Сдвиг пера к следующему глифу.
     pub advance: f32,
 }
 
 /// Шрифт одного размера; `atlas == None` — заглушка, глифы рисуются текстурой `WHITE`.
 #[derive(Debug, PartialEq)]
 pub struct FontData {
+    /// Текстура покрытия со всеми глифами.
     pub atlas: Option<Handle<Texture>>,
+    /// Шаг строки в пикселях растеризации.
     pub line_height: f32,
     pub(crate) glyphs: Vec<Glyph>,
 }
@@ -110,7 +122,7 @@ pub(crate) fn rasterize(ttf: &[u8], px: f32) -> Result<Rasterized, &'static str>
     let bitmaps: Vec<_> = (FIRST..=LAST).map(|c| font.rasterize(c, px)).collect();
     let sizes: Vec<_> = bitmaps
         .iter()
-        .map(|(m, _)| (m.width as u32, m.height as u32))
+        .map(|(m, _)| (to_u32(m.width), to_u32(m.height)))
         .collect();
     let width = sizes
         .iter()
@@ -183,7 +195,7 @@ pub(crate) fn pack(sizes: &[(u32, u32)], width: u32) -> (Vec<(u32, u32)>, u32) {
 mod tests {
     use super::*;
 
-    fn padded(&(x, y): &(u32, u32), &(w, h): &(u32, u32)) -> (u32, u32, u32, u32) {
+    fn padded((x, y): (u32, u32), (w, h): (u32, u32)) -> (u32, u32, u32, u32) {
         (x - 1, y - 1, x + w + 1, y + h + 1)
     }
 
@@ -192,7 +204,11 @@ mod tests {
         let sizes: Vec<_> = (0..40).map(|i| (3 + i % 7, 2 + i % 5)).collect();
         let width = 32;
         let (pos, height) = pack(&sizes, width);
-        let rects: Vec<_> = pos.iter().zip(&sizes).map(|(p, s)| padded(p, s)).collect();
+        let rects: Vec<_> = pos
+            .iter()
+            .zip(&sizes)
+            .map(|(&p, &s)| padded(p, s))
+            .collect();
         for (i, a) in rects.iter().enumerate() {
             assert!(a.0 < a.2 && a.2 <= width && a.3 <= height, "{i}: {a:?}");
             for b in &rects[i + 1..] {
@@ -297,7 +313,8 @@ mod tests {
             .map(|g| ((g.uv.min * atlas).round(), (g.uv.max * atlas).round()))
             .collect();
         for (i, &c) in r.coverage.iter().enumerate() {
-            let p = Vec2::new((i as u32 % r.width) as f32, (i as u32 / r.width) as f32);
+            let i = u32::try_from(i).unwrap();
+            let p = Vec2::new((i % r.width) as f32, (i / r.width) as f32);
             let inside = rects
                 .iter()
                 .any(|(min, max)| p.cmpge(*min).all() && p.cmplt(*max).all());

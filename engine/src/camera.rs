@@ -4,7 +4,9 @@ use glam::{Mat4, Vec2};
 /// Ортокамера: прямоугольник мира `size` с центром `center`, Y вверх.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera2D {
+    /// Центр видимой области в мире.
     pub center: Vec2,
+    /// Ширина и высота видимой области в мировых единицах.
     pub size: Vec2,
 }
 
@@ -25,6 +27,7 @@ impl Camera2D {
         directx::orthographic(min.x, max.x, min.y, max.y, -1.0, 1.0)
     }
 
+    /// Отношение ширины видимой области к высоте.
     pub fn aspect(&self) -> f32 {
         self.size.x / self.size.y
     }
@@ -33,9 +36,13 @@ impl Camera2D {
 /// Прямоугольник кадра в пикселях, начало — левый верхний угол.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Viewport {
+    /// Левый край.
     pub x: f32,
+    /// Верхний край.
     pub y: f32,
+    /// Ширина.
     pub w: f32,
+    /// Высота.
     pub h: f32,
 }
 
@@ -95,6 +102,11 @@ mod tests {
     #[test]
     fn y_points_up() {
         assert!((ndc(&pong(), vec2(0.0, 180.0)).y - 1.0).abs() < EPS);
+    }
+
+    #[test]
+    fn aspect_is_width_over_height() {
+        assert!((pong().aspect() - 16.0 / 9.0).abs() < EPS);
     }
 
     #[test]

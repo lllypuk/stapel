@@ -2,6 +2,10 @@ use super::Entity;
 
 const NONE: u32 = u32::MAX;
 
+fn to_u32(i: usize) -> u32 {
+    u32::try_from(i).expect("больше u32::MAX компонентов одного типа")
+}
+
 /// Плотное хранилище компонента `T`, индексируемое слотом сущности.
 pub struct SparseSet<T> {
     sparse: Vec<u32>,
@@ -25,26 +29,32 @@ impl<T> SparseSet<T> {
         (i != NONE && self.entities[i as usize] == e).then_some(i as usize)
     }
 
+    /// Компонент `e`; `None`, если его нет.
     pub fn get(&self, e: Entity) -> Option<&T> {
         self.position(e).map(|i| &self.dense[i])
     }
 
+    /// Компонент `e` на запись.
     pub fn get_mut(&mut self, e: Entity) -> Option<&mut T> {
         self.position(e).map(|i| &mut self.dense[i])
     }
 
+    /// Пары сущность–компонент; порядок меняется при удалении.
     pub fn iter(&self) -> impl Iterator<Item = (Entity, &T)> {
         self.entities.iter().copied().zip(&self.dense)
     }
 
+    /// Пары сущность–компонент на запись.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (Entity, &mut T)> {
         self.entities.iter().copied().zip(&mut self.dense)
     }
 
+    /// Число компонентов.
     pub fn len(&self) -> usize {
         self.dense.len()
     }
 
+    /// Нет ни одного компонента.
     pub fn is_empty(&self) -> bool {
         self.dense.is_empty()
     }
@@ -57,7 +67,7 @@ impl<T> SparseSet<T> {
         }
         match self.sparse[slot] {
             NONE => {
-                self.sparse[slot] = self.dense.len() as u32;
+                self.sparse[slot] = to_u32(self.dense.len());
                 self.dense.push(value);
                 self.entities.push(e);
             }
@@ -73,7 +83,7 @@ impl<T> SparseSet<T> {
         let value = self.dense.swap_remove(i);
         self.entities.swap_remove(i);
         if let Some(moved) = self.entities.get(i) {
-            self.sparse[moved.index as usize] = i as u32;
+            self.sparse[moved.index as usize] = to_u32(i);
         }
         self.sparse[e.index as usize] = NONE;
         Some(value)
@@ -111,6 +121,16 @@ mod tests {
         *set.get_mut(c).unwrap() = 'C';
         let items: Vec<_> = set.iter().collect();
         assert_eq!(items, [(c, &'C'), (b, &'b')]);
+    }
+
+    #[test]
+    fn insert_twice_replaces() {
+        let mut set = SparseSet::default();
+        let a = entity(3, 0);
+        set.insert(a, 'a');
+        set.insert(a, 'A');
+        assert_eq!(set.get(a), Some(&'A'));
+        assert_eq!(set.len(), 1);
     }
 
     #[test]

@@ -16,3 +16,24 @@ glam = "0.34.1"
 bytemuck = { version = "1.25.2", features = ["derive"] }
 fontdue = "0.9.4"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+# Координаты и размеры в f32 — норма графики.
+cast_precision_loss = "allow"
+# Игре-потребителю пометка ничего не даёт, а срабатываний десятки.
+must_use_candidate = "allow"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+unwrap_used = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"

@@ -86,13 +86,19 @@ pub enum TextureKind {
 /// Декодированная текстура, ждущая заливки на GPU; `rgba` премультиплицирован.
 #[derive(Debug, PartialEq)]
 pub struct PendingTexture {
+    /// Чей это хэндл.
     pub handle: Handle<Texture>,
+    /// Формат и сэмплер на GPU.
     pub kind: TextureKind,
+    /// Ширина в texel.
     pub width: u32,
+    /// Высота в texel.
     pub height: u32,
+    /// Пиксели построчно, 4 байта на texel.
     pub rgba: Vec<u8>,
 }
 
+/// Реестр текстур и шрифтов; новые текстуры ждут заливки на GPU до `take_pending`.
 pub struct Assets {
     next_index: u32,
     pending: Vec<PendingTexture>,
@@ -161,12 +167,17 @@ impl Assets {
                 FontData::stub(px)
             }
         };
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "u32::MAX шрифтов не поместится в память"
+        )]
         let handle = Handle::new(self.fonts.len() as u32);
         self.fonts.push(font);
         self.font_keys.insert(key, handle);
         handle
     }
 
+    /// Данные шрифта по хэндлу.
     pub fn font(&self, handle: Handle<Font>) -> &FontData {
         &self.fonts[handle.index as usize]
     }
@@ -353,7 +364,7 @@ mod tests {
         assert_eq!(assets.take_pending().len(), 2);
         let b = assets.load_texture(&path);
         assert_eq!(a, b);
-        assert!(assets.take_pending().is_empty());
+        assert_eq!(assets.take_pending().len(), 0);
     }
 
     const FONT: &str = concat!(
@@ -420,6 +431,6 @@ mod tests {
     fn take_pending_drains_queue() {
         let mut assets = Assets::default();
         assert_eq!(assets.take_pending().len(), 1);
-        assert!(assets.take_pending().is_empty());
+        assert_eq!(assets.take_pending().len(), 0);
     }
 }
