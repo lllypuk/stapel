@@ -58,10 +58,10 @@ games/clear-color/src/main.rs
 **Files:**
 - Create: `Cargo.toml`, `.gitignore`, `engine/Cargo.toml`, `engine/src/lib.rs`, `games/clear-color/Cargo.toml`, `games/clear-color/src/main.rs`
 
-- [ ] `git init`, `.gitignore` с `/target`
-- [ ] workspace `members = ["engine", "games/*"]`, зависимости версий из Context в `[workspace.dependencies]`
-- [ ] `engine` — пустая библиотека, `clear-color` зависит от неё по `path`
-- [ ] `cargo build` и `cargo test` проходят
+- [x] `git init`, `.gitignore` с `/target`
+- [x] workspace `members = ["engine", "games/*"]`, зависимости версий из Context в `[workspace.dependencies]`
+- [x] `engine` — пустая библиотека, `clear-color` зависит от неё по `path`
+- [x] `cargo build` и `cargo test` проходят
 
 ### Task 2: Фиксированный шаг — `FixedClock`
 
