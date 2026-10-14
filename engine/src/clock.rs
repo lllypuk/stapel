@@ -26,8 +26,8 @@ impl FixedClock {
     pub fn advance(&mut self, frame_dt: Duration) -> u32 {
         self.accumulator += frame_dt.min(self.max_frame);
         let mut ticks = 0;
-        while self.accumulator >= self.step {
-            self.accumulator -= self.step;
+        while let Some(rest) = self.accumulator.checked_sub(self.step) {
+            self.accumulator = rest;
             ticks += 1;
         }
         ticks

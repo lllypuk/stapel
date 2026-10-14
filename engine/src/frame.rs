@@ -299,4 +299,17 @@ mod tests {
             assert_eq!(linear_to_srgb(srgb_to_linear(c)), c);
         }
     }
+
+    #[test]
+    fn draw_text_adds_layout_sprites() {
+        let mut assets = Assets::default();
+        let font = assets.load_font("missing.ttf", 10.0);
+        let mut gfx = Gfx::default();
+        let pos = Vec2::new(1.0, 2.0);
+        gfx.draw_text(&assets, font, "ab", pos, 2.0, Color::BLACK, 4);
+        let expected: Vec<_> =
+            text::layout(assets.font(font), "ab", pos, 2.0, Color::BLACK, 4).collect();
+        assert_eq!(expected.len(), 2);
+        assert_eq!(gfx.sprites, expected);
+    }
 }

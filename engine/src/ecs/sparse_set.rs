@@ -145,4 +145,12 @@ mod tests {
         assert_eq!(set.remove(a), Some('a'));
         assert!(set.is_empty());
     }
+
+    #[test]
+    fn not_empty_after_insert() {
+        let mut set = SparseSet::default();
+        assert!(set.is_empty());
+        set.insert(entity(0, 0), 'a');
+        assert!(!set.is_empty());
+    }
 }

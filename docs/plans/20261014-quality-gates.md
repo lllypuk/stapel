@@ -47,7 +47,7 @@
 
 ### Покрытие (`cargo-llvm-cov`)
 - `cargo llvm-cov --workspace --ignore-filename-regex 'engine/src/(app|renderer)\.rs' --fail-under-lines <N>`. `app.rs` — склейка целиком; `renderer.rs` исключён из-за `impl Renderer` (склейка), хотя его чистые функции тестируются — llvm-cov режет только по файлам. Обе части проверяет запуск игры.
-- `N` — замеренная база, вниз до целого; поднимается после Task 8. Только вверх: правка вниз — осознанное решение в коммите.
+- `N` — замеренная база, вниз до целого; после Task 8 — 98. Только вверх: правка вниз — осознанное решение в коммите.
 - Cobertura-отчёт и `coverage:`-регэксп для MR — когда появится работа через MR.
 
 ### Мутанты (`cargo-mutants`)
@@ -147,13 +147,21 @@
 - Create: `.cargo/mutants.toml`
 - Modify: `Makefile`, `.gitignore` (`mutants.out*`), тестовые модули по результатам
 
-- [ ] `.cargo/mutants.toml` по Technical Details, регэкспы сверены с `cargo mutants --list`; `make mutants`
-- [ ] первый прогон, время записать в план
-- [ ] каждый выживший — тест, который его убивает, или исключение с причиной; список исключений — в план
-- [ ] повторный прогон: `missed = 0`
-- [ ] проверка ворот: непокрытая тестом ветка в чистой функции даёт missed, затем откат
-- [ ] перемерить покрытие, поднять `N` в `make cov`
-- [ ] `make check`, `make cov` — зелёные
+- [x] `.cargo/mutants.toml` по Technical Details, регэкспы сверены с `cargo mutants --list`; `make mutants`
+  - `main` игр возвращает `Result`: регэкспы `"replace main -> "`, `" in main$"`; плюс `"replace run -> "` (`engine::run`). `make mutants` = `cargo mutants -j 4`
+- [x] первый прогон, время записать в план
+  - 837 мутантов за 8 мин 16 с (`-j 4`, локальный GPU): 587 caught, 159 missed, 80 unviable, 11 timeout
+- [x] каждый выживший — тест, который его убивает, или исключение с причиной; список исключений — в план
+  - исключение одно: `| → ^` на непересекающихся флагах wgpu (`SpritePipeline::upload`, `instance_buffer`) — эквивалентны
+  - эквивалентные мутанты убраны переписыванием без смены поведения: `FixedClock::advance` через `checked_sub`, `letterbox` через `min`, шахматка `checkerboard` по координатам, `default_line_height`/`atlas_width` в `text.rs`, `Size::circle` и разделённое условие `sweep_circle` в Asteroids, средняя линия и знаковые проверки в Pong; метка render pass удалена — `exclude_re` не действует на мутанты удаления поля (cargo-mutants 27.1)
+  - timeout'ы (`Rng::range`, `Asteroids::expire`, `FixedClock::advance`) — тесты падают раньше зависания
+- [x] повторный прогон: `missed = 0`
+  - 809 мутантов за 8 мин 39 с: 729 caught, 80 unviable
+- [x] проверка ворот: непокрытая тестом ветка в чистой функции даёт missed, затем откат
+  - ветка `if frame_dt > 1 ч` в `FixedClock::advance` — 2 missed
+- [x] перемерить покрытие, поднять `N` в `make cov`
+  - 98,72% строк, `N = 98`
+- [x] `make check`, `make cov` — зелёные
 
 ### Task 9: CI-образ
 

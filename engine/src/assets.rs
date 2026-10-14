@@ -231,9 +231,10 @@ pub fn premultiply(rgba: &mut [u8]) {
 
 fn checkerboard() -> (u32, u32, Vec<u8>) {
     const N: u32 = 8;
-    let rgba = (0..N * N)
-        .flat_map(|i| {
-            if (i % N + i / N).is_multiple_of(2) {
+    let rgba = (0..N)
+        .flat_map(|y| (0..N).map(move |x| (x, y)))
+        .flat_map(|(x, y)| {
+            if (x + y).is_multiple_of(2) {
                 [255, 0, 255, 255]
             } else {
                 [0, 0, 0, 255]
@@ -432,5 +433,35 @@ mod tests {
         let mut assets = Assets::default();
         assert_eq!(assets.take_pending().len(), 1);
         assert_eq!(assets.take_pending().len(), 0);
+    }
+
+    #[test]
+    fn handle_debug_shows_index() {
+        assert_eq!(format!("{:?}", Handle::<Font>::new(3)), "Handle(3)");
+    }
+
+    #[test]
+    fn handle_hash_is_index_hash() {
+        use std::hash::BuildHasher;
+        let state = std::collections::hash_map::RandomState::new();
+        assert_eq!(
+            state.hash_one(Handle::<Texture>::new(7)),
+            state.hash_one(7u32)
+        );
+        assert_ne!(
+            state.hash_one(Handle::<Texture>::new(7)),
+            state.hash_one(Handle::<Texture>::new(8))
+        );
+    }
+
+    #[test]
+    fn checkerboard_alternates_every_texel() {
+        let (w, h, rgba) = checkerboard();
+        assert_eq!((w, h, rgba.len()), (8, 8, 8 * 8 * 4));
+        for (i, px) in rgba.as_chunks::<4>().0.iter().enumerate() {
+            let (x, y) = (i % 8, i / 8);
+            let magenta = (x + y).is_multiple_of(2);
+            assert_eq!(px[0] == 255, magenta, "({x}, {y})");
+        }
     }
 }

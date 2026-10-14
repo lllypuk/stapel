@@ -286,4 +286,9 @@ mod tests {
         assert_eq!(pick_present_mode(false, &[Fifo, Mailbox]), Mailbox);
         assert_eq!(pick_present_mode(false, &[Fifo]), Fifo);
     }
+
+    #[test]
+    fn render_error_names_cause() {
+        assert_eq!(RenderError.to_string(), "surface validation error");
+    }
 }

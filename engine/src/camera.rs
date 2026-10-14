@@ -49,11 +49,8 @@ pub struct Viewport {
 /// Наибольший вьюпорт пропорции `world_aspect`, вписанный по центру в `surface`.
 pub fn letterbox(surface: (u32, u32), world_aspect: f32) -> Viewport {
     let (sw, sh) = (surface.0 as f32, surface.1 as f32);
-    let (w, h) = if sw / sh > world_aspect {
-        (sh * world_aspect, sh)
-    } else {
-        (sw, sw / world_aspect)
-    };
+    let w = sw.min(sh * world_aspect);
+    let h = sh.min(sw / world_aspect);
     Viewport {
         x: (sw - w) / 2.0,
         y: (sh - h) / 2.0,

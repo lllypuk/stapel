@@ -192,7 +192,6 @@ impl SpritePipeline {
 
         let c = gfx.clear_color;
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("sprites"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
                 depth_slice: None,

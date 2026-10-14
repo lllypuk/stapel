@@ -63,7 +63,7 @@ impl FontData {
             .collect();
         Self {
             atlas: None,
-            line_height: 1.2 * px,
+            line_height: default_line_height(px),
             glyphs,
         }
     }
@@ -124,12 +124,7 @@ pub(crate) fn rasterize(ttf: &[u8], px: f32) -> Result<Rasterized, &'static str>
         .iter()
         .map(|(m, _)| (to_u32(m.width), to_u32(m.height)))
         .collect();
-    let width = sizes
-        .iter()
-        .map(|&(w, _)| w + 2)
-        .max()
-        .unwrap_or(0)
-        .max(MIN_ATLAS_WIDTH);
+    let width = atlas_width(&sizes);
     let (positions, height) = pack(&sizes, width);
     let mut coverage = vec![0; (width * height) as usize];
     let atlas = Vec2::new(width as f32, height as f32);
@@ -158,7 +153,7 @@ pub(crate) fn rasterize(ttf: &[u8], px: f32) -> Result<Rasterized, &'static str>
         .collect();
     let line_height = font
         .horizontal_line_metrics(px)
-        .map_or(1.2 * px, |l| l.new_line_size);
+        .map_or(default_line_height(px), |l| l.new_line_size);
     Ok(Rasterized {
         glyphs,
         line_height,
@@ -166,6 +161,21 @@ pub(crate) fn rasterize(ttf: &[u8], px: f32) -> Result<Rasterized, &'static str>
         height,
         coverage,
     })
+}
+
+/// Шаг строки шрифта без своих метрик.
+fn default_line_height(px: f32) -> f32 {
+    1.2 * px
+}
+
+/// Ширина атласа в texel.
+fn atlas_width(sizes: &[(u32, u32)]) -> u32 {
+    sizes
+        .iter()
+        .map(|&(w, _)| w + 2)
+        .max()
+        .unwrap_or(0)
+        .max(MIN_ATLAS_WIDTH)
 }
 
 /// Полочная упаковка: левые верхние углы глифов и высота атласа.
@@ -321,5 +331,60 @@ mod tests {
             assert!(c == 0 || inside, "покрытие {c} вне глифов в {p}");
         }
         assert!(r.coverage.contains(&255));
+    }
+
+    #[test]
+    fn pack_fills_shelf_exactly_then_wraps() {
+        let (pos, height) = pack(&[(1, 1), (1, 1), (1, 1)], 6);
+        assert_eq!((pos, height), (vec![(1, 1), (4, 1), (1, 4)], 6));
+    }
+
+    #[test]
+    fn atlas_widens_only_for_huge_glyphs() {
+        assert_eq!(atlas_width(&[]), MIN_ATLAS_WIDTH);
+        assert_eq!(
+            atlas_width(&[(3, 1), (MIN_ATLAS_WIDTH, 1), (5, 9)]),
+            MIN_ATLAS_WIDTH + 2
+        );
+    }
+
+    #[test]
+    fn color_and_layer_reach_every_sprite() {
+        let color = Color::from_srgb8(10, 20, 30);
+        let s: Vec<_> = layout(&FontData::stub(10.0), "ab", Vec2::ZERO, 1.0, color, -2).collect();
+        assert_eq!(s.len(), 2);
+        assert!(s.iter().all(|s| (s.color, s.layer) == (color, -2)));
+    }
+
+    #[test]
+    fn atlas_holds_glyph_bitmaps_at_their_uv() {
+        let ttf = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../assets/fonts/JetBrainsMono-Regular.ttf"
+        ))
+        .unwrap();
+        let px = 32.0;
+        let r = rasterize(&ttf, px).unwrap();
+        let settings = fontdue::FontSettings {
+            scale: px,
+            ..Default::default()
+        };
+        let font = fontdue::Font::from_bytes(ttf.as_slice(), settings).unwrap();
+        let atlas = Vec2::new(r.width as f32, r.height as f32);
+        for (c, g) in (FIRST..=LAST).zip(&r.glyphs) {
+            let (min, max) = ((g.uv.min * atlas).round(), (g.uv.max * atlas).round());
+            let got: Vec<u8> = r
+                .coverage
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| {
+                    let i = u32::try_from(i).unwrap();
+                    let p = Vec2::new((i % r.width) as f32, (i / r.width) as f32);
+                    p.cmpge(min).all() && p.cmplt(max).all()
+                })
+                .map(|(_, &v)| v)
+                .collect();
+            assert_eq!(got, font.rasterize(c, px).1, "{c:?}");
+        }
     }
 }

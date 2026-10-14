@@ -92,6 +92,13 @@ struct Spin(f32);
 /// Размер спрайта; полудиагональ — радиус переноса.
 struct Size(Vec2);
 
+impl Size {
+    /// Квадрат, описанный вокруг круга радиуса `r`.
+    fn circle(r: f32) -> Self {
+        Self(Vec2::splat(2.0 * r))
+    }
+}
+
 /// Оставшиеся тики.
 struct Lifetime(u32);
 
@@ -215,9 +222,12 @@ fn sweep_circle(from: Vec2, to: Vec2, r: f32) -> Option<f32> {
     }
     let d = to - from;
     let a = d.length_squared();
+    if a == 0.0 {
+        return None;
+    }
     let b = from.dot(d);
     let disc = b * b - a * c;
-    if a == 0.0 || disc < 0.0 {
+    if disc < 0.0 {
         return None;
     }
     let t = (-b - disc.sqrt()) / a;
@@ -228,7 +238,7 @@ fn spawn_bullet(w: &mut World, pos: Vec2, vel: Vec2, angle: f32) -> Entity {
     let e = w.spawn();
     w.insert(e, Transform::at(pos, angle));
     w.insert(e, Velocity(vel));
-    w.insert(e, Size(Vec2::splat(BULLET_RADIUS * 2.0)));
+    w.insert(e, Size::circle(BULLET_RADIUS));
     w.insert(e, Lifetime(BULLET_TTL));
     w.insert(e, Bullet);
     e
@@ -239,7 +249,7 @@ fn spawn_asteroid(w: &mut World, tier: usize, pos: Vec2, (vel, spin): (Vec2, f32
     w.insert(e, Transform::at(pos, 0.0));
     w.insert(e, Velocity(vel));
     w.insert(e, Spin(spin));
-    w.insert(e, Size(Vec2::splat(ASTEROID_RADIUS[tier] * 2.0)));
+    w.insert(e, Size::circle(ASTEROID_RADIUS[tier]));
     w.insert(e, Asteroid(tier));
     e
 }
@@ -290,7 +300,7 @@ impl Asteroids {
         world.insert(ship, Transform::at(Vec2::ZERO, 0.0));
         world.insert(ship, Velocity(Vec2::ZERO));
         world.insert(ship, Spin(0.0));
-        world.insert(ship, Size(Vec2::splat(SHIP_RADIUS * 2.0)));
+        world.insert(ship, Size::circle(SHIP_RADIUS));
         Self {
             world,
             art: Art::default(),
@@ -741,8 +751,27 @@ mod tests {
         i
     }
 
+    /// Вырожденный `Rng::range` зацикливает выбор места в `next_wave`: тест должен упасть раньше.
+    fn assert_range_spreads() {
+        let mut rng = Rng::new(1);
+        let (a, b) = (rng.range(0.0, 1.0), rng.range(0.0, 1.0));
+        assert!((a - b).abs() > EPS && (0.0..1.0).contains(&a) && (0.0..1.0).contains(&b));
+    }
+
+    fn seeded(seed: u64) -> Asteroids {
+        assert_range_spreads();
+        Asteroids::new(seed)
+    }
+
     fn game() -> Asteroids {
-        Asteroids::new(1)
+        seeded(1)
+    }
+
+    fn started() -> (Asteroids, Context) {
+        assert_range_spreads();
+        let mut ctx = Context::default();
+        let g = Asteroids::init(&mut ctx);
+        (g, ctx)
     }
 
     fn ship(g: &Asteroids) -> Transform {
@@ -899,10 +928,48 @@ mod tests {
         let (mut a, mut b) = (Rng::new(7), Rng::new(7));
         assert_eq!(a.next(), b.next());
         assert_ne!(Rng::new(0).next(), 0);
-        for _ in 0..1000 {
-            let x = a.range(-2.0, 3.0);
-            assert!((-2.0..3.0).contains(&x));
+        let xs: Vec<f32> = (0..1000).map(|_| a.range(-2.0, 3.0)).collect();
+        assert!(xs.iter().all(|x| (-2.0..3.0).contains(x)));
+        assert!(xs.iter().any(|&x| x < -1.9) && xs.iter().any(|&x| x > 2.9));
+    }
+
+    #[test]
+    fn rng_matches_xorshift64_reference() {
+        let mut rng = Rng::new(1);
+        let seq = [rng.next(), rng.next(), rng.next(), rng.next()];
+        assert_eq!(
+            seq,
+            [
+                1_082_269_761,
+                1_152_992_998_833_853_505,
+                11_177_516_664_432_764_457,
+                17_678_023_832_001_937_445,
+            ]
+        );
+    }
+
+    #[test]
+    fn asteroid_motion_speed_and_spin_follow_tier() {
+        let mut rng = Rng::new(5);
+        for (tier, (lo, hi)) in ASTEROID_SPEED.into_iter().enumerate() {
+            let spins: Vec<f32> = (0..200)
+                .map(|_| {
+                    let (vel, spin) = asteroid_motion(&mut rng, tier);
+                    let speed = vel.length();
+                    assert!(speed > lo - EPS && speed < hi + EPS, "{tier}: {speed}");
+                    spin
+                })
+                .collect();
+            let max = ASTEROID_MAX_SPIN;
+            assert!(spins.iter().all(|s| (-max..max).contains(s)));
+            assert!(spins.iter().any(|&s| s < -1.0) && spins.iter().any(|&s| s > 1.0));
         }
+    }
+
+    #[test]
+    fn wrap_shift_needs_strictly_beyond_edge() {
+        assert_eq!(wrap_shift(vec2(321.0, -181.0), 1.0), Vec2::ZERO);
+        assert_eq!(wrap_shift(vec2(-321.5, 181.5), 1.0), vec2(642.0, -362.0));
     }
 
     fn asteroid(g: &mut Asteroids, tier: usize, pos: Vec2) -> Entity {
@@ -939,6 +1006,14 @@ mod tests {
         assert_eq!(
             sweep_circle(vec2(1.0, 1.0), vec2(30.0, 0.0), 5.0),
             Some(0.0)
+        );
+    }
+
+    #[test]
+    fn sweep_circle_counts_tangent_touch() {
+        assert_eq!(
+            sweep_circle(vec2(-10.0, 5.0), vec2(10.0, 5.0), 5.0),
+            Some(0.5)
         );
     }
 
@@ -1004,7 +1079,7 @@ mod tests {
         g.tick(&Input::default());
         assert_eq!(g.lives, LIVES - 1);
         assert_eq!(g.score, ASTEROID_SCORE[2]);
-        for _ in 1..RESPAWN_DELAY {
+        for _ in 1..2 * TICK_HZ {
             assert!(matches!(g.state, ShipState::Dead { .. }));
             g.tick(&input(&[KeyCode::Space]));
         }
@@ -1015,7 +1090,7 @@ mod tests {
         assert_eq!(t.prev, t.pos);
 
         asteroid(&mut g, 2, Vec2::ZERO);
-        for _ in 0..INVULNERABLE {
+        for _ in 0..2 * TICK_HZ {
             g.tick(&Input::default());
         }
         assert_eq!(g.lives, LIVES - 1);
@@ -1030,6 +1105,7 @@ mod tests {
         assert_eq!(asteroids(&g).len(), WAVE_START as usize);
         let ship_pos = vec2(200.0, 100.0);
         set_ship(&mut g, Transform::at(ship_pos, 0.0), Vec2::ZERO);
+        let mut spawned = Vec::new();
         for expected in (WAVE_START + 1..=WAVE_MAX).chain([WAVE_MAX]) {
             clear_asteroids(&mut g);
             g.tick(&Input::default());
@@ -1039,8 +1115,91 @@ mod tests {
                 assert_eq!(tier, 0);
                 assert_eq!(t.prev, t.pos);
                 assert!(t.pos.distance(ship_pos) >= WAVE_CLEARANCE);
+                spawned.push(t.pos);
             }
         }
+        let inside = |p: &Vec2| (-320.0..320.0).contains(&p.x) && (-180.0..180.0).contains(&p.y);
+        assert!(spawned.iter().all(inside));
+        assert!(spawned.iter().any(|p| p.x < -160.0) && spawned.iter().any(|p| p.y < -90.0));
+    }
+
+    #[test]
+    fn init_sets_camera_fonts_and_first_wave() {
+        let (g, ctx) = started();
+        assert_eq!(ctx.gfx.camera.size, vec2(640.0, 360.0));
+        assert_eq!((g.wave, asteroids(&g).len()), (1, WAVE_START as usize));
+        let hud = g.hud.as_ref().unwrap();
+        let px = |font| ctx.assets.font(font).line_height;
+        let ratio = px(hud.big) / px(hud.font);
+        assert!((ratio - 2.0).abs() < 0.01, "ratio {ratio}");
+    }
+
+    #[test]
+    fn update_ticks_with_context_input() {
+        let (mut g, mut ctx) = started();
+        ctx.input.on_key(KeyCode::KeyA, Pressed, false);
+        g.update(&mut ctx);
+        assert!((ship(&g).angle - TURN_SPEED * DT).abs() < EPS);
+    }
+
+    #[test]
+    fn draw_uses_loaded_textures() {
+        let (mut g, mut ctx) = started();
+        g.draw(&mut ctx, 0.0);
+        let of = |layer| ctx.gfx.sprites.iter().filter(move |s| s.layer == layer);
+        assert_eq!(of(ASTEROID_LAYER).count(), WAVE_START as usize);
+        assert!(of(ASTEROID_LAYER).all(|s| s.texture == g.art.asteroid));
+        assert_eq!(of(SHIP_LAYER).next().unwrap().texture, g.art.ship);
+        assert_ne!(g.art.asteroid, Handle::WHITE);
+        assert_ne!(g.art.asteroid, g.art.ship);
+    }
+
+    fn hud(gfx: &Gfx) -> Vec<Sprite> {
+        (gfx.sprites.iter())
+            .filter(|s| s.layer == HUD_LAYER)
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn hud_pins_status_and_fps_to_corners_and_centers_game_over() {
+        let (mut g, mut ctx) = started();
+        (g.score, g.lives, ctx.time.fps) = (120, 2, 60);
+        g.draw(&mut ctx, 0.0);
+        let playing = hud(&ctx.gfx);
+        ctx.gfx.sprites.clear();
+        g.state = ShipState::GameOver;
+        g.draw(&mut ctx, 0.0);
+        let over = hud(&ctx.gfx);
+
+        let Hud { font, big } = *g.hud.as_ref().unwrap();
+        let width = |f, s| text_width(ctx.assets.font(f), s, HUD_SCALE);
+        let text = |f, s, pos| {
+            engine::text::layout(
+                ctx.assets.font(f),
+                s,
+                pos,
+                HUD_SCALE,
+                Color::WHITE,
+                HUD_LAYER,
+            )
+        };
+        let status: Vec<Sprite> = text(font, "SCORE 120\nLIVES 2", vec2(-314.0, 158.0))
+            .chain(text(
+                font,
+                "FPS 60",
+                vec2(314.0 - width(font, "FPS 60"), 158.0),
+            ))
+            .collect();
+        assert_eq!(playing, status);
+        let title = text(big, "GAME OVER", vec2(-width(big, "GAME OVER") / 2.0, 8.0));
+        let hint = text(
+            font,
+            "PRESS ENTER",
+            vec2(-width(font, "PRESS ENTER") / 2.0, -20.0),
+        );
+        let expected: Vec<Sprite> = status.into_iter().chain(title).chain(hint).collect();
+        assert_eq!(over, expected);
     }
 
     #[test]
@@ -1156,13 +1315,14 @@ mod tests {
 
     #[test]
     fn ship_death_holds_over_5000_particles_for_two_seconds() {
-        let mut g = Asteroids::new(42);
+        let mut g = seeded(42);
         g.next_wave();
         asteroid(&mut g, 2, vec2(3.0, 0.0));
         g.tick(&Input::default());
         assert!(matches!(g.state, ShipState::Dead { .. }));
         let mut streak = 0;
         while particles(&g).len() > 5_000 {
+            assert!(streak < 5 * TICK_HZ, "частицы не гаснут");
             streak += 1;
             g.tick(&Input::default());
         }
@@ -1211,9 +1371,22 @@ mod tests {
             assert_eq!(s.color.a, 1.0);
         }
 
-        g.invulnerable = BLINK;
+        assert_eq!(rock.color, Color::WHITE);
+        let ember = Color::from_srgb8(255, 190, 110);
+        assert!(of(PARTICLE_LAYER).all(|s| s.color == ember));
+        for (_, left) in g.world.storage_mut::<Lifetime>().iter_mut() {
+            left.0 = TICK_HZ / 4;
+        }
+        let faded = Color { a: 0.25, ..ember };
+        let colors: Vec<Color> = (draw(&g).iter())
+            .filter(|s| s.layer == PARTICLE_LAYER)
+            .map(|s| s.color)
+            .collect();
+        assert_eq!(colors, [faded; 5]);
+
+        g.invulnerable = TICK_HZ / 10;
         assert_eq!(draw(&g).len(), 7);
-        g.invulnerable = 2 * BLINK;
+        g.invulnerable = 2 * TICK_HZ / 10;
         assert_eq!(draw(&g).len(), 8);
         g.state = ShipState::Dead { respawn_in: 1 };
         assert!(draw(&g).iter().all(|s| s.layer != SHIP_LAYER));
@@ -1226,6 +1399,7 @@ mod tests {
         let font = assets.font(handle);
         let one = text_width(font, "0", HUD_SCALE);
         assert!(one > 0.0);
+        assert_eq!(one, font.glyph('0').unwrap().advance / 2.0);
         assert!((text_width(font, "0\u{e9}0", HUD_SCALE) - 3.0 * one).abs() < EPS);
     }
 }

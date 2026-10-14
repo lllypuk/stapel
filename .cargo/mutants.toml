@@ -1,0 +1,12 @@
+# Склейка с окном и циклом событий: проверяется запуском игры.
+exclude_globs = ["engine/src/app.rs"]
+exclude_re = [
+    # impl Renderer — склейка с поверхностью; чистые функции renderer.rs мутируются.
+    "Renderer::",
+    # fn main игр и engine::run открывают окно; глоб по main.rs выключил бы логику игр.
+    "replace main -> ",
+    " in main$",
+    "replace run -> ",
+    # | и ^ на непересекающихся битовых флагах wgpu дают одно и то же.
+    "replace \\| with \\^ in (SpritePipeline::upload|instance_buffer)$",
+]

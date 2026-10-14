@@ -288,4 +288,26 @@ mod tests {
         assert_eq!((r.fps, r.worst), (100, Duration::from_millis(10)));
         assert_eq!((r.min_sprites, r.max_sprites), (1, 1));
     }
+
+    #[test]
+    fn interval_of_max_frame_is_not_pause() {
+        let t0 = Instant::now();
+        let mut s = FrameStats::new();
+        s.record(t0, 0);
+        s.record(t0 + MAX_FRAME, 1);
+        let end = frames(&mut s, t0, 250, 100, 1);
+        s.record(ms(t0, end + 10), 1);
+        assert_eq!(s.report().unwrap().worst, MAX_FRAME);
+    }
+
+    #[test]
+    fn reset_keeps_closed_window_report() {
+        let t0 = Instant::now();
+        let mut s = FrameStats::new();
+        s.record(t0, 0);
+        let end = frames(&mut s, t0, 0, 100, 1);
+        s.record(ms(t0, end + 10), 1);
+        s.reset();
+        assert_eq!(s.report().map(|r| r.fps), Some(100));
+    }
 }

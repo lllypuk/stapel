@@ -19,6 +19,8 @@ const MAX_BOUNCE: f32 = FRAC_PI_3;
 const WIN_SCORE: u32 = 10;
 const DASH: Vec2 = vec2(4.0, 12.0);
 const DASH_STEP: f32 = 24.0;
+/// Штрихов средней линии по каждую сторону от центрального.
+const DASHES: i8 = 7;
 const DIGIT: Vec2 = vec2(20.0, 36.0);
 const STROKE: f32 = 4.0;
 const SCORE_POS: Vec2 = vec2(60.0, 140.0);
@@ -103,7 +105,7 @@ impl Pong {
         let mut next = self.ball + delta;
         for (side, (y0, y1)) in old.into_iter().zip(self.paddles).enumerate() {
             let x = paddle_x(side);
-            if self.vel.x * x <= 0.0 {
+            if self.vel.x.is_sign_positive() != x.is_sign_positive() {
                 continue;
             }
             // Мяч заметается относительно ракетки: она тоже сдвинулась за тик.
@@ -134,7 +136,7 @@ impl Pong {
         self.ball = next;
 
         if self.ball.x.abs() > HALF_FIELD.x + BALL_HALF {
-            let missed = usize::from(self.ball.x > 0.0);
+            let missed = usize::from(self.ball.x.is_sign_positive());
             let scorer = 1 - missed;
             self.score[scorer] += 1;
             if self.score[scorer] == WIN_SCORE {
@@ -196,10 +198,9 @@ impl Game for Pong {
     }
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
-        let mut y = -HALF_FIELD.y + DASH_STEP / 2.0;
-        while y < HALF_FIELD.y {
-            ctx.gfx.draw_sprite(quad(vec2(0.0, y), DASH));
-            y += DASH_STEP;
+        for i in -DASHES..=DASHES {
+            ctx.gfx
+                .draw_sprite(quad(vec2(0.0, f32::from(i) * DASH_STEP), DASH));
         }
         for (side, (&y, &score)) in self.paddles.iter().zip(&self.score).enumerate() {
             let x = paddle_x(side);
@@ -292,6 +293,7 @@ mod tests {
         let half = Vec2::splat(5.0);
         assert_eq!(sweep(vec2(-10.0, -10.0), vec2(0.0, 20.0), half), None);
         assert_eq!(sweep(vec2(3.0, -10.0), vec2(0.0, 20.0), half), Some(0.25));
+        assert_eq!(sweep(vec2(5.0, -10.0), vec2(0.0, 20.0), half), Some(0.25));
     }
 
     #[test]
@@ -414,5 +416,127 @@ mod tests {
         p.score = [3, 9];
         p.tick(&Input::default());
         assert_eq!(p.score, [0, 0]);
+    }
+
+    #[test]
+    fn digit_segments_are_placed_around_center() {
+        let (horiz, vert) = (vec2(20.0, 4.0), vec2(4.0, 18.0));
+        let c = vec2(60.0, 140.0);
+        let eight: Vec<_> = digit(8, c).collect();
+        assert_eq!(
+            eight,
+            [
+                (c + vec2(0.0, 16.0), horiz),
+                (c + vec2(8.0, 9.0), vert),
+                (c + vec2(8.0, -9.0), vert),
+                (c + vec2(0.0, -16.0), horiz),
+                (c + vec2(-8.0, -9.0), vert),
+                (c + vec2(-8.0, 9.0), vert),
+                (c, horiz),
+            ]
+        );
+        let one: Vec<_> = digit(1, c).collect();
+        assert_eq!(one, [eight[1], eight[2]]);
+    }
+
+    #[test]
+    fn serve_flies_at_30_degrees() {
+        let p = Pong::new();
+        assert!(p.vel.x < 0.0);
+        assert!((bounce_angle(p.vel) - FRAC_PI_6).abs() < EPS);
+        assert!((p.vel.length() - SERVE_SPEED).abs() < EPS);
+    }
+
+    #[test]
+    fn hit_on_moving_paddle_uses_contact_point() {
+        let mut p = pong(vec2(286.0, 110.0), vec2(360.0, 120.0));
+        p.paddles = [0.0, 100.0];
+        p.tick(&input(&[KeyCode::KeyL]));
+        assert!((p.vel - vec2(-339.125, 209.175)).length() < EPS);
+        assert!((p.ball - vec2(290.058, 112.248)).length() < EPS);
+    }
+
+    #[test]
+    fn ball_touching_wall_is_not_reflected_yet() {
+        let mut p = pong(vec2(0.0, 173.0), vec2(0.0, 120.0));
+        p.tick(&Input::default());
+        assert_eq!((p.ball.y, p.vel.y), (175.0, 120.0));
+
+        let mut p = pong(vec2(0.0, -173.0), vec2(0.0, -120.0));
+        p.tick(&Input::default());
+        assert_eq!((p.ball.y, p.vel.y), (-175.0, -120.0));
+    }
+
+    #[test]
+    fn goal_counts_once_ball_fully_left_field() {
+        let mut p = pong(vec2(321.0, 100.0), vec2(240.0, 0.0));
+        p.tick(&Input::default());
+        assert_eq!((p.ball.x, p.score), (325.0, [0, 0]));
+        p.tick(&Input::default());
+        assert_eq!(p.score, [1, 0]);
+    }
+
+    #[test]
+    fn update_ticks_with_context_input() {
+        let mut ctx = Context::default();
+        let mut p = Pong::init(&mut ctx);
+        ctx.input = input(&[KeyCode::KeyW]);
+        p.update(&mut ctx);
+        assert!((p.paddles[0] - 5.0).abs() < EPS);
+    }
+
+    #[test]
+    fn draw_fills_field_paddles_score_and_ball() {
+        let mut ctx = Context::default();
+        let mut p = Pong::init(&mut ctx);
+        assert_eq!(ctx.gfx.camera.size, vec2(640.0, 360.0));
+        p.paddles = [-50.0, 20.0];
+        p.score = [1, 7];
+        p.prev = vec2(10.0, 0.0);
+        p.ball = vec2(20.0, 40.0);
+        p.draw(&mut ctx, 0.25);
+
+        let sprites = &ctx.gfx.sprites;
+        let at = |size: Vec2| -> Vec<Vec2> {
+            sprites
+                .iter()
+                .filter(|s| s.size == size)
+                .map(|s| s.pos)
+                .collect()
+        };
+        let dashes: Vec<_> = (-7..=7_i8)
+            .map(|i| vec2(0.0, 24.0 * f32::from(i)))
+            .collect();
+        assert_eq!(at(vec2(4.0, 12.0)), dashes);
+        assert_eq!(
+            at(vec2(8.0, 60.0)),
+            [vec2(-300.0, -50.0), vec2(300.0, 20.0)]
+        );
+        assert_eq!(at(vec2(20.0, 4.0)), [vec2(60.0, 156.0)]);
+        assert_eq!(
+            at(vec2(4.0, 18.0)),
+            [
+                vec2(-52.0, 149.0),
+                vec2(-52.0, 131.0),
+                vec2(68.0, 149.0),
+                vec2(68.0, 131.0),
+            ]
+        );
+
+        let (ball, rest) = sprites.split_last().unwrap();
+        assert_eq!(rest.len(), 15 + 2 + 5);
+        assert!(rest.iter().all(|s| *s == quad(s.pos, s.size)));
+        let ball_png = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/ball.png");
+        assert_ne!(ball.texture, Handle::WHITE);
+        assert_eq!(
+            *ball,
+            Sprite {
+                texture: ctx.assets.load_texture(ball_png),
+                pos: vec2(12.5, 10.0),
+                size: vec2(10.0, 10.0),
+                layer: 1,
+                ..Sprite::default()
+            }
+        );
     }
 }
