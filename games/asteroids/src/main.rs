@@ -2,8 +2,8 @@ use std::f32::consts::TAU;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use engine::{
-    Camera2D, Color, Commands, Config, Context, Entity, Game, Input, KeyCode, Sprite, Vec2, World,
-    vec2,
+    Camera2D, Color, Commands, Config, Context, Entity, Font, FontData, Game, Gfx, Handle, Input,
+    KeyCode, Sprite, Texture, Vec2, World, vec2,
 };
 
 const TICK_HZ: u32 = 60;
@@ -37,6 +37,21 @@ const ASTEROID_PARTICLE_TTL: (f32, f32) = (0.5, 2.0);
 const SHIP_PARTICLES: u32 = 6_000;
 /// Секунды; короче — и после смерти корабля > 5 000 частиц держится меньше окна статистики.
 const SHIP_PARTICLE_TTL: (f32, f32) = (3.0, 4.0);
+/// Полупериод мигания неуязвимого корабля, тики.
+const BLINK: u32 = TICK_HZ / 10;
+const PARTICLE_LAYER: i32 = 0;
+const ASTEROID_LAYER: i32 = 1;
+const BULLET_LAYER: i32 = 2;
+const SHIP_LAYER: i32 = 3;
+const HUD_LAYER: i32 = 4;
+const FONT_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/fonts/JetBrainsMono-Regular.ttf"
+);
+/// При `HUD_SCALE` и окне 1280×720 тексель атласа — пиксель экрана.
+const HUD_PX: f32 = 32.0;
+const HUD_SCALE: f32 = 0.5;
+const HUD_MARGIN: f32 = 6.0;
 
 /// Положение и угол на начало и конец тика; угол не нормализуется, иначе lerp через 2π крутит назад.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -126,8 +141,34 @@ impl Rng {
     }
 }
 
+/// Текстуры сущностей; `WHITE` до `init`.
+struct Art {
+    ship: Handle<Texture>,
+    asteroid: Handle<Texture>,
+    bullet: Handle<Texture>,
+    particle: Handle<Texture>,
+}
+
+impl Default for Art {
+    fn default() -> Self {
+        Self {
+            ship: Handle::WHITE,
+            asteroid: Handle::WHITE,
+            bullet: Handle::WHITE,
+            particle: Handle::WHITE,
+        }
+    }
+}
+
+struct Hud {
+    font: Handle<Font>,
+    big: Handle<Font>,
+}
+
 struct Asteroids {
     world: World,
+    art: Art,
+    hud: Option<Hud>,
     cmds: Commands,
     rng: Rng,
     ship: Entity,
@@ -151,6 +192,14 @@ fn wrap_shift(pos: Vec2, r: f32) -> Vec2 {
         }
     }
     shift
+}
+
+/// Ширина строки без переносов; символ вне атласа считается как `'?'`.
+fn text_width(font: &FontData, text: &str, scale: f32) -> f32 {
+    text.chars()
+        .filter_map(|c| font.glyph(c).or_else(|| font.glyph('?')))
+        .map(|g| g.advance * scale)
+        .sum()
 }
 
 /// Ближайшее `t ∈ [0, 1]`, при котором точка на отрезке `from → to` входит в круг радиуса `r` с центром в нуле.
@@ -234,6 +283,8 @@ impl Asteroids {
         world.insert(ship, Size(Vec2::splat(SHIP_RADIUS * 2.0)));
         Self {
             world,
+            art: Art::default(),
+            hud: None,
             cmds: Commands::default(),
             rng: Rng::new(seed),
             ship,
@@ -505,6 +556,83 @@ impl Asteroids {
         }
     }
 
+    fn ship_visible(&self) -> bool {
+        self.state == ShipState::Alive && (self.invulnerable / BLINK).is_multiple_of(2)
+    }
+
+    /// Спрайт на каждую видимую сущность в положении между тиками.
+    fn draw_world(&self, gfx: &mut Gfx, alpha: f32) {
+        let transforms = self.world.storage::<Transform>();
+        let sizes = self.world.storage::<Size>();
+        let asteroids = self.world.storage::<Asteroid>();
+        let bullets = self.world.storage::<Bullet>();
+        let particles = self.world.storage::<Particle>();
+        let lifetimes = self.world.storage::<Lifetime>();
+        for (e, t) in transforms.iter() {
+            let Some(size) = sizes.get(e) else {
+                continue;
+            };
+            let (texture, layer, color) = if e == self.ship {
+                if !self.ship_visible() {
+                    continue;
+                }
+                (self.art.ship, SHIP_LAYER, Color::WHITE)
+            } else if asteroids.get(e).is_some() {
+                (self.art.asteroid, ASTEROID_LAYER, Color::WHITE)
+            } else if bullets.get(e).is_some() {
+                (self.art.bullet, BULLET_LAYER, Color::WHITE)
+            } else if let Some(p) = particles.get(e) {
+                let color = Color {
+                    a: p.alpha(lifetimes.get(e).unwrap()) as f64,
+                    ..Color::from_srgb8(255, 190, 110)
+                };
+                (self.art.particle, PARTICLE_LAYER, color)
+            } else {
+                continue;
+            };
+            let (pos, rotation) = t.lerp(alpha);
+            gfx.draw_sprite(Sprite {
+                texture,
+                pos,
+                size: size.0,
+                rotation,
+                color,
+                layer,
+                ..Default::default()
+            });
+        }
+    }
+
+    fn draw_hud(&self, ctx: &mut Context) {
+        let Some(hud) = &self.hud else {
+            return;
+        };
+        let (gfx, assets) = (&mut ctx.gfx, &ctx.assets);
+        let top = HALF_WORLD.y - HUD_MARGIN - HUD_PX * HUD_SCALE;
+        let left = -HALF_WORLD.x + HUD_MARGIN;
+        let status = format!("SCORE {}\nLIVES {}", self.score, self.lives);
+        let text = |gfx: &mut Gfx, font, s: &str, pos| {
+            gfx.draw_text(assets, font, s, pos, HUD_SCALE, Color::WHITE, HUD_LAYER);
+        };
+        text(gfx, hud.font, &status, vec2(left, top));
+        let fps = format!("FPS {}", ctx.time.fps);
+        let width = text_width(assets.font(hud.font), &fps, HUD_SCALE);
+        text(
+            gfx,
+            hud.font,
+            &fps,
+            vec2(HALF_WORLD.x - HUD_MARGIN - width, top),
+        );
+        if self.state == ShipState::GameOver {
+            let title = "GAME OVER";
+            let width = text_width(assets.font(hud.big), title, HUD_SCALE);
+            text(gfx, hud.big, title, vec2(-width / 2.0, 8.0));
+            let hint = "PRESS ENTER";
+            let width = text_width(assets.font(hud.font), hint, HUD_SCALE);
+            text(gfx, hud.font, hint, vec2(-width / 2.0, -20.0));
+        }
+    }
+
     fn expire(&mut self) {
         for (e, left) in self.world.storage_mut::<Lifetime>().iter_mut() {
             left.0 -= 1;
@@ -525,6 +653,20 @@ impl Game for Asteroids {
             .duration_since(UNIX_EPOCH)
             .map_or(1, |d| d.as_nanos() as u64);
         let mut game = Self::new(seed);
+        let assets = &mut ctx.assets;
+        let mut texture = |name: &str| {
+            assets.load_texture(format!("{}/assets/{name}", env!("CARGO_MANIFEST_DIR")))
+        };
+        game.art = Art {
+            ship: texture("ship.png"),
+            asteroid: texture("asteroid.png"),
+            bullet: texture("bullet.png"),
+            particle: texture("particle.png"),
+        };
+        game.hud = Some(Hud {
+            font: assets.load_font(FONT_PATH, HUD_PX),
+            big: assets.load_font(FONT_PATH, 2.0 * HUD_PX),
+        });
         game.next_wave();
         game
     }
@@ -534,32 +676,8 @@ impl Game for Asteroids {
     }
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
-        let transforms = self.world.storage::<Transform>();
-        let sizes = self.world.storage::<Size>();
-        let particles = self.world.storage::<Particle>();
-        let lifetimes = self.world.storage::<Lifetime>();
-        for (e, t) in transforms.iter() {
-            let Some(size) = sizes.get(e) else {
-                continue;
-            };
-            if e == self.ship && self.state != ShipState::Alive {
-                continue;
-            }
-            let (pos, rotation) = t.lerp(alpha);
-            let a = particles
-                .get(e)
-                .map_or(1.0, |p| p.alpha(lifetimes.get(e).unwrap()));
-            ctx.gfx.draw_sprite(Sprite {
-                pos,
-                size: size.0,
-                rotation,
-                color: Color {
-                    a: a as f64,
-                    ..Color::WHITE
-                },
-                ..Default::default()
-            });
-        }
+        self.draw_world(&mut ctx.gfx, alpha);
+        self.draw_hud(ctx);
     }
 }
 
@@ -1008,5 +1126,63 @@ mod tests {
             g.tick(&Input::default());
         }
         assert!(streak >= 2 * TICK_HZ, "streak {streak}");
+    }
+
+    #[test]
+    fn sprite_system_draws_visible_entities_interpolated() {
+        let moving = |prev: Vec2, pos: Vec2, prev_angle: f32, angle: f32| Transform {
+            pos,
+            prev,
+            angle,
+            prev_angle,
+        };
+        let mut g = game();
+        set_ship(
+            &mut g,
+            moving(Vec2::ZERO, vec2(10.0, 0.0), 0.0, 1.0),
+            Vec2::ZERO,
+        );
+        let a = asteroid(&mut g, 0, Vec2::ZERO);
+        *g.world.storage_mut::<Transform>().get_mut(a).unwrap() =
+            moving(vec2(100.0, 0.0), vec2(100.0, 20.0), 2.0, 3.0);
+        spawn_bullet(&mut g.world, vec2(-50.0, 0.0), Vec2::ZERO, 0.5);
+        g.cmds.spawn(explosion(3, vec2(0.0, -50.0), 5, (1.0, 1.0)));
+        g.cmds.apply(&mut g.world);
+
+        let draw = |g: &Asteroids| {
+            let mut gfx = Gfx::default();
+            g.draw_world(&mut gfx, 0.25);
+            gfx.sprites
+        };
+        let sprites = draw(&g);
+        assert_eq!(sprites.len(), 1 + 1 + 1 + 5);
+        let of = |layer| sprites.iter().filter(move |s| s.layer == layer);
+        let ship = of(SHIP_LAYER).next().unwrap();
+        assert!((ship.pos - vec2(2.5, 0.0)).length() < EPS);
+        assert!((ship.rotation - 0.25).abs() < EPS);
+        assert_eq!(ship.size, Vec2::splat(SHIP_RADIUS * 2.0));
+        let rock = of(ASTEROID_LAYER).next().unwrap();
+        assert!((rock.pos - vec2(100.0, 5.0)).length() < EPS);
+        assert!((rock.rotation - 2.25).abs() < EPS);
+        assert_eq!(of(BULLET_LAYER).next().unwrap().rotation, 0.5);
+        assert_eq!(of(PARTICLE_LAYER).count(), 5);
+        assert!(of(PARTICLE_LAYER).all(|s| s.color.a == 1.0));
+
+        g.invulnerable = BLINK;
+        assert_eq!(draw(&g).len(), 7);
+        g.invulnerable = 2 * BLINK;
+        assert_eq!(draw(&g).len(), 8);
+        g.state = ShipState::Dead { respawn_in: 1 };
+        assert!(draw(&g).iter().all(|s| s.layer != SHIP_LAYER));
+    }
+
+    #[test]
+    fn text_width_sums_advances() {
+        let mut assets = engine::Assets::default();
+        let handle = assets.load_font(FONT_PATH, HUD_PX);
+        let font = assets.font(handle);
+        let one = text_width(font, "0", HUD_SCALE);
+        assert!(one > 0.0);
+        assert!((text_width(font, "0\u{e9}0", HUD_SCALE) - 3.0 * one).abs() < EPS);
     }
 }

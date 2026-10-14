@@ -208,10 +208,10 @@
 - Modify: `games/asteroids/src/main.rs`
 - Create: `games/asteroids/assets/{ship,asteroid,bullet,particle}.png`
 
-- [ ] тест: система спрайтов выдаёт по спрайту на видимую сущность с интерполированными позицией и углом
-- [ ] PNG одноразовым скриптом; `load_texture` и `load_font` по `concat!(env!("CARGO_MANIFEST_DIR"), ...)`
-- [ ] `draw`: сущности, мигание неуязвимости, HUD — счёт, жизни, FPS; GAME OVER. Число спрайтов — только в логе Task 8
-- [ ] тесты — зелёные
+- [x] тест: система спрайтов выдаёт по спрайту на видимую сущность с интерполированными позицией и углом
+- [x] PNG одноразовым скриптом; `load_texture` и `load_font` по `concat!(env!("CARGO_MANIFEST_DIR"), ...)`
+- [x] `draw`: сущности, мигание неуязвимости, HUD — счёт, жизни, FPS; GAME OVER. Число спрайтов — только в логе Task 8
+- [x] тесты — зелёные
 
 ### Task 13: Verify acceptance criteria
 - [ ] `cargo test --workspace -- --nocapture`: нет `SKIPPED`; clippy
