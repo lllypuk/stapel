@@ -1,7 +1,8 @@
 use glam::Vec2;
 
+use crate::Color;
 use crate::assets::{Handle, Texture};
-use crate::sprite::Rect;
+use crate::sprite::{Rect, Sprite};
 
 const FIRST: char = ' ';
 const LAST: char = '~';
@@ -54,6 +55,41 @@ impl FontData {
             glyphs,
         }
     }
+}
+
+/// Спрайты строки; `pos` — начало baseline, Y вверх. Символ вне ASCII 32..=126 рисуется как `'?'`.
+pub fn layout<'a>(
+    font: &'a FontData,
+    text: &'a str,
+    pos: Vec2,
+    scale: f32,
+    color: Color,
+    layer: i32,
+) -> impl Iterator<Item = Sprite> + 'a {
+    let texture = font.atlas.unwrap_or(Handle::WHITE);
+    let mut cursor = Vec2::ZERO;
+    text.chars().filter_map(move |c| {
+        if c == '\n' {
+            cursor = Vec2::new(0.0, cursor.y - font.line_height);
+            return None;
+        }
+        let g = font.glyph(c).or_else(|| font.glyph('?'))?;
+        let min = cursor + Vec2::new(g.xmin, g.ymin);
+        cursor.x += g.advance;
+        let size = Vec2::new(g.width, g.height);
+        if size.cmpeq(Vec2::ZERO).any() {
+            return None;
+        }
+        Some(Sprite {
+            texture,
+            pos: pos + (min + size / 2.0) * scale,
+            size: size * scale,
+            uv: g.uv,
+            color,
+            layer,
+            ..Default::default()
+        })
+    })
 }
 
 /// Растеризованный шрифт до выделения текстуры атласа.
@@ -122,7 +158,7 @@ pub(crate) fn rasterize(ttf: &[u8], px: f32) -> Result<Rasterized, &'static str>
 
 /// Полочная упаковка: левые верхние углы глифов и высота атласа.
 /// Каждый глиф окружён пустой рамкой в 1 texel, иначе `Linear` подмешает соседа или край.
-fn pack(sizes: &[(u32, u32)], width: u32) -> (Vec<(u32, u32)>, u32) {
+pub(crate) fn pack(sizes: &[(u32, u32)], width: u32) -> (Vec<(u32, u32)>, u32) {
     let (mut x, mut y, mut shelf) = (0, 0, 0);
     let positions = sizes
         .iter()
@@ -173,6 +209,77 @@ mod tests {
         assert!(font.glyph(' ').is_some() && font.glyph('~').is_some());
         assert!(font.glyph('\u{7f}').is_none() && font.glyph('\n').is_none());
         assert!(font.glyph('я').is_none());
+    }
+
+    fn lay(font: &FontData, text: &str) -> Vec<Sprite> {
+        layout(font, text, Vec2::new(100.0, 50.0), 2.0, Color::WHITE, 3).collect()
+    }
+
+    #[test]
+    fn stub_draws_boxes_on_baseline() {
+        let s = lay(&FontData::stub(10.0), "ab");
+        assert_eq!(s.len(), 2);
+        assert_eq!(
+            (s[0].pos, s[0].size),
+            (Vec2::new(105.0, 57.0), Vec2::new(10.0, 14.0))
+        );
+        assert_eq!(s[1].pos, Vec2::new(117.0, 57.0));
+        assert_eq!(
+            (s[0].texture, s[0].uv),
+            (Handle::WHITE, Sprite::default().uv)
+        );
+        assert_eq!((s[0].color, s[0].layer), (Color::WHITE, 3));
+    }
+
+    #[test]
+    fn space_advances_without_sprite() {
+        let s = lay(&FontData::stub(10.0), "a b");
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[1].pos.x, 100.0 + 2.0 * 12.0 + 5.0);
+    }
+
+    #[test]
+    fn newline_moves_down_by_line_height() {
+        let s = lay(&FontData::stub(10.0), "ab\nc");
+        assert_eq!(s[2].pos, Vec2::new(105.0, 57.0 - 24.0));
+    }
+
+    fn font_with(c: char, g: Glyph) -> FontData {
+        let mut font = FontData::stub(10.0);
+        font.atlas = Some(Handle::new(7));
+        font.glyphs[c as usize - FIRST as usize] = g;
+        font
+    }
+
+    #[test]
+    fn non_ascii_falls_back_to_question_mark() {
+        let q = Glyph {
+            width: 3.0,
+            ..*FontData::stub(10.0).glyph('?').unwrap()
+        };
+        let font = font_with('?', q);
+        assert_eq!(lay(&font, "я\t"), lay(&font, "??"));
+        assert_eq!(lay(&font, "я")[0].size.x, 6.0);
+    }
+
+    #[test]
+    fn glyph_center_from_bottom_left_with_y_up() {
+        let uv = Rect {
+            min: Vec2::new(0.1, 0.2),
+            max: Vec2::new(0.3, 0.4),
+        };
+        let g = Glyph {
+            uv,
+            xmin: 1.0,
+            ymin: -3.0,
+            width: 4.0,
+            height: 6.0,
+            advance: 5.0,
+        };
+        let s = lay(&font_with('g', g), "g");
+        assert_eq!(s[0].pos, Vec2::new(100.0 + 3.0 * 2.0, 50.0));
+        assert_eq!(s[0].size, Vec2::new(8.0, 12.0));
+        assert_eq!((s[0].texture, s[0].uv), (Handle::new(7), uv));
     }
 
     #[test]

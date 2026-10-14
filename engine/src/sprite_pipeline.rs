@@ -272,6 +272,7 @@ fn grow_capacity(current: u64, needed: u64) -> Option<u64> {
 mod tests {
     use super::*;
     use crate::frame::linear_to_srgb;
+    use crate::text::{self, FontData, Glyph};
     use crate::{Camera2D, Color, Handle, Rect, Sprite, Texture, Vec2, vec2};
 
     const SIZE: u32 = 64;
@@ -547,5 +548,64 @@ mod tests {
                 linear_to_srgb(bg.b),
             ],
         );
+    }
+
+    #[test]
+    fn glyph_padding_keeps_neighbour_out() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+
+        // A — пустой глиф вплотную к рамке; B — сплошной, сразу за рамкой.
+        let n = 4;
+        let (positions, height) = text::pack(&[(n, n), (n, n)], 2 * (n + 2));
+        let width = 2 * (n + 2);
+        let mut coverage = vec![0; (width * height) as usize];
+        let (bx, by) = positions[1];
+        for y in by..by + n {
+            let row = (y * width + bx) as usize;
+            coverage[row..row + n as usize].fill(255);
+        }
+        let mut assets = Assets::default();
+        let atlas = Vec2::new(width as f32, height as f32);
+        let mut font = FontData::stub(n as f32);
+        font.atlas = Some(assets.add_coverage(width, height, &coverage));
+        for (c, &(x, y)) in ['A', 'B'].into_iter().zip(&positions) {
+            let min = Vec2::new(x as f32, y as f32);
+            font.glyphs[c as usize - ' ' as usize] = Glyph {
+                uv: Rect {
+                    min: min / atlas,
+                    max: (min + n as f32) / atlas,
+                },
+                xmin: 0.0,
+                ymin: 0.0,
+                width: n as f32,
+                height: n as f32,
+                advance: n as f32 + 1.0,
+            };
+        }
+
+        let bg = Color::BLACK;
+        let mut gfx = Gfx {
+            clear_color: bg,
+            camera: Camera2D {
+                center: Vec2::splat(SIZE as f32 / 2.0),
+                size: Vec2::splat(SIZE as f32),
+            },
+            sprites: Vec::new(),
+        };
+        // ×4 со сдвигом на полtexel'а: при 1:1 фрагменты попадают в центры texel'ей,
+        // и `Linear` соседа не берёт даже без рамки.
+        let scale = 4.0;
+        let pos = vec2(8.0 + scale / 2.0, 8.0);
+        gfx.sprites
+            .extend(text::layout(&font, "AB", pos, scale, Color::WHITE, 0));
+
+        let img = render(&device, &queue, &mut assets, &gfx);
+
+        let a_right = 8 + 2 + n * 4 - 1;
+        assert_pixel(&img, "A right edge", (a_right, 16), [0, 0, 0]);
+        assert_pixel(&img, "A top edge", (16, 8 + n * 4 - 1), [0, 0, 0]);
+        assert_pixel(&img, "B centre", (a_right + 4 + 8, 16), [255, 255, 255]);
     }
 }

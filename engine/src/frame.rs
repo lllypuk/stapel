@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{Assets, Camera2D, FixedClock, Input, Sprite};
+use crate::{Assets, Camera2D, FixedClock, Font, Handle, Input, Sprite, Vec2, text};
 
 /// Линейный RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -72,6 +72,23 @@ pub struct Gfx {
 impl Gfx {
     pub fn draw_sprite(&mut self, sprite: Sprite) {
         self.sprites.push(sprite);
+    }
+
+    /// `pos` — начало baseline, Y вверх; `scale` — мировых единиц на пиксель растеризации.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text(
+        &mut self,
+        assets: &Assets,
+        font: Handle<Font>,
+        text: &str,
+        pos: Vec2,
+        scale: f32,
+        color: Color,
+        layer: i32,
+    ) {
+        let font = assets.font(font);
+        self.sprites
+            .extend(text::layout(font, text, pos, scale, color, layer));
     }
 }
 

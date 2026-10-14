@@ -367,7 +367,10 @@ mod tests {
         let h = assets.load_font(FONT, 32.0);
         let t = assets.take_pending().pop().unwrap();
         let font = assets.font(h);
-        assert_eq!((Some(t.handle), t.kind), (font.atlas, TextureKind::Coverage));
+        assert_eq!(
+            (Some(t.handle), t.kind),
+            (font.atlas, TextureKind::Coverage)
+        );
         for c in ' '..='~' {
             let g = font.glyph(c).unwrap();
             assert!(g.advance > 0.0, "{c:?}");
