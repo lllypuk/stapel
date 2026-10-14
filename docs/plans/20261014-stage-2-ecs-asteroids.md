@@ -157,9 +157,9 @@
 - Create: `engine/src/ecs/commands.rs`
 - Modify: `engine/src/ecs/mod.rs`, `engine/src/lib.rs`
 
-- [ ] тесты: `apply` — despawn раньше spawn, порядок spawn сохраняется; двойной `despawn` — no-op; `is_pending` до и после `apply`; despawn мёртвой — no-op; одна closure создаёт N сущностей
-- [ ] `Commands`
-- [ ] тесты — зелёные
+- [x] тесты: `apply` — despawn раньше spawn, порядок spawn сохраняется; двойной `despawn` — no-op; `is_pending` до и после `apply`; despawn мёртвой — no-op; одна closure создаёт N сущностей
+- [x] `Commands`
+- [x] тесты — зелёные
 
 ### Task 8: Статистика кадров
 

@@ -14,7 +14,7 @@ pub mod text;
 pub use assets::{Assets, Font, Handle, PendingTexture, Texture, TextureKind};
 pub use camera::{Camera2D, Viewport, letterbox};
 pub use clock::FixedClock;
-pub use ecs::{Entity, SparseSet, World};
+pub use ecs::{Commands, Entity, SparseSet, World};
 pub use frame::{Color, Context, Game, Gfx, Time, step_frame};
 pub use glam::{Vec2, vec2};
 pub use input::Input;
