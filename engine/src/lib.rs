@@ -5,6 +5,7 @@ pub mod clock;
 pub mod frame;
 pub mod input;
 pub mod renderer;
+pub mod sprite;
 pub mod stats;
 
 pub use assets::{Assets, PendingTexture, TextureId};
@@ -14,6 +15,7 @@ pub use frame::{Color, Context, Game, Gfx, Time, step_frame};
 pub use glam::{Vec2, vec2};
 pub use input::Input;
 pub use renderer::{RenderError, Renderer};
+pub use sprite::{Batch, Instance, Sprite, batch};
 pub use stats::RateCounter;
 pub use winit::event::ElementState;
 pub use winit::keyboard::KeyCode;

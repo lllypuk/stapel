@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{Assets, FixedClock, Input};
+use crate::{Assets, Camera2D, FixedClock, Input, Sprite};
 
 /// Линейный RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -59,6 +59,14 @@ pub(crate) fn linear_to_srgb(c: f64) -> u8 {
 #[derive(Default)]
 pub struct Gfx {
     pub clear_color: Color,
+    pub camera: Camera2D,
+    pub sprites: Vec<Sprite>,
+}
+
+impl Gfx {
+    pub fn draw_sprite(&mut self, sprite: Sprite) {
+        self.sprites.push(sprite);
+    }
 }
 
 #[derive(Default)]
@@ -109,6 +117,8 @@ pub fn step_frame<G: Game>(
         ctx.input.end_tick();
         ctx.time.ticks += 1;
     }
+    // Здесь, а не после рендера: на кадрах без рендера спрайты копились бы.
+    ctx.gfx.sprites.clear();
     game.draw(ctx, clock.alpha());
     ticks
 }
@@ -116,7 +126,7 @@ pub fn step_frame<G: Game>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::KeyCode;
+    use crate::{KeyCode, Vec2};
     use winit::event::ElementState::Pressed;
 
     const K: KeyCode = KeyCode::Space;
@@ -185,6 +195,37 @@ mod tests {
         assert_eq!(ctx.time.ticks, 3);
         step_frame(&mut g, &mut ctx, &mut clock, step);
         assert_eq!(ctx.time.ticks, 4);
+    }
+
+    #[test]
+    fn previous_sprites_vanish_even_without_ticks() {
+        let (mut g, mut ctx, mut clock, step) = setup();
+        let s = Sprite {
+            texture: crate::TextureId::WHITE,
+            pos: Vec2::ZERO,
+            size: Vec2::ONE,
+            color: Color::BLACK,
+            layer: 0,
+        };
+        ctx.gfx.draw_sprite(s);
+        ctx.gfx.draw_sprite(s);
+        let ticks = step_frame(&mut g, &mut ctx, &mut clock, step / 2);
+        assert_eq!(ticks, 0);
+        assert!(ctx.gfx.sprites.is_empty());
+    }
+
+    #[test]
+    fn clear_color_and_camera_survive_frame() {
+        let (mut g, mut ctx, mut clock, step) = setup();
+        let color = Color::from_srgb8(10, 20, 30);
+        let camera = Camera2D {
+            center: Vec2::new(1.0, 2.0),
+            size: Vec2::new(640.0, 360.0),
+        };
+        ctx.gfx.clear_color = color;
+        ctx.gfx.camera = camera;
+        step_frame(&mut g, &mut ctx, &mut clock, step);
+        assert_eq!((ctx.gfx.clear_color, ctx.gfx.camera), (color, camera));
     }
 
     #[test]
