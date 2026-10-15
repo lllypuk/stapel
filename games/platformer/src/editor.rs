@@ -1,12 +1,46 @@
 use std::{collections::VecDeque, iter};
 
-use engine::{IVec2, Input, MouseButton, ivec2};
+use engine::{Color, Gfx, Handle, IVec2, Input, MouseButton, Sprite, Texture, Vec2, ivec2, vec2};
+
+use crate::{
+    BLOCK, COIN, DIRT, ENEMY_LAYER, FLAG, GRASS, IDLE, ITEM_LAYER, PLANK, PLATFORM_LAYER,
+    PLAYER_LAYER, SPIKES, TILE, TILE_LAYER, WALKER, cell_center, char_sprite, tile_sprite,
+};
 
 /// Символ пустой клетки: им дополняются строки и заполняются новые столбцы и строки.
 const EMPTY: char = '.';
 
 /// Снимков отмены не больше; старший вытесняется.
 const HISTORY_LIMIT: usize = 100;
+
+/// Подсветка клетки под курсором и рамка уровня — поверх уровня.
+pub(crate) const OVERLAY_LAYER: i32 = 7;
+const HOVER: Color = Color {
+    r: 1.0,
+    g: 1.0,
+    b: 1.0,
+    a: 0.35,
+};
+const FRAME: Color = Color {
+    r: 0.1,
+    g: 0.15,
+    b: 0.25,
+    a: 1.0,
+};
+/// Невидимая в игре клетка разворота платформ `!`.
+const STOP: Color = Color {
+    r: 1.0,
+    g: 0.5,
+    b: 0.0,
+    a: 1.0,
+};
+/// Символ не из палитры.
+const UNKNOWN: Color = Color {
+    r: 1.0,
+    g: 0.0,
+    b: 1.0,
+    a: 1.0,
+};
 
 /// Карта уровня как есть, без разбора; клетки — от левой нижней, Y вверх, как у `Level`.
 #[derive(Clone, Debug, PartialEq)]
@@ -86,6 +120,49 @@ impl Grid {
     pub(crate) fn remove_row(&mut self) {
         if self.cells.len() > self.width {
             self.cells.drain(..self.width);
+        }
+    }
+
+    /// Спрайт символа клетки как в игре; пусто — `None`, символ не из палитры — маркер.
+    fn sprite(
+        &self,
+        cell: IVec2,
+        tiles: Handle<Texture>,
+        chars: Handle<Texture>,
+    ) -> Option<Sprite> {
+        let tile = |art, layer| Some(tile_sprite(tiles, cell_center(cell), art, layer));
+        let actor = |art, layer| {
+            Some(char_sprite(
+                chars,
+                (cell * TILE).as_vec2(),
+                TILE,
+                art,
+                1,
+                layer,
+            ))
+        };
+        let mark = |color, side: i32| {
+            Some(Sprite {
+                pos: cell_center(cell),
+                size: Vec2::splat(side as f32),
+                color,
+                layer: ITEM_LAYER,
+                ..Default::default()
+            })
+        };
+        match self.get(cell)? {
+            EMPTY | ' ' => None,
+            '#' if self.get(cell + IVec2::Y) == Some('#') => tile(DIRT, TILE_LAYER),
+            '#' => tile(GRASS, TILE_LAYER),
+            'P' => actor(IDLE, PLAYER_LAYER),
+            'E' => actor(WALKER, ENEMY_LAYER),
+            'o' => tile(COIN, ITEM_LAYER),
+            '^' => tile(SPIKES, ITEM_LAYER),
+            'X' => tile(FLAG, ITEM_LAYER),
+            '=' => tile(PLANK, PLATFORM_LAYER),
+            'H' => tile(BLOCK, PLATFORM_LAYER),
+            '!' => mark(STOP, TILE / 2),
+            _ => mark(UNKNOWN, TILE),
         }
     }
 
@@ -246,6 +323,42 @@ impl Editor {
             self.history.commit(s.before, &self.grid);
         }
     }
+
+    /// Сетка, подсветка клетки `hover`, если она в сетке, и рамка снаружи уровня.
+    pub(crate) fn draw(
+        &self,
+        gfx: &mut Gfx,
+        tiles: Handle<Texture>,
+        chars: Handle<Texture>,
+        hover: Option<IVec2>,
+    ) {
+        let size = self.grid.size();
+        for y in 0..size.y {
+            for x in 0..size.x {
+                if let Some(s) = self.grid.sprite(ivec2(x, y), tiles, chars) {
+                    gfx.draw_sprite(s);
+                }
+            }
+        }
+        let mut overlay = |pos, size, color| {
+            gfx.draw_sprite(Sprite {
+                pos,
+                size,
+                color,
+                layer: OVERLAY_LAYER,
+                ..Default::default()
+            });
+        };
+        if let Some(cell) = hover.filter(|&c| self.grid.get(c).is_some()) {
+            overlay(cell_center(cell), Vec2::splat(TILE as f32), HOVER);
+        }
+        let bounds = (size * TILE).as_vec2();
+        let (across, along) = (vec2(bounds.x + 2.0, 1.0), vec2(1.0, bounds.y + 2.0));
+        overlay(vec2(bounds.x / 2.0, -0.5), across, FRAME);
+        overlay(vec2(bounds.x / 2.0, bounds.y + 0.5), across, FRAME);
+        overlay(vec2(-0.5, bounds.y / 2.0), along, FRAME);
+        overlay(vec2(bounds.x + 0.5, bounds.y / 2.0), along, FRAME);
+    }
 }
 
 #[cfg(test)]
@@ -253,7 +366,119 @@ mod tests {
     use super::*;
     use crate::LEVEL01;
 
-    use engine::ElementState::{Pressed, Released};
+    use engine::{
+        Assets,
+        ElementState::{Pressed, Released},
+    };
+
+    /// Разные хэндлы атласов тайлов и персонажей; файлов нет — обе текстуры шахматные.
+    fn atlases() -> (Handle<Texture>, Handle<Texture>) {
+        let mut a = Assets::default();
+        (a.load_texture("tiles"), a.load_texture("chars"))
+    }
+
+    /// Спрайты `Editor::draw` сетки `text`.
+    fn drawn(text: &str, hover: Option<IVec2>) -> Vec<Sprite> {
+        let (tiles, chars) = atlases();
+        let mut gfx = Gfx::default();
+        Editor::new(text).draw(&mut gfx, tiles, chars, hover);
+        gfx.sprites
+    }
+
+    /// Спрайты клеток, без подсветки и рамки.
+    fn cells(text: &str) -> Vec<Sprite> {
+        let mut s = drawn(text, None);
+        s.retain(|s| s.layer != OVERLAY_LAYER);
+        s
+    }
+
+    fn overlay(text: &str, hover: Option<IVec2>, color: Color) -> Vec<Sprite> {
+        let mut s = drawn(text, hover);
+        s.retain(|s| s.layer == OVERLAY_LAYER && s.color == color);
+        s
+    }
+
+    #[test]
+    fn palette_draws_game_art() {
+        let (tiles, chars) = atlases();
+        let at = Vec2::splat(TILE as f32 / 2.0);
+        let tile = |art, layer| tile_sprite(tiles, at, art, layer);
+        let actor = |art, layer| char_sprite(chars, Vec2::ZERO, TILE, art, 1, layer);
+        let stop = Sprite {
+            pos: at,
+            size: Vec2::splat(9.0),
+            color: STOP,
+            layer: ITEM_LAYER,
+            ..Default::default()
+        };
+        let cases = [
+            ('#', tile(GRASS, TILE_LAYER)),
+            ('P', actor(IDLE, PLAYER_LAYER)),
+            ('E', actor(WALKER, ENEMY_LAYER)),
+            ('o', tile(COIN, ITEM_LAYER)),
+            ('^', tile(SPIKES, ITEM_LAYER)),
+            ('X', tile(FLAG, ITEM_LAYER)),
+            ('=', tile(PLANK, PLATFORM_LAYER)),
+            ('H', tile(BLOCK, PLATFORM_LAYER)),
+            ('!', stop),
+        ];
+        for (ch, sprite) in cases {
+            assert_eq!(cells(&format!("{ch}\n")), [sprite], "{ch}");
+        }
+        for ch in ['.', ' '] {
+            assert_eq!(cells(&format!("{ch}\n")), [], "{ch:?}");
+        }
+    }
+
+    #[test]
+    fn ground_under_ground_is_dirt() {
+        let (tiles, _) = atlases();
+        let top = tile_sprite(tiles, cell_center(ivec2(0, 1)), GRASS, TILE_LAYER);
+        let below = tile_sprite(tiles, cell_center(ivec2(0, 0)), DIRT, TILE_LAYER);
+        assert_eq!(cells("#\n#\n"), [below, top]);
+    }
+
+    #[test]
+    fn unknown_symbol_draws_marker() {
+        let marker = Sprite {
+            pos: Vec2::splat(9.0),
+            size: Vec2::splat(18.0),
+            color: UNKNOWN,
+            layer: ITEM_LAYER,
+            ..Default::default()
+        };
+        assert_eq!(cells("?\n"), [marker]);
+    }
+
+    #[test]
+    fn hover_highlights_cell_inside_grid() {
+        let [lit] = overlay("..\n..\n", Some(ivec2(1, 0)), HOVER)[..] else {
+            panic!("одна подсветка");
+        };
+        assert_eq!((lit.pos, lit.size), (vec2(27.0, 9.0), Vec2::splat(18.0)));
+        for hover in [None, Some(ivec2(2, 0)), Some(ivec2(0, -1))] {
+            assert_eq!(overlay("..\n..\n", hover, HOVER), [], "{hover:?}");
+        }
+    }
+
+    #[test]
+    fn frame_surrounds_level_from_outside() {
+        let mut rects: Vec<_> = overlay("...\n...\n", None, FRAME)
+            .iter()
+            .map(|s| {
+                let (min, max) = (s.pos - s.size / 2.0, s.pos + s.size / 2.0);
+                [min.x, min.y, max.x, max.y]
+            })
+            .collect();
+        rects.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let expected = [
+            [-1.0, -1.0, 0.0, 37.0],
+            [-1.0, -1.0, 55.0, 0.0],
+            [-1.0, 36.0, 55.0, 37.0],
+            [54.0, -1.0, 55.0, 37.0],
+        ];
+        assert_eq!(rects, expected);
+    }
 
     /// Кнопки, нажатые с прошлого тика; `released` уже отпущены.
     fn clicked(pressed: &[MouseButton], released: &[MouseButton]) -> Input {

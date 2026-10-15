@@ -112,6 +112,11 @@ fn cell_center(cell: IVec2) -> Vec2 {
     (cell * TILE + TILE / 2).as_vec2()
 }
 
+/// Клетка под точкой мира `pos`.
+fn cell_at(pos: Vec2) -> IVec2 {
+    (pos / TILE as f32).floor().as_ivec2()
+}
+
 /// UV ячейки `cell` атласа `atlas` с ячейками `size × size` без зазоров.
 fn atlas_uv(cell: IVec2, size: i32, atlas: Vec2) -> Rect {
     let min = (cell * size).as_vec2() / atlas;
@@ -758,8 +763,7 @@ impl Platformer {
         let bounds = self.editor.grid.size() * TILE;
         self.camera.prev = self.camera.pos;
         self.camera.pos = (self.camera.pos + dir * SCROLL).clamp(-VIEW / 2, bounds + VIEW / 2);
-        let cell = cursor.map(|p| (p / TILE as f32).floor().as_ivec2());
-        self.editor.paint(input, cell);
+        self.editor.paint(input, cursor.map(cell_at));
     }
 
     fn tick(&mut self, input: &Input) {
@@ -1071,6 +1075,12 @@ impl Game for Platformer {
             center,
             size: VIEW.as_vec2(),
         };
+        if self.editing {
+            let hover = ctx.cursor_world().map(cell_at);
+            self.editor
+                .draw(&mut ctx.gfx, self.tiles, self.chars, hover);
+            return;
+        }
         self.draw_tiles(&mut ctx.gfx, center.as_ivec2());
         self.draw_items(&mut ctx.gfx);
         for (_, p) in self.world.storage::<Platform>().iter() {
@@ -2672,6 +2682,21 @@ mod tests {
         let mut ctx = shown_1to1();
         press(&mut g, &mut ctx, F1);
         (g, ctx)
+    }
+
+    #[test]
+    fn editor_draws_grid_with_cell_under_cursor_instead_of_level() {
+        let (mut g, mut ctx) = editing_in("draw");
+        ctx.input.on_cursor(Some(vec2(4.0, 175.0)));
+        g.draw(&mut ctx, 1.0);
+        let mut gfx = Gfx::default();
+        g.editor.draw(&mut gfx, g.tiles, g.chars, Some(IVec2::ZERO));
+        assert_eq!(ctx.gfx.sprites, gfx.sprites);
+        assert!(
+            gfx.sprites
+                .iter()
+                .any(|s| s.layer == editor::OVERLAY_LAYER && s.pos == cell_center(IVec2::ZERO))
+        );
     }
 
     /// `WATCH_TICKS` тиков: наблюдатель перечитывает файл ровно один раз.
