@@ -16,6 +16,15 @@ glam = "0.34.1"
 bytemuck = { version = "1.25.2", features = ["derive"] }
 fontdue = "0.9.4"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+hound = "3.5.1"
+lewton = "0.10.2"
+
+# Полный декод музыки в debug без оптимизаций занимает секунды.
+[profile.dev.package.lewton]
+opt-level = 3
+
+[profile.dev.package.ogg]
+opt-level = 3
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

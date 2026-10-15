@@ -5,6 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
+use crate::audio::{Sound, decode};
 use crate::frame::{linear_to_srgb, srgb_to_linear};
 use crate::text::{self, FontData};
 
@@ -98,13 +99,16 @@ pub struct PendingTexture {
     pub rgba: Vec<u8>,
 }
 
-/// Реестр текстур и шрифтов; новые текстуры ждут заливки на GPU до `take_pending`.
+/// Реестр текстур, шрифтов и звуков; новые текстуры ждут заливки на GPU до `take_pending`.
 pub struct Assets {
     next_index: u32,
     pending: Vec<PendingTexture>,
     paths: HashMap<PathBuf, Handle<Texture>>,
     fonts: Vec<FontData>,
     font_keys: HashMap<(PathBuf, u32), Handle<Font>>,
+    sounds: Vec<Sound>,
+    sound_paths: HashMap<PathBuf, Handle<Sound>>,
+    sample_rate: u32,
 }
 
 impl Default for Assets {
@@ -115,6 +119,9 @@ impl Default for Assets {
             paths: HashMap::new(),
             fonts: Vec::new(),
             font_keys: HashMap::new(),
+            sounds: Vec::new(),
+            sound_paths: HashMap::new(),
+            sample_rate: 48_000,
         };
         assets.push(TextureKind::Color, 1, 1, vec![255; 4]);
         assets
@@ -180,6 +187,43 @@ impl Assets {
     /// Данные шрифта по хэндлу.
     pub fn font(&self, handle: Handle<Font>) -> &FontData {
         &self.fonts[handle.index as usize]
+    }
+
+    /// Повторный путь отдаёт прежний хэндл; ошибка чтения или формата — пустой звук и `warn`.
+    pub fn load_sound(&mut self, path: impl AsRef<Path>) -> Handle<Sound> {
+        let path = path.as_ref();
+        if let Some(&h) = self.sound_paths.get(path) {
+            return h;
+        }
+        let frames = decode::load(path, self.sample_rate).unwrap_or_else(|e| {
+            log::warn!("sound {}: {e}", path.display());
+            Vec::new()
+        });
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "u32::MAX звуков не поместится в память"
+        )]
+        let handle = Handle::new(self.sounds.len() as u32);
+        self.sounds.push(Sound {
+            frames: frames.into(),
+        });
+        self.sound_paths.insert(path.to_path_buf(), handle);
+        handle
+    }
+
+    /// Звук по хэндлу.
+    pub fn sound(&self, handle: Handle<Sound>) -> &Sound {
+        &self.sounds[handle.index as usize]
+    }
+
+    /// Частота, в которую ресемплируются звуки; после загрузки кэш хранил бы звук чужой частоты.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "зовёт app с устройством, Task 7")
+    )]
+    pub(crate) fn set_sample_rate(&mut self, rate: u32) {
+        debug_assert!(self.sounds.is_empty(), "set_sample_rate after load_sound");
+        self.sample_rate = rate;
     }
 
     /// Текстура покрытия из байта на texel: белый, уже премультиплицированный.
@@ -426,6 +470,42 @@ mod tests {
         let h = assets.load_font(&path, 10.0);
         std::fs::remove_file(&path).unwrap();
         assert_eq!(assets.font(h).atlas, None);
+    }
+
+    const SINE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/sine.ogg");
+
+    #[test]
+    fn sound_is_cached_by_path() {
+        let mut assets = Assets::default();
+        let a = assets.load_sound(SINE);
+        let b = assets.load_sound(SINE);
+        let missing = assets.load_sound(temp_path("missing.wav"));
+        assert_eq!(a, b);
+        assert_ne!(a, missing);
+        assert!(!assets.sound(a).frames.is_empty());
+        assert!(assets.sound(missing).frames.is_empty());
+    }
+
+    #[test]
+    fn sound_is_resampled_to_assets_rate() {
+        let mut assets = Assets::default();
+        assets.set_sample_rate(44_100);
+        let h = assets.load_sound(SINE);
+        let native = assets.sound(h).frames.len();
+        let mut assets = Assets::default();
+        let h = assets.load_sound(SINE);
+        assert_eq!(
+            assets.sound(h).frames.len() / 2,
+            (native / 2 * 480).div_ceil(441)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "set_sample_rate after load_sound")]
+    fn sample_rate_after_load_panics_in_debug() {
+        let mut assets = Assets::default();
+        assets.load_sound(SINE);
+        assets.set_sample_rate(44_100);
     }
 
     #[test]

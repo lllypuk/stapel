@@ -133,12 +133,12 @@
 - Create: `engine/src/audio/mod.rs`, `engine/src/audio/decode.rs`, `engine/tests/data/sine.ogg`
 - Modify: `engine/src/assets.rs`, `engine/src/lib.rs`, `Cargo.toml`, `engine/Cargo.toml`, `CLAUDE.md`
 
-- [ ] `sine.ogg` — 0,1 с синуса, `ffmpeg -f lavfi -i sine=440:d=0.1 -c:a libvorbis engine/tests/data/sine.ogg`; команда — комментарием в тесте
-- [ ] тесты: WAV 16 бит моно и стерео пишется `hound` в `temp_dir` (как `engine/src/assets.rs:253`) → стерео f32; OGG из `sine.ogg`; 44 100 → 48 000 — длина и значения линейной интерполяции; 48 000 → 48 000 — без изменений; нет файла, битый, 24 бит, 6 каналов — пустой звук; кэш пути — один хэндл; `Assets::sound` по хэндлу
-- [ ] `hound`, `lewton`; `Sound`, `Handle<Sound>`, `Assets::load_sound`, `Assets::sound`, `set_sample_rate`; `[profile.dev.package]` для `lewton`, `ogg`
-- [ ] `cargo deny check` (версии против advisory-db, лицензии `hound`/`lewton`/`ogg`), `cargo machete` — зелёные
-- [ ] `CLAUDE.md`, граница тестируемости: декод звука
-- [ ] тесты — зелёные
+- [x] `sine.ogg` — 0,1 с синуса, `ffmpeg -f lavfi -i sine=440:d=0.1 -c:a libvorbis engine/tests/data/sine.ogg`; команда — комментарием в тесте
+- [x] тесты: WAV 16 бит моно и стерео пишется `hound` в `temp_dir` (как `engine/src/assets.rs:253`) → стерео f32; OGG из `sine.ogg`; 44 100 → 48 000 — длина и значения линейной интерполяции; 48 000 → 48 000 — без изменений; нет файла, битый, 24 бит, 6 каналов — пустой звук; кэш пути — один хэндл; `Assets::sound` по хэндлу
+- [x] `hound`, `lewton`; `Sound`, `Handle<Sound>`, `Assets::load_sound`, `Assets::sound`, `set_sample_rate`; `[profile.dev.package]` для `lewton`, `ogg`
+- [x] `cargo deny check` (версии против advisory-db, лицензии `hound`/`lewton`/`ogg`), `cargo machete` — зелёные
+- [x] `CLAUDE.md`, граница тестируемости: декод звука
+- [x] тесты — зелёные
 
 ### Task 6: Микшер
 

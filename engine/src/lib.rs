@@ -2,8 +2,10 @@
 #![deny(missing_docs)]
 
 mod app;
-/// Текстуры и шрифты по хэндлам.
+/// Текстуры, шрифты и звуки по хэндлам.
 pub mod assets;
+/// Декодированные звуки.
+pub mod audio;
 /// Ортокамера и вписывание кадра в окно.
 pub mod camera;
 /// Фиксированный шаг симуляции.
@@ -29,6 +31,7 @@ mod surface;
 pub mod text;
 
 pub use assets::{Assets, Font, Handle, PendingTexture, Texture, TextureKind};
+pub use audio::Sound;
 pub use camera::{Camera2D, Viewport, letterbox, letterbox_pixel, viewport};
 pub use clock::FixedClock;
 pub use ecs::{Commands, Entity, SparseSet, World};
