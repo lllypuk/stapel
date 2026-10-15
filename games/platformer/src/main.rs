@@ -1,9 +1,9 @@
 use std::{fmt, iter};
 
 use engine::{
-    Aabb, Actor, Axis, Camera2D, Color, Config, Context, Game, Gfx, Handle, IVec2, Input, KeyCode,
-    Rect, Solid, Sprite, Texture, Tilemap, Vec2, World, grounded, ivec2, move_actor, move_solid,
-    vec2,
+    Aabb, Actor, Axis, Camera2D, Color, Commands, Config, Contact, Context, Entity, Game, Gfx,
+    Handle, IVec2, Input, KeyCode, Rect, Solid, SparseSet, Sprite, Texture, Tilemap, Vec2, World,
+    grounded, ivec2, move_actor, move_solid, vec2,
 };
 
 const TICK_HZ: u32 = 60;
@@ -23,18 +23,26 @@ const BLOCK: IVec2 = ivec2(7, 2);
 const PLANK_LEFT: IVec2 = ivec2(8, 2);
 const PLANK: IVec2 = ivec2(9, 2);
 const PLANK_RIGHT: IVec2 = ivec2(10, 2);
-const PLATFORM_LAYER: i32 = 2;
+/// Монета, шипы и флаг выхода.
+const COIN: IVec2 = ivec2(11, 7);
+const SPIKES: IVec2 = ivec2(8, 3);
+const FLAG: IVec2 = ivec2(11, 5);
+const POLE: IVec2 = ivec2(11, 6);
+const ITEM_LAYER: i32 = 2;
+/// Сенсор шипов у низа клетки.
+const SPIKE_SIZE: IVec2 = ivec2(18, 8);
+const PLATFORM_LAYER: i32 = 3;
 const CHARS_ATLAS: Vec2 = vec2(216.0, 72.0);
 /// Сторона кадра персонажа.
 const CHAR: i32 = 24;
 /// Кадры игрока в атласе персонажей; нарисован лицом влево.
 const IDLE: IVec2 = ivec2(0, 0);
 const WALK: IVec2 = ivec2(1, 0);
-const PLAYER_LAYER: i32 = 4;
+const PLAYER_LAYER: i32 = 5;
 /// Кадры врага.
 const WALKER: IVec2 = ivec2(0, 2);
 const WALKER_STEP: IVec2 = ivec2(1, 2);
-const ENEMY_LAYER: i32 = 3;
+const ENEMY_LAYER: i32 = 4;
 const ENEMY_SIZE: IVec2 = ivec2(14, 12);
 const ENEMY_SPEED: f32 = 0.5;
 /// Пикселей пути на кадр ходьбы врага.
@@ -48,6 +56,8 @@ const JUMP: f32 = 4.5;
 const FALL_MAX: f32 = 5.0;
 /// Множитель скорости при отпускании прыжка; через `min` подъём режет, а падение — нет.
 const JUMP_CUT: f32 = 0.5;
+/// Скорость вверх после топтания врага.
+const STOMP_BOUNCE: f32 = 3.0;
 /// Сколько тиков после края прыжок ещё срабатывает.
 const COYOTE: u32 = 6;
 /// За сколько тиков до приземления нажатие прыжка ещё срабатывает.
@@ -235,10 +245,67 @@ fn char_sprite(
     }
 }
 
+/// Клетка `art` атласа тайлов с центром в `pos`.
+fn tile_sprite(texture: Handle<Texture>, pos: Vec2, art: IVec2, layer: i32) -> Sprite {
+    Sprite {
+        texture,
+        pos,
+        size: Vec2::splat(TILE as f32),
+        uv: atlas_uv(art, TILE, TILES_ATLAS),
+        layer,
+        ..Default::default()
+    }
+}
+
 /// Звуковое событие тика.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Sfx {
     Jump,
+    Coin,
+    Stomp,
+    Hurt,
+    Win,
+}
+
+/// Что стоит за сенсором уровня.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sensor {
+    Coin(Entity),
+    Spike,
+    Exit,
+    Enemy(Entity),
+}
+
+/// Монета в клетке.
+struct Coin(IVec2);
+
+/// Сенсоры для шага тел и что за каждым стоит; индексы совпадают.
+fn sensors(
+    level: &Level,
+    coins: &SparseSet<Coin>,
+    enemies: &SparseSet<Enemy>,
+) -> (Vec<Aabb>, Vec<Sensor>) {
+    let spike = |&cell: &IVec2| {
+        let min = cell * TILE;
+        let size = SPIKE_SIZE;
+        (Aabb { min, size }, Sensor::Spike)
+    };
+    coins
+        .iter()
+        .map(|(e, c)| (cell_aabb(c.0), Sensor::Coin(e)))
+        .chain(level.spikes.iter().map(spike))
+        .chain(level.exits.iter().map(|&c| (cell_aabb(c), Sensor::Exit)))
+        .chain(
+            enemies
+                .iter()
+                .map(|(e, en)| (en.body.aabb, Sensor::Enemy(e))),
+        )
+        .unzip()
+}
+
+/// Вход в сенсор сверху вниз.
+fn from_above(c: Contact) -> bool {
+    c.axis == Axis::Y && c.dir == -1
 }
 
 const LEFT: &[KeyCode] = &[KeyCode::KeyA, KeyCode::ArrowLeft];
@@ -308,7 +375,15 @@ impl Player {
         }
     }
 
-    fn step(&mut self, map: &Tilemap, solids: &[Aabb], c: Controls, sfx: &mut Vec<Sfx>) {
+    fn step(
+        &mut self,
+        map: &Tilemap,
+        solids: &[Aabb],
+        c: Controls,
+        sensors: &[Aabb],
+        contacts: &mut Vec<Contact>,
+        sfx: &mut Vec<Sfx>,
+    ) {
         self.air = if grounded(map, solids, &self.body.aabb) {
             0
         } else {
@@ -333,7 +408,7 @@ impl Player {
         if c.release {
             self.vel.y = self.vel.y.min(self.vel.y * JUMP_CUT);
         }
-        let hits = move_actor(map, solids, &mut self.body, self.vel, &[], &mut Vec::new());
+        let hits = move_actor(map, solids, &mut self.body, self.vel, sensors, contacts);
         if hits.x {
             self.vel.x = 0.0;
         }
@@ -410,14 +485,7 @@ impl Platform {
                     x if x == cells.x - 1 => PLANK_RIGHT,
                     _ => PLANK,
                 };
-                Sprite {
-                    texture,
-                    pos: min + cell_center(ivec2(x, y)),
-                    size: Vec2::splat(TILE as f32),
-                    uv: atlas_uv(art, TILE, TILES_ATLAS),
-                    layer: PLATFORM_LAYER,
-                    ..Default::default()
-                }
+                tile_sprite(texture, min + cell_center(ivec2(x, y)), art, PLATFORM_LAYER)
             })
         })
     }
@@ -516,9 +584,14 @@ struct Platformer {
     level: Level,
     map: Tilemap,
     player: Player,
-    /// Сущности с `Platform` и `Enemy`.
+    /// Сущности с `Platform`, `Enemy` и `Coin`.
     world: World,
+    cmds: Commands,
     camera: Follow,
+    coins: u32,
+    deaths: u32,
+    /// Выход достигнут; мир стоит.
+    cleared: bool,
     /// События тика; звучат в `update`.
     sfx: Vec<Sfx>,
     tiles: Handle<Texture>,
@@ -532,6 +605,7 @@ impl Platformer {
         let mut world = World::default();
         world.register::<Platform>();
         world.register::<Enemy>();
+        world.register::<Coin>();
         for &p in &level.platforms {
             let e = world.spawn();
             world.insert(e, Platform::spawn(p));
@@ -539,6 +613,10 @@ impl Platformer {
         for &cell in &level.enemies {
             let e = world.spawn();
             world.insert(e, Enemy::spawn(cell));
+        }
+        for &cell in &level.coins {
+            let e = world.spawn();
+            world.insert(e, Coin(cell));
         }
         let mut camera = Follow::at(level.bounds() / 2);
         camera.follow(player.center(), level.bounds());
@@ -548,7 +626,11 @@ impl Platformer {
             map,
             player,
             world,
+            cmds: Commands::default(),
             camera,
+            coins: 0,
+            deaths: 0,
+            cleared: false,
             sfx: Vec::new(),
             tiles: Handle::WHITE,
             chars: Handle::WHITE,
@@ -557,29 +639,60 @@ impl Platformer {
 
     fn tick(&mut self, input: &Input) {
         self.sfx.clear();
-        self.camera.prev = self.camera.pos;
-        self.player.prev = self.player.body.aabb.min;
-        let solids = self.step_bodies();
-        self.player
-            .step(&self.map, &solids, Controls::read(input), &mut self.sfx);
+        self.save_prev();
+        if self.cleared {
+            return;
+        }
+        let mut hits = Vec::new();
+        let (solids, squished) = self.step_bodies(&mut hits);
+        let (boxes, kinds) = sensors(
+            &self.level,
+            &self.world.storage::<Coin>(),
+            &self.world.storage::<Enemy>(),
+        );
+        let mut contacts = Vec::new();
+        self.player.step(
+            &self.map,
+            &solids,
+            Controls::read(input),
+            &boxes,
+            &mut contacts,
+            &mut self.sfx,
+        );
+        hits.extend(contacts.iter().map(|&c| (kinds[c.sensor], c)));
+        let died = self.resolve(&hits, squished);
         self.camera
             .follow(self.player.center(), self.level.bounds());
+        if died {
+            self.camera.prev = self.camera.pos;
+        }
+        self.cmds.apply(&mut self.world);
     }
 
-    /// Платформы везут и толкают игрока и врагов, затем ходят враги; отдаёт платформы для шага игрока.
-    fn step_bodies(&mut self) -> Vec<Aabb> {
-        let mut platforms = self.world.storage_mut::<Platform>();
-        let mut enemies = self.world.storage_mut::<Enemy>();
-        for (_, p) in platforms.iter_mut() {
+    /// Положения на начало тика — один раз, до всех перемещений.
+    fn save_prev(&mut self) {
+        self.camera.prev = self.camera.pos;
+        self.player.prev = self.player.body.aabb.min;
+        for (_, p) in self.world.storage_mut::<Platform>().iter_mut() {
             p.prev = p.body.aabb.min;
         }
-        for (_, e) in enemies.iter_mut() {
+        for (_, e) in self.world.storage_mut::<Enemy>().iter_mut() {
             e.prev = e.body.aabb.min;
         }
+    }
+
+    /// Платформы везут и толкают игрока и врагов, затем ходят враги; входы игрока в сенсоры — в `hits`.
+    /// Отдаёт платформы для шага игрока и раздавлен ли он; раздавленные враги — на удаление.
+    fn step_bodies(&mut self, hits: &mut Vec<(Sensor, Contact)>) -> (Vec<Aabb>, bool) {
+        let mut platforms = self.world.storage_mut::<Platform>();
+        let mut enemies = self.world.storage_mut::<Enemy>();
+        let (boxes, kinds) = sensors(&self.level, &self.world.storage::<Coin>(), &enemies);
         let mut solids: Vec<Solid> = platforms.iter().map(|(_, p)| p.body).collect();
         let mut actors: Vec<Actor> = iter::once(self.player.body)
             .chain(enemies.iter().map(|(_, e)| e.body))
             .collect();
+        let mut contacts = Vec::new();
+        let mut squished = Vec::new();
         for (i, (_, p)) in platforms.iter_mut().enumerate() {
             let blocked = |dir: IVec2| {
                 let ahead = Aabb {
@@ -601,19 +714,100 @@ impl Platformer {
                 i,
                 p.dir.as_vec2(),
                 &mut actors,
-                &[],
-                &mut Vec::new(),
-                &mut Vec::new(),
+                &boxes,
+                &mut contacts,
+                &mut squished,
             );
             p.body = solids[i];
         }
+        hits.extend(
+            contacts
+                .iter()
+                .filter(|&&(j, _)| j == 0)
+                .map(|&(_, c)| (kinds[c.sensor], c)),
+        );
         self.player.body = actors[0];
         let boxes: Vec<Aabb> = solids.iter().map(|s| s.aabb).collect();
-        for ((_, e), &body) in enemies.iter_mut().zip(&actors[1..]) {
-            e.body = body;
-            e.step(&self.map, &boxes);
+        for (j, ((e, en), &body)) in enemies.iter_mut().zip(&actors[1..]).enumerate() {
+            en.body = body;
+            if squished.contains(&(j + 1)) {
+                self.cmds.despawn(e);
+                continue;
+            }
+            en.step(&self.map, &boxes);
         }
-        boxes
+        (boxes, squished.contains(&0))
+    }
+
+    /// Последствия тика для игрока; `true` — погиб и возрождён на старте.
+    /// Смерть отменяет топтания, монеты и выход.
+    fn resolve(&mut self, hits: &[(Sensor, Contact)], squished: bool) -> bool {
+        let aabb = self.player.body.aabb;
+        let live = |e: Entity| !self.cmds.is_pending(e);
+        let hurt = hits.iter().any(|&(s, c)| match s {
+            Sensor::Spike => true,
+            Sensor::Enemy(e) => live(e) && !from_above(c),
+            Sensor::Coin(_) | Sensor::Exit => false,
+        });
+        // Без `hurt` каждый вход в живого врага — сверху.
+        let stomped: Vec<Entity> = hits
+            .iter()
+            .filter_map(|&(s, _)| match s {
+                Sensor::Enemy(e) => Some(e),
+                _ => None,
+            })
+            .collect();
+        // Сенсор не ловит врага, вошедшего в стоящего игрока.
+        let inside = self
+            .world
+            .storage::<Enemy>()
+            .iter()
+            .any(|(e, en)| live(e) && !stomped.contains(&e) && en.body.aabb.overlaps(&aabb));
+        if squished || hurt || inside || aabb.max().y <= 0 {
+            self.player = Player::spawn(self.level.player);
+            self.deaths += 1;
+            self.sfx.push(Sfx::Hurt);
+            return true;
+        }
+        for e in stomped {
+            if !self.cmds.is_pending(e) {
+                self.cmds.despawn(e);
+                self.player.vel.y = STOMP_BOUNCE;
+                self.sfx.push(Sfx::Stomp);
+            }
+        }
+        for &(s, _) in hits {
+            match s {
+                Sensor::Coin(e) if !self.cmds.is_pending(e) => {
+                    self.cmds.despawn(e);
+                    self.coins += 1;
+                    self.sfx.push(Sfx::Coin);
+                }
+                Sensor::Exit if !self.cleared => {
+                    self.cleared = true;
+                    self.sfx.push(Sfx::Win);
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Монеты, шипы и выход: флаг на клетку выше древка.
+    fn draw_items(&self, gfx: &mut Gfx) {
+        let mut item = |cell, art| {
+            gfx.draw_sprite(tile_sprite(self.tiles, cell_center(cell), art, ITEM_LAYER));
+        };
+        for (_, c) in self.world.storage::<Coin>().iter() {
+            item(c.0, COIN);
+        }
+        for &cell in &self.level.spikes {
+            item(cell, SPIKES);
+        }
+        for &cell in &self.level.exits {
+            item(cell, POLE);
+            item(cell + IVec2::Y, FLAG);
+        }
     }
 
     /// Твёрдые клетки, задевающие вид с целым центром `center`; верхняя — трава.
@@ -631,14 +825,7 @@ impl Platformer {
                 } else {
                     GRASS
                 };
-                gfx.draw_sprite(Sprite {
-                    texture: self.tiles,
-                    pos: cell_center(cell),
-                    size: Vec2::splat(TILE as f32),
-                    uv: atlas_uv(art, TILE, TILES_ATLAS),
-                    layer: TILE_LAYER,
-                    ..Default::default()
-                });
+                gfx.draw_sprite(tile_sprite(self.tiles, cell_center(cell), art, TILE_LAYER));
             }
         }
     }
@@ -671,6 +858,7 @@ impl Game for Platformer {
             size: VIEW.as_vec2(),
         };
         self.draw_tiles(&mut ctx.gfx, center.as_ivec2());
+        self.draw_items(&mut ctx.gfx);
         for (_, p) in self.world.storage::<Platform>().iter() {
             for s in p.sprites(self.tiles, alpha) {
                 ctx.gfx.draw_sprite(s);
@@ -1600,5 +1788,315 @@ mod tests {
         let foes = on(ENEMY_LAYER);
         assert_eq!(foes.len(), 1);
         assert_eq!(foes[0].texture, g.chars);
+    }
+
+    fn coins(g: &Platformer) -> Vec<IVec2> {
+        let store = g.world.storage::<Coin>();
+        store.iter().map(|(_, c)| c.0).collect()
+    }
+
+    /// Все звуки за `n` тиков ввода `keys`.
+    fn sounds(g: &mut Platformer, keys: &[KeyCode], n: usize) -> Vec<Sfx> {
+        (0..n)
+            .flat_map(|_| {
+                g.tick(&input(keys));
+                g.sfx.clone()
+            })
+            .collect()
+    }
+
+    fn hit(sensor: Sensor, axis: Axis, dir: i32) -> (Sensor, Contact) {
+        let c = Contact {
+            sensor: 0,
+            axis,
+            dir,
+        };
+        (sensor, c)
+    }
+
+    fn first<T: 'static>(g: &Platformer) -> Entity {
+        g.world.storage::<T>().iter().next().unwrap().0
+    }
+
+    #[test]
+    fn coin_is_taken_once_on_touch() {
+        let mut g = room(&["......", ".Po...", "######"]);
+        let sfx = sounds(&mut g, D, 40);
+        assert!(g.player.body.aabb.min.x > 54, "{}", g.player.body.aabb.min);
+        assert_eq!(sfx, [Sfx::Coin]);
+        assert_eq!(g.coins, 1);
+        assert_eq!(coins(&g), []);
+    }
+
+    #[test]
+    fn same_coin_twice_in_tick_counts_once() {
+        let mut g = room(&["Po", "##"]);
+        let c = hit(Sensor::Coin(first::<Coin>(&g)), Axis::X, 1);
+        assert!(!g.resolve(&[c, c], false));
+        assert_eq!((g.coins, &g.sfx[..]), (1, &[Sfx::Coin][..]));
+    }
+
+    /// Вертикальная платформа под клеткой `(3, 2)` поднимается сквозь монету `(3, 4)`.
+    fn lift(rider: char) -> Platformer {
+        let row = format!("...{rider}...");
+        room(&["...!...", "...o...", ".......", &row, "P..H...", "###!###"])
+    }
+
+    #[test]
+    fn platform_carries_player_into_coin() {
+        let mut g = lift('.');
+        g.player.body.aabb.min = ivec2(57, 36);
+        let sfx = sounds(&mut g, &[], 60);
+        assert!(g.player.body.aabb.min.y > 72, "{}", g.player.body.aabb.min);
+        assert_eq!(sfx, [Sfx::Coin]);
+    }
+
+    #[test]
+    fn enemy_carried_into_coin_does_not_take_it() {
+        let mut g = lift('E');
+        run_enemy(&mut g, 60);
+        assert!(enemies(&g)[0].min.y > 72, "{}", enemies(&g)[0].min);
+        assert_eq!((g.coins, coins(&g).len()), (0, 1));
+    }
+
+    #[test]
+    fn spike_kills_and_respawns() {
+        let mut g = room(&[".....", "P..^.", "#####"]);
+        let sfx = sounds(&mut g, D, 60);
+        assert_eq!(&sfx[..1], [Sfx::Hurt]);
+        assert_eq!(g.deaths, 1);
+        assert!(g.player.body.aabb.max().x < 3 * TILE);
+    }
+
+    #[test]
+    fn spike_sensor_is_low_strip_of_cell() {
+        let g = room(&["P^", "##"]);
+        let (boxes, kinds) = sensors(
+            &g.level,
+            &g.world.storage::<Coin>(),
+            &g.world.storage::<Enemy>(),
+        );
+        assert_eq!(kinds, [Sensor::Spike]);
+        let spike = Aabb {
+            min: ivec2(18, 18),
+            size: ivec2(18, 8),
+        };
+        assert_eq!(boxes, [spike]);
+    }
+
+    /// Враг под игроком: игрок падает на него с высоты.
+    fn above_enemy() -> Platformer {
+        room(&["..P.", "....", "..E.", "####"])
+    }
+
+    #[test]
+    fn landing_on_enemy_stomps_and_bounces() {
+        let mut g = above_enemy();
+        for _ in 0..40 {
+            g.tick(&Input::default());
+            if g.sfx.contains(&Sfx::Stomp) {
+                break;
+            }
+        }
+        assert_eq!(g.sfx, [Sfx::Stomp]);
+        assert_eq!(g.player.vel.y, STOMP_BOUNCE);
+        assert_eq!((g.deaths, enemies(&g).len()), (0, 0));
+    }
+
+    #[test]
+    fn enemy_contact_kills_unless_from_above() {
+        for (axis, dir) in [(Axis::X, 1), (Axis::X, -1), (Axis::Y, 1)] {
+            let mut g = above_enemy();
+            let e = first::<Enemy>(&g);
+            assert!(g.resolve(&[hit(Sensor::Enemy(e), axis, dir)], false));
+            assert_eq!((g.deaths, &g.sfx[..]), (1, &[Sfx::Hurt][..]));
+        }
+        let mut g = above_enemy();
+        let e = first::<Enemy>(&g);
+        let stomp = hit(Sensor::Enemy(e), Axis::Y, -1);
+        assert!(!g.resolve(&[stomp, stomp], false));
+        assert_eq!(g.sfx, [Sfx::Stomp]);
+        assert!(g.cmds.is_pending(e));
+    }
+
+    #[test]
+    fn running_into_enemy_kills() {
+        let mut g = room(&["......", "P...E.", "######"]);
+        let sfx = sounds(&mut g, D, 40);
+        assert_eq!(sfx, [Sfx::Hurt]);
+        assert_eq!(enemies(&g).len(), 1);
+    }
+
+    #[test]
+    fn enemy_walking_into_standing_player_kills() {
+        let mut g = room(&["......", "P...E.", "######"]);
+        let deadly = (0..200).find(|_| {
+            g.tick(&Input::default());
+            g.deaths == 1
+        });
+        assert!(deadly.is_some());
+        assert_eq!(enemies(&g)[0].min.x, 14);
+    }
+
+    #[test]
+    fn player_inside_enemy_at_tick_start_dies() {
+        let mut g = flat();
+        let e = g.world.spawn();
+        let mut enemy = Enemy::spawn(ivec2(2, 1));
+        enemy.dir = 1;
+        g.world.insert(e, enemy);
+        g.tick(&Input::default());
+        assert_eq!(g.deaths, 1);
+    }
+
+    #[test]
+    fn stomped_or_squished_enemy_does_not_kill_by_overlap() {
+        let mut g = above_enemy();
+        let e = first::<Enemy>(&g);
+        g.player.body.aabb.min = enemies(&g)[0].min;
+        g.cmds.despawn(e);
+        assert!(!g.resolve(&[], false));
+        let mut g = above_enemy();
+        let e = first::<Enemy>(&g);
+        g.player.body.aabb.min = enemies(&g)[0].min;
+        assert!(!g.resolve(&[hit(Sensor::Enemy(e), Axis::Y, -1)], false));
+    }
+
+    #[test]
+    fn squished_player_respawns_in_same_tick() {
+        let mut g = room(&["......", "#P.=..", "######"]);
+        let spawn = g.player.body.aabb.min;
+        for _ in 0..200 {
+            g.tick(&Input::default());
+            if g.deaths == 1 {
+                break;
+            }
+            assert_eq!(g.sfx, []);
+        }
+        assert_eq!(g.deaths, 1);
+        assert_eq!(g.sfx, [Sfx::Hurt]);
+        assert_eq!((g.player.body.aabb.min, g.player.prev), (spawn, spawn));
+    }
+
+    #[test]
+    fn squished_enemy_is_despawned() {
+        let mut g = room(&["P.....", "#E.=..", "######"]);
+        let gone = (0..300).find(|_| {
+            g.tick(&Input::default());
+            enemies(&g).is_empty()
+        });
+        assert!(gone.is_some());
+        assert_eq!(g.deaths, 0);
+    }
+
+    #[test]
+    fn falling_below_level_kills() {
+        let mut g = flat();
+        g.player.body.aabb.min.y = -15;
+        assert!(!g.resolve(&[], false));
+        g.player.body.aabb.min.y = -16;
+        assert!(g.resolve(&[], false));
+        let mut g = room(&["P..", "..."]);
+        let sfx = sounds(&mut g, &[], 30);
+        assert_eq!(sfx, [Sfx::Hurt]);
+    }
+
+    #[test]
+    fn death_beats_exit_and_coins() {
+        let mut g = room(&["Po", "##"]);
+        let coin = Sensor::Coin(first::<Coin>(&g));
+        let hits = [
+            hit(Sensor::Exit, Axis::X, 1),
+            hit(coin, Axis::X, 1),
+            hit(Sensor::Spike, Axis::X, 1),
+        ];
+        assert!(g.resolve(&hits, false));
+        assert!(!g.cleared);
+        assert_eq!((g.coins, &g.sfx[..]), (0, &[Sfx::Hurt][..]));
+        let mut g = room(&["Po", "##"]);
+        assert!(g.resolve(&[], true));
+    }
+
+    #[test]
+    fn exit_clears_level_once_and_freezes_world() {
+        let mut g = room(&["......", "P..X..", "######"]);
+        let sfx = sounds(&mut g, D, 40);
+        assert_eq!(sfx, [Sfx::Win]);
+        assert!(g.cleared);
+        let mut g = room(&["P.X", "###"]);
+        let exit = hit(Sensor::Exit, Axis::X, 1);
+        assert!(!g.resolve(&[exit, exit], false));
+        assert_eq!(g.sfx, [Sfx::Win]);
+    }
+
+    #[test]
+    fn cleared_tick_keeps_bodies_still() {
+        let mut g = room(&["P.....", "..E...", "!=..!#"]);
+        g.tick(&Input::default());
+        g.cleared = true;
+        let before = (g.player.body.aabb, platforms(&g), enemies(&g));
+        g.tick(&input(D));
+        assert_eq!((g.player.body.aabb, platforms(&g), enemies(&g)), before);
+        assert_eq!(g.player.prev, g.player.body.aabb.min);
+        let store = g.world.storage::<Platform>();
+        let (_, p) = store.iter().next().unwrap();
+        assert_eq!(p.prev, p.body.aabb.min);
+        let store = g.world.storage::<Enemy>();
+        let (_, e) = store.iter().next().unwrap();
+        assert_eq!(e.prev, e.body.aabb.min);
+        assert_eq!(g.camera.prev, g.camera.pos);
+    }
+
+    #[test]
+    fn respawn_resets_motion_and_camera() {
+        let mut g = room(&[&format!("P{}^", ".".repeat(40)), &"#".repeat(42)]);
+        let fresh = room(&[&format!("P{}^", ".".repeat(40)), &"#".repeat(42)]);
+        g.player.body.aabb.min = ivec2(40 * TILE + 5, TILE);
+        g.player.body.remainder = vec2(0.3, -0.2);
+        g.player.vel = vec2(RUN_MAX, 0.0);
+        g.camera = Follow::at(ivec2(40 * TILE, VIEW.y / 2));
+        g.tick(&input(D));
+        assert_eq!(g.deaths, 1);
+        let p = &g.player;
+        assert_eq!(
+            (p.body.aabb.min, p.prev),
+            (fresh.player.prev, fresh.player.prev)
+        );
+        assert_eq!((p.body.remainder, p.vel), (Vec2::ZERO, Vec2::ZERO));
+        assert_eq!(g.camera, fresh.camera);
+    }
+
+    #[test]
+    fn draws_coins_spikes_and_exit_flag() {
+        let mut g = room(&["P.o^X", "#####"]);
+        g.tiles = Handle::WHITE;
+        let mut gfx = Gfx::default();
+        g.draw_items(&mut gfx);
+        let uv = |cell| atlas_uv(cell, TILE, TILES_ATLAS);
+        let got: Vec<(Vec2, Rect)> = gfx.sprites.iter().map(|s| (s.pos, s.uv)).collect();
+        assert_eq!(
+            got,
+            [
+                (cell_center(ivec2(2, 1)), uv(COIN)),
+                (cell_center(ivec2(3, 1)), uv(SPIKES)),
+                (cell_center(ivec2(4, 1)), uv(POLE)),
+                (cell_center(ivec2(4, 2)), uv(FLAG)),
+            ]
+        );
+        assert!(gfx.sprites.iter().all(|s| s.layer == ITEM_LAYER));
+        assert!(gfx.sprites.iter().all(|s| s.size == Vec2::splat(18.0)));
+        g.world.despawn(first::<Coin>(&g));
+        let mut gfx = Gfx::default();
+        g.draw_items(&mut gfx);
+        assert_eq!(gfx.sprites.len(), 3);
+    }
+
+    #[test]
+    fn draw_includes_items() {
+        let (mut g, mut ctx) = started();
+        g.draw(&mut ctx, 1.0);
+        let items = ctx.gfx.sprites.iter().filter(|s| s.layer == ITEM_LAYER);
+        assert!(items.clone().count() > 0);
+        assert!(items.clone().all(|s| s.texture == g.tiles));
     }
 }
