@@ -1,4 +1,4 @@
-//! Учебный 2D-движок: окно, фиксированный тик, спрайты и текст через wgpu.
+//! Учебный движок: окно, фиксированный тик, спрайты, текст и меши через wgpu.
 #![deny(missing_docs)]
 
 mod app;
@@ -20,10 +20,16 @@ mod gpu_test;
 pub mod gpu_textures;
 /// Клавиатура и мышь по тикам.
 pub mod input;
+/// Вершины и меши.
+pub mod mesh;
+/// GPU-путь мешей.
+pub mod mesh_pipeline;
 /// Целочисленные коллизии и движение тел: AABB, тайловая карта, Actor.
 pub mod physics;
 /// Поверхность окна и рендер кадра.
 pub mod renderer;
+/// 3D-кадр и его раскрытие в инстансы.
+pub mod scene;
 /// Спрайты и их батчинг в инстансы.
 pub mod sprite;
 /// GPU-путь спрайтов.
@@ -48,10 +54,13 @@ pub use frame::{Color, Context, Game, Gfx, Shown, Time, step_frame};
 pub use glam::{IVec2, Mat4, Quat, Vec2, Vec3, ivec2, vec2, vec3};
 pub use gpu_textures::GpuTextures;
 pub use input::Input;
+pub use mesh::{Mesh, PendingMesh, Vertex};
+pub use mesh_pipeline::MeshPipeline;
 pub use physics::{
     Aabb, Actor, Axis, Contact, Hits, Solid, Tilemap, grounded, move_actor, move_solid,
 };
 pub use renderer::{RenderError, Renderer};
+pub use scene::{MeshBatch, MeshDraw, MeshInstance, Scene, batch_meshes};
 pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;
 pub use stats::{FrameReport, FrameStats, RateCounter};

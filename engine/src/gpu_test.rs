@@ -1,5 +1,7 @@
 //! Офскрин-хелперы GPU-тестов: адаптер, цель рендера, чтение пикселей.
 
+use crate::{Assets, Handle, Texture};
+
 /// Сторона квадратной цели рендера в пикселях.
 pub(crate) const SIZE: u32 = 64;
 /// Допуск на канал при сравнении пикселей.
@@ -99,4 +101,20 @@ pub(crate) fn assert_pixel(img: &[u8], what: &str, (x, y): (u32, u32), expected:
         close,
         "{what} at ({x}, {y}): got {got:?}, expected {expected:?}"
     );
+}
+
+/// Текстура из RGBA через временный PNG; `name` уникален в пределах процесса тестов.
+pub(crate) fn load_png(
+    assets: &mut Assets,
+    name: &str,
+    w: u32,
+    h: u32,
+    rgba: &[u8],
+) -> Handle<Texture> {
+    let path =
+        std::env::temp_dir().join(format!("engine-gpu-test-{}-{name}.png", std::process::id()));
+    image::save_buffer(&path, rgba, w, h, image::ExtendedColorType::Rgba8).unwrap();
+    let id = assets.load_texture(&path);
+    std::fs::remove_file(&path).unwrap();
+    id
 }

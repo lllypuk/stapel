@@ -132,6 +132,27 @@ impl GpuTextures {
     }
 }
 
+/// Формат буфера глубины 3D-прохода.
+pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+/// Буфер глубины размера цели; при смене размера цели — новый, иначе проход падает на валидации.
+pub(crate) fn depth_texture(device: &wgpu::Device, (width, height): (u32, u32)) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("depth"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,7 +191,7 @@ mod tests {
                 center: Vec2::splat(SIZE as f32 / 2.0),
                 size: Vec2::splat(SIZE as f32),
             },
-            sprites: Vec::new(),
+            ..Default::default()
         };
         gfx.draw_sprite(Sprite {
             texture: h,
@@ -195,7 +216,7 @@ mod tests {
             h: SIZE as f32,
         };
         let img = offscreen(&device, &queue, |encoder, view| {
-            sprites.draw(encoder, view, &textures, viewport, &gfx);
+            sprites.draw(encoder, view, &textures, viewport, &gfx, true);
         });
 
         assert_pixel(&img, "reloaded", (32, 32), [0, 255, 0]);

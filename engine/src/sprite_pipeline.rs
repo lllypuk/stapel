@@ -1,9 +1,9 @@
-use crate::{Gfx, GpuTextures, Instance, Viewport, batch};
+use crate::{Color, Gfx, GpuTextures, Instance, Viewport, batch};
 
 /// Начальный размер буфера инстансов в байтах.
 const INITIAL_CAPACITY: u64 = 1024;
 
-/// GPU-путь спрайтов: буфер инстансов и проход с очисткой.
+/// GPU-путь спрайтов: буфер инстансов и проход поверх 3D или с очисткой.
 pub struct SpritePipeline {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -70,7 +70,7 @@ impl SpritePipeline {
         }
     }
 
-    /// Очищает `view` цветом `gfx.clear_color` и рисует спрайты внутри `viewport`.
+    /// Рисует спрайты внутри `viewport`; `clear` — сначала залить `view` цветом `gfx.clear_color`, иначе поверх 3D.
     /// Буферы пишутся через `write_buffer`: второй `draw` до `submit` затрёт первый.
     pub fn draw(
         &mut self,
@@ -79,6 +79,7 @@ impl SpritePipeline {
         textures: &GpuTextures,
         viewport: Viewport,
         gfx: &Gfx,
+        clear: bool,
     ) {
         let (instances, batches) = batch(&gfx.sprites);
         let bytes: &[u8] = bytemuck::cast_slice(&instances);
@@ -96,19 +97,18 @@ impl SpritePipeline {
             bytemuck::bytes_of(&gfx.camera.view_proj().to_cols_array()),
         );
 
-        let c = gfx.clear_color;
+        let load = if clear {
+            wgpu::LoadOp::Clear(wgpu_color(gfx.clear_color))
+        } else {
+            wgpu::LoadOp::Load
+        };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: c.r,
-                        g: c.g,
-                        b: c.b,
-                        a: c.a,
-                    }),
+                    load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -172,9 +172,18 @@ fn render_pipeline(
     })
 }
 
-fn instance_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
+pub(crate) fn wgpu_color(c: Color) -> wgpu::Color {
+    wgpu::Color {
+        r: c.r,
+        g: c.g,
+        b: c.b,
+        a: c.a,
+    }
+}
+
+pub(crate) fn instance_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("sprite instances"),
+        label: Some("instances"),
         size,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
@@ -182,7 +191,7 @@ fn instance_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
 }
 
 /// Новая ёмкость в байтах, если `needed` не влезает: степень двойки, не меньше 4 — выравнивания копий.
-fn grow_capacity(current: u64, needed: u64) -> Option<u64> {
+pub(crate) fn grow_capacity(current: u64, needed: u64) -> Option<u64> {
     (needed > current).then(|| needed.next_power_of_two().max(wgpu::COPY_BUFFER_ALIGNMENT))
 }
 
@@ -190,7 +199,7 @@ fn grow_capacity(current: u64, needed: u64) -> Option<u64> {
 mod tests {
     use super::*;
     use crate::frame::linear_to_srgb;
-    use crate::gpu_test::{SIZE, assert_pixel, gpu, offscreen};
+    use crate::gpu_test::{SIZE, assert_pixel, gpu, load_png, offscreen};
     use crate::text::{self, FontData, Glyph};
     use crate::{Assets, Camera2D, Color, Handle, Rect, Sprite, Texture, Vec2, vec2};
 
@@ -202,17 +211,6 @@ mod tests {
         assert_eq!(grow_capacity(0, 1), Some(4));
         assert_eq!(grow_capacity(0, 3), Some(4));
         assert_eq!(grow_capacity(4, 5), Some(8));
-    }
-
-    fn load_png(assets: &mut Assets, name: &str, w: u32, h: u32, rgba: &[u8]) -> Handle<Texture> {
-        let path = std::env::temp_dir().join(format!(
-            "engine-sprite-pipeline-{}-{name}.png",
-            std::process::id()
-        ));
-        image::save_buffer(&path, rgba, w, h, image::ExtendedColorType::Rgba8).unwrap();
-        let id = assets.load_texture(&path);
-        std::fs::remove_file(&path).unwrap();
-        id
     }
 
     fn sprite(texture: Handle<Texture>, pos: Vec2, size: f32, color: Color, layer: i32) -> Sprite {
@@ -247,7 +245,7 @@ mod tests {
             h: SIZE as f32,
         };
         offscreen(device, queue, |encoder, view| {
-            pipeline.draw(encoder, view, &textures, viewport, gfx);
+            pipeline.draw(encoder, view, &textures, viewport, gfx, true);
         })
     }
 
@@ -300,7 +298,7 @@ mod tests {
                 center: Vec2::splat(SIZE as f32 / 2.0),
                 size: Vec2::splat(SIZE as f32),
             },
-            sprites: Vec::new(),
+            ..Default::default()
         };
         let white = Color::WHITE;
 
@@ -437,7 +435,7 @@ mod tests {
                 center: Vec2::splat(SIZE as f32 / 2.0),
                 size: Vec2::splat(SIZE as f32),
             },
-            sprites: Vec::new(),
+            ..Default::default()
         };
         // ×4 со сдвигом на полtexel'а: при 1:1 фрагменты попадают в центры texel'ей,
         // и `Linear` соседа не берёт даже без рамки.

@@ -34,6 +34,13 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 - Мир фиксированного размера (`Camera2D { center, size }`, Y вверх) вписывается в окно с полями (`letterbox`): поле игры не зависит от пропорций окна. Поля — цвет `clear_color`, `set_viewport` ограничивает только геометрию.
 - Пиксель-арт (`Config::pixel_perfect`) — `letterbox_pixel`: масштаб `floor(min(W/w, H/h))`, отступы — целая половина остатка; окно меньше мира — дробный `letterbox`. Камера и края всех спрайтов — на целых мировых пикселях: позиция `round(lerp(prev, cur, alpha))` с одним `alpha` на кадр, центр спрайта нечётного размера — на `.5`. Тогда швов атласа нет без экструзии тайлов.
 
+## 3D
+
+- Проходы кадра: 3D (`Clear` цветом `clear_color` и глубины, на всю поверхность, aspect поверхности) → спрайты с `Load` поверх (HUD — `Camera2D` с letterbox) → egui. Без `gfx.scene` спрайты сами чистят кадр — 2D-игры не меняются.
+- `gfx.scene: Option<Scene>` — immediate-mode, как спрайты: игра заполняет в `draw`, `step_frame` ставит `None` перед `draw`.
+- Меш — `Assets::add_mesh(vertices, indices)` → `Handle<Mesh>`, заливка через pending, как текстуры; индексы u32. `MeshDraw { mesh, texture, transform }` раскрывается на CPU в инстанс (матрица и нормальная матрица), батчи — по `(mesh, texture)`, порядок между ними решает глубина.
+- Отсечения граней нет: материалы Kenney двусторонние. Без света цвет — `ambient × texture`.
+
 ## ECS
 
 - Сущность = индекс + поколение.
@@ -95,6 +102,13 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 - Замена текстуры идёт через тот же pending, что и создание: одна пачка может нести `[0, 1, 1]` — слот 1 создаётся и тут же заменяется. `upload` без ветки замены упал бы на ассерте порядка, а без строгого FIFO в `take_pending` замена ушла бы раньше создания. → тест `gpu_textures::reloaded_texture_replaces_its_slot`
 - Версия файла запоминается и при ошибке декода, иначе битый файл перечитывается и пишет `warn` каждые 0,5 с. → тест `assets::broken_reload_keeps_old_texture_and_remembers_version`
 - Поверхность не падает, а восстанавливается: `Outdated` — `configure`, `Lost` — пересоздать `Surface`, окно с нулевой стороной — не рисовать. → тест `surface::status_to_action`; исполнение в `Renderer::render` — запуск
+
+### 3D
+
+- `step_frame` ставит `gfx.scene = None` перед `draw`, как чистит спрайты: игра без `scene` в этом кадре показала бы старый 3D-кадр. → тест `frame::previous_scene_vanishes_even_without_ticks`
+- Нормали — через обратную транспонированную к `transform` без переноса, не через саму матрицу: при неравномерном масштабе нормаль иначе перестаёт быть перпендикулярной грани и свет ложится не туда. → тест `scene::normal_matrix_is_inverse_transpose`
+- Sprite pass при `gfx.scene` — с `LoadOp::Load`: `Clear` стёр бы 3D под HUD. → тест `mesh_pipeline::unlit_color_is_ambient_times_texture_and_sprites_stay_on_top`; выбор режима в `renderer.rs` — ревью
+- Буфер глубины пересоздаётся в `resize` вместе с поверхностью: иначе проход падает на валидации размеров вложений. → запуск: ресайз окна с 3D
 
 ### Физика
 

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::{
-    Assets, Audio, Camera2D, FixedClock, Font, Handle, Input, Sprite, Vec2, Viewport,
+    Assets, Audio, Camera2D, FixedClock, Font, Handle, Input, Scene, Sprite, Vec2, Viewport,
     screen_to_world, text,
 };
 
@@ -85,6 +85,8 @@ pub struct Gfx {
     pub camera: Camera2D,
     /// Спрайты кадра; очищается перед `draw`.
     pub sprites: Vec<Sprite>,
+    /// 3D под спрайтами; `None` перед каждым `draw`.
+    pub scene: Option<Scene>,
 }
 
 impl Gfx {
@@ -199,6 +201,7 @@ pub fn step_frame<G: Game>(
     }
     // Здесь, а не после рендера: на кадрах без рендера спрайты копились бы.
     ctx.gfx.sprites.clear();
+    ctx.gfx.scene = None;
     game.draw(ctx, clock.alpha());
     ticks
 }
@@ -294,6 +297,15 @@ mod tests {
         let ticks = step_frame(&mut g, &mut ctx, &mut clock, step / 2);
         assert_eq!(ticks, 0);
         assert_eq!(ctx.gfx.sprites.len(), 0);
+    }
+
+    #[test]
+    fn previous_scene_vanishes_even_without_ticks() {
+        let (mut g, mut ctx, mut clock, step) = setup();
+        ctx.gfx.scene = Some(Scene::default());
+        let ticks = step_frame(&mut g, &mut ctx, &mut clock, step / 2);
+        assert_eq!(ticks, 0);
+        assert_eq!(ctx.gfx.scene, None);
     }
 
     #[test]

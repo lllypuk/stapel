@@ -8,6 +8,7 @@ use std::time::SystemTime;
 
 use crate::audio::{Sound, decode};
 use crate::frame::{linear_to_srgb, srgb_to_linear};
+use crate::mesh::{Mesh, PendingMesh, Vertex};
 use crate::text::{self, FontData};
 
 /// Индекс ресурса типа `T`; без поколения, пока индексы append-only.
@@ -124,10 +125,12 @@ struct Watched<T> {
     stamp: Option<Stamp>,
 }
 
-/// Реестр текстур, шрифтов и звуков; новые текстуры ждут заливки на GPU до `take_pending`.
+/// Реестр текстур, мешей, шрифтов и звуков; новые текстуры и меши ждут заливки на GPU до `take_pending*`.
 pub struct Assets {
     next_index: u32,
     pending: Vec<PendingTexture>,
+    meshes: u32,
+    pending_meshes: Vec<PendingMesh>,
     paths: HashMap<PathBuf, Watched<Texture>>,
     fonts: Vec<FontData>,
     font_keys: HashMap<(PathBuf, u32), Handle<Font>>,
@@ -143,6 +146,8 @@ impl Default for Assets {
         let mut assets = Self {
             next_index: 0,
             pending: Vec::new(),
+            meshes: 0,
+            pending_meshes: Vec::new(),
             paths: HashMap::new(),
             fonts: Vec::new(),
             font_keys: HashMap::new(),
@@ -302,6 +307,23 @@ impl Assets {
         std::mem::take(&mut self.pending)
     }
 
+    /// Меш из вершин и индексов треугольников.
+    pub fn add_mesh(&mut self, vertices: Vec<Vertex>, indices: Vec<u32>) -> Handle<Mesh> {
+        let handle = Handle::new(self.meshes);
+        self.meshes += 1;
+        self.pending_meshes.push(PendingMesh {
+            handle,
+            vertices,
+            indices,
+        });
+        handle
+    }
+
+    /// Забирает меши, добавленные с прошлого вызова, в порядке хэндлов.
+    pub fn take_pending_meshes(&mut self) -> Vec<PendingMesh> {
+        std::mem::take(&mut self.pending_meshes)
+    }
+
     fn push(
         &mut self,
         kind: TextureKind,
@@ -390,6 +412,32 @@ mod tests {
                 rgba: vec![255; 4],
             }]
         );
+    }
+
+    #[test]
+    fn meshes_are_pending_in_handle_order() {
+        let mut assets = Assets::default();
+        let tri = vec![Vertex::default(); 3];
+        let a = assets.add_mesh(tri.clone(), vec![0, 1, 2]);
+        let b = assets.add_mesh(Vec::new(), Vec::new());
+        assert_eq!((a, b), (Handle::new(0), Handle::new(1)));
+        assert_eq!(
+            assets.take_pending_meshes(),
+            [
+                PendingMesh {
+                    handle: a,
+                    vertices: tri,
+                    indices: vec![0, 1, 2],
+                },
+                PendingMesh {
+                    handle: b,
+                    vertices: Vec::new(),
+                    indices: Vec::new(),
+                },
+            ]
+        );
+        assert_eq!(assets.take_pending_meshes(), []);
+        assert_eq!(assets.add_mesh(Vec::new(), Vec::new()), Handle::new(2));
     }
 
     #[test]

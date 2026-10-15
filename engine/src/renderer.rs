@@ -4,10 +4,11 @@ use std::sync::Arc;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
+use crate::gpu_textures::depth_texture;
 use crate::surface::{Action, action, pick_format, pick_present_mode, split, surface_size};
-use crate::{Assets, Gfx, GpuTextures, SpritePipeline, UiFrame, Viewport, viewport};
+use crate::{Assets, Gfx, GpuTextures, MeshPipeline, SpritePipeline, UiFrame, Viewport, viewport};
 
-/// Поверхность окна и GPU-устройство; кадр рисует `SpritePipeline` во вписанный вьюпорт, egui — поверх.
+/// Поверхность окна и GPU-устройство; кадр: 3D на всю поверхность, спрайты во вписанный вьюпорт, egui — поверх.
 pub struct Renderer {
     window: Arc<Window>,
     instance: wgpu::Instance,
@@ -16,7 +17,9 @@ pub struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     textures: GpuTextures,
+    meshes: MeshPipeline,
     sprites: SpritePipeline,
+    depth: wgpu::Texture,
     ui: egui_wgpu::Renderer,
     ui_format: wgpu::TextureFormat,
     pixel_perfect: bool,
@@ -81,7 +84,9 @@ impl Renderer {
         }
         log::info!("surface: {:?}, {:?}", config.format, config.present_mode);
         let textures = GpuTextures::new(&device, &queue);
+        let meshes = MeshPipeline::new(&device, &queue, config.format, &textures);
         let sprites = SpritePipeline::new(&device, &queue, config.format, &textures);
+        let depth = depth_texture(&device, (config.width, config.height));
         let ui =
             egui_wgpu::Renderer::new(&device, ui_format, egui_wgpu::RendererOptions::default());
 
@@ -93,7 +98,9 @@ impl Renderer {
             queue,
             config,
             textures,
+            meshes,
             sprites,
+            depth,
             ui,
             ui_format,
             pixel_perfect,
@@ -124,6 +131,7 @@ impl Renderer {
             self.config.width = w;
             self.config.height = h;
             self.surface.configure(&self.device, &self.config);
+            self.depth = depth_texture(&self.device, (w, h));
         }
     }
 
@@ -143,6 +151,7 @@ impl Renderer {
         // До проверки поверхности: иначе текстуры, загруженные при свёрнутом окне, ждали бы его показа,
         // а атлас шрифта egui присылает один раз и потерялся бы.
         self.textures.upload(assets);
+        self.meshes.upload(assets);
         for (id, deltas) in &ui.textures.set {
             for delta in deltas {
                 self.ui
@@ -201,8 +210,25 @@ impl Renderer {
             &gfx.camera,
             self.pixel_perfect,
         );
-        self.sprites
-            .draw(&mut encoder, &view, &self.textures, viewport, gfx);
+        if let Some(scene) = &gfx.scene {
+            self.meshes.draw(
+                &mut encoder,
+                &view,
+                &self.depth,
+                &self.textures,
+                scene,
+                gfx.clear_color,
+            );
+        }
+        // С `Clear` спрайты стёрли бы 3D.
+        self.sprites.draw(
+            &mut encoder,
+            &view,
+            &self.textures,
+            viewport,
+            gfx,
+            gfx.scene.is_none(),
+        );
         let mut buffers = Vec::new();
         if !ui.jobs.is_empty() {
             let screen = egui_wgpu::ScreenDescriptor {
