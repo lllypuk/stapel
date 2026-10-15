@@ -136,11 +136,11 @@
 - Create: `games/platformer/src/level.rs`, `games/platformer/src/levels.rs`, `games/platformer/src/testdata/level01.txt`
 - Modify: `games/platformer/src/main.rs`; Move: `assets/level1.txt` → `assets/levels/level01.txt`
 
-- [ ] перенос `Level` и тестов в `level.rs` без изменений поведения; тесты игры — на `testdata/level01.txt`
-- [ ] тесты `levels`: список `*.txt` по имени, прочее пропускается; следующий после последнего — первый
-- [ ] тесты игры: Enter после `X` ставит флаг, `update` грузит следующий уровень из временного каталога; следующий не разбирается — редактор с ошибкой (до Task 9 — `warn` и текущий уровень заново; ➕ пересмотреть в Task 9); правка тестов Enter и случайного прогона
-- [ ] `Platformer { levels_dir, .. }`, чтение с диска вместо `include_str!`
-- [ ] `make check`
+- [x] перенос `Level` и тестов в `level.rs` без изменений поведения; тесты игры — на `testdata/level01.txt`
+- [x] тесты `levels`: список `*.txt` по имени, прочее пропускается; следующий после последнего — первый
+- [x] тесты игры: Enter после `X` ставит флаг, `update` грузит следующий уровень из временного каталога; следующий не разбирается — редактор с ошибкой (до Task 9 — `warn` и текущий уровень заново; ➕ пересмотреть в Task 9); правка тестов Enter и случайного прогона
+- [x] `Platformer { levels_dir, .. }`, чтение с диска вместо `include_str!`
+- [x] `make check`
 
 ### Task 7: Перезагрузка уровня в игре
 

@@ -1,10 +1,17 @@
-use std::{fmt, iter};
+mod level;
+mod levels;
+
+use std::{
+    fs, iter, mem,
+    path::{Path, PathBuf},
+};
 
 use engine::{
     Aabb, Actor, Assets, Axis, Camera2D, Color, Commands, Config, Contact, Context, Entity, Font,
     FontData, Game, Gfx, Handle, IVec2, Input, KeyCode, Rect, Solid, Sound, SparseSet, Sprite,
     Texture, Tilemap, Vec2, World, grounded, ivec2, move_actor, move_solid, vec2,
 };
+use level::{Level, PlatformSpawn};
 
 const TICK_HZ: u32 = 60;
 /// Сторона тайла в мировых пикселях.
@@ -64,7 +71,10 @@ const COYOTE: u32 = 6;
 const JUMP_BUFFER: u32 = 6;
 /// Тиков на кадр анимации бега.
 const RUN_FRAME: u32 = 8;
-const LEVEL1: &str = include_str!("../assets/level1.txt");
+const LEVELS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/levels");
+/// Замороженная копия первого уровня: тесты не зависят от правок `assets/levels/`.
+#[cfg(test)]
+const LEVEL01: &str = include_str!("testdata/level01.txt");
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
 const FONT_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -77,135 +87,6 @@ const HUD_MARGIN: f32 = 4.0;
 const HUD_LAYER: i32 = 6;
 const SFX_VOLUME: f32 = 0.8;
 const MUSIC_VOLUME: f32 = 0.5;
-
-/// Ошибка разбора карты; `line` — с единицы, первая строка — верх.
-#[derive(Debug, PartialEq)]
-enum LevelError {
-    Ragged { line: usize },
-    Unknown { line: usize, ch: char },
-    NoPlayer,
-    TwoPlayers { line: usize },
-}
-
-impl fmt::Display for LevelError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Ragged { line } => write!(f, "строка {line}: длина не как у первой"),
-            Self::Unknown { line, ch } => write!(f, "строка {line}: неизвестный символ {ch:?}"),
-            Self::NoPlayer => write!(f, "нет P"),
-            Self::TwoPlayers { line } => write!(f, "строка {line}: второй P"),
-        }
-    }
-}
-
-/// Платформа из подряд идущих `=` (по X) или `H` (по Y); `cells` — в клетках.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct PlatformSpawn {
-    cells: Aabb,
-    axis: Axis,
-}
-
-/// Уровень из ASCII-карты; клетки — от левой нижней, Y вверх.
-#[derive(Clone, Debug, PartialEq)]
-struct Level {
-    size: IVec2,
-    /// По строкам снизу вверх.
-    solid: Vec<bool>,
-    player: IVec2,
-    enemies: Vec<IVec2>,
-    coins: Vec<IVec2>,
-    spikes: Vec<IVec2>,
-    exits: Vec<IVec2>,
-    stops: Vec<IVec2>,
-    platforms: Vec<PlatformSpawn>,
-}
-
-impl Level {
-    fn parse(text: &str) -> Result<Self, LevelError> {
-        let rows: Vec<Vec<char>> = text.lines().map(|l| l.chars().collect()).collect();
-        let width = rows.first().map_or(0, Vec::len);
-        let to_i32 = |n: usize| i32::try_from(n).expect("карта меньше 2³¹ клеток");
-        let size = ivec2(to_i32(width), to_i32(rows.len()));
-        let mut level = Self {
-            size,
-            solid: vec![false; width * rows.len()],
-            player: IVec2::ZERO,
-            enemies: Vec::new(),
-            coins: Vec::new(),
-            spikes: Vec::new(),
-            exits: Vec::new(),
-            stops: Vec::new(),
-            platforms: Vec::new(),
-        };
-        let mut player = None;
-        for (i, row) in rows.iter().enumerate() {
-            let line = i + 1;
-            if row.len() != width {
-                return Err(LevelError::Ragged { line });
-            }
-            let y = size.y - 1 - to_i32(i);
-            for (j, &ch) in row.iter().enumerate() {
-                let cell = ivec2(to_i32(j), y);
-                match ch {
-                    '#' => level.solid[to_index(cell, size.x)] = true,
-                    'P' if player.is_some() => return Err(LevelError::TwoPlayers { line }),
-                    'P' => player = Some(cell),
-                    'E' => level.enemies.push(cell),
-                    'o' => level.coins.push(cell),
-                    '^' => level.spikes.push(cell),
-                    'X' => level.exits.push(cell),
-                    '!' => level.stops.push(cell),
-                    '=' if j == 0 || row[j - 1] != '=' => {
-                        let len = row[j..].iter().take_while(|&&c| c == '=').count();
-                        level.platforms.push(PlatformSpawn {
-                            cells: Aabb {
-                                min: cell,
-                                size: ivec2(to_i32(len), 1),
-                            },
-                            axis: Axis::X,
-                        });
-                    }
-                    'H' if i == 0 || rows[i - 1][j] != 'H' => {
-                        let len = rows[i..]
-                            .iter()
-                            .take_while(|r| r.get(j) == Some(&'H'))
-                            .count();
-                        level.platforms.push(PlatformSpawn {
-                            cells: Aabb {
-                                min: ivec2(cell.x, y + 1 - to_i32(len)),
-                                size: ivec2(1, to_i32(len)),
-                            },
-                            axis: Axis::Y,
-                        });
-                    }
-                    ' ' | '.' | '=' | 'H' => {}
-                    ch => return Err(LevelError::Unknown { line, ch }),
-                }
-            }
-        }
-        level.player = player.ok_or(LevelError::NoPlayer)?;
-        Ok(level)
-    }
-
-    /// Вне карты — не твёрдое.
-    fn solid_at(&self, cell: IVec2) -> bool {
-        cell.cmpge(IVec2::ZERO).all()
-            && cell.cmplt(self.size).all()
-            && self.solid[to_index(cell, self.size.x)]
-    }
-
-    fn bounds(&self) -> IVec2 {
-        self.size * TILE
-    }
-}
-
-#[expect(
-    clippy::cast_sign_loss,
-    reason = "клетка внутри карты, координаты неотрицательны"
-)]
-fn to_index(cell: IVec2, width: i32) -> usize {
-    (cell.y * width + cell.x) as usize
-}
 
 fn cell_aabb(cell: IVec2) -> Aabb {
     Aabb {
@@ -245,7 +126,7 @@ fn char_sprite(
     let mut uv = atlas_uv(cell, CHAR, CHARS_ATLAS);
     // Персонажи в атласе смотрят влево.
     if facing == 1 {
-        std::mem::swap(&mut uv.min.x, &mut uv.max.x);
+        mem::swap(&mut uv.min.x, &mut uv.max.x);
     }
     Sprite {
         texture,
@@ -660,6 +541,8 @@ struct Platformer {
     ticks: u32,
     /// Выход достигнут; мир стоит до Enter.
     cleared: bool,
+    /// Enter после выхода; следующий уровень грузит `update`.
+    advance: bool,
     /// События тика; звучат в `update`.
     sfx: Vec<Sfx>,
     tiles: Handle<Texture>,
@@ -667,6 +550,9 @@ struct Platformer {
     /// До `init` — `None`.
     hud: Option<Hud>,
     sounds: Option<Sounds>,
+    levels_dir: PathBuf,
+    /// Файл текущего уровня.
+    path: PathBuf,
 }
 
 impl Platformer {
@@ -703,32 +589,60 @@ impl Platformer {
             deaths: 0,
             ticks: 0,
             cleared: false,
+            advance: false,
             sfx: Vec::new(),
             tiles: Handle::WHITE,
             chars: Handle::WHITE,
             hud: None,
             sounds: None,
+            levels_dir: PathBuf::new(),
+            path: PathBuf::new(),
         }
     }
 
-    /// Уровень заново; ассеты остаются.
-    fn restart(&mut self) {
+    /// Новый уровень с начала; ассеты и каталог остаются.
+    fn load(&mut self, level: Level) {
         *self = Self {
             tiles: self.tiles,
             chars: self.chars,
             hud: self.hud,
             sounds: self.sounds,
-            ..Self::new(self.level.clone())
+            levels_dir: mem::take(&mut self.levels_dir),
+            path: mem::take(&mut self.path),
+            ..Self::new(level)
         };
+    }
+
+    fn restart(&mut self) {
+        self.load(self.level.clone());
+    }
+
+    /// Следующий по имени уровень каталога; не прочитался или не разобрался — текущий заново.
+    fn next_level(&mut self) {
+        let next = levels::list(&self.levels_dir)
+            .map_err(|e| format!("{}: {e}", self.levels_dir.display()))
+            .and_then(|list| {
+                let path = levels::next(&list, &self.path)
+                    .ok_or_else(|| format!("{}: нет уровней", self.levels_dir.display()))?;
+                Ok((path.to_path_buf(), read_level(path)?))
+            });
+        match next {
+            Ok((path, level)) => {
+                self.path = path;
+                self.load(level);
+            }
+            Err(e) => {
+                log::warn!("{e}");
+                self.restart();
+            }
+        }
     }
 
     fn tick(&mut self, input: &Input) {
         self.sfx.clear();
         self.save_prev();
         if self.cleared {
-            if input.just_pressed(KeyCode::Enter) {
-                self.restart();
-            }
+            self.advance |= input.just_pressed(KeyCode::Enter);
             return;
         }
         self.ticks += 1;
@@ -951,30 +865,53 @@ impl Platformer {
             }
         }
     }
-}
 
-impl Game for Platformer {
-    fn init(ctx: &mut Context) -> Self {
+    /// Первый уровень каталога; уровни лежат в репозитории, поэтому без них — паника с путём.
+    fn open(levels_dir: PathBuf) -> Self {
+        let path = levels::list(&levels_dir)
+            .ok()
+            .and_then(|list| list.into_iter().next())
+            .unwrap_or_else(|| panic!("{}: нет уровней", levels_dir.display()));
+        let level = read_level(&path).unwrap_or_else(|e| panic!("{e}"));
+        Self {
+            levels_dir,
+            path,
+            ..Self::new(level)
+        }
+    }
+
+    /// Текстуры, шрифты, звуки и музыка.
+    fn with_assets(mut self, ctx: &mut Context) -> Self {
         ctx.gfx.clear_color = Color::from_srgb8(185, 225, 245);
-        let level = Level::parse(LEVEL1).unwrap_or_else(|e| panic!("level1.txt, {e}"));
-        let mut game = Self::new(level);
-        game.tiles = ctx.assets.load_texture(concat!(
+        self.tiles = ctx.assets.load_texture(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/assets/tilemap_packed.png"
         ));
-        game.chars = ctx.assets.load_texture(concat!(
+        self.chars = ctx.assets.load_texture(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/assets/tilemap-characters_packed.png"
         ));
-        game.hud = Some(Hud {
+        self.hud = Some(Hud {
             font: ctx.assets.load_font(FONT_PATH, HUD_PX),
             big: ctx.assets.load_font(FONT_PATH, 2.0 * HUD_PX),
             ink: Color::from_srgb8(30, 40, 60),
         });
-        game.sounds = Some(Sounds::load(&mut ctx.assets));
+        self.sounds = Some(Sounds::load(&mut ctx.assets));
         let music = ctx.assets.load_sound(format!("{ASSETS}music.ogg"));
         ctx.audio.play_music(ctx.assets.sound(music), MUSIC_VOLUME);
-        game
+        self
+    }
+}
+
+/// Уровень из файла; ошибка — текстом с путём.
+fn read_level(path: &Path) -> Result<Level, String> {
+    let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Level::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+impl Game for Platformer {
+    fn init(ctx: &mut Context) -> Self {
+        Self::open(LEVELS_DIR.into()).with_assets(ctx)
     }
 
     fn update(&mut self, ctx: &mut Context) {
@@ -984,6 +921,9 @@ impl Game for Platformer {
                 ctx.audio
                     .play(ctx.assets.sound(sounds.sound(sfx)), SFX_VOLUME);
             }
+        }
+        if self.advance {
+            self.next_level();
         }
     }
 
@@ -1024,96 +964,6 @@ mod tests {
 
     fn parse(text: &str) -> Level {
         Level::parse(text).unwrap()
-    }
-
-    #[test]
-    fn first_line_is_top_and_hash_is_solid() {
-        let l = parse("#..\n.P#\n");
-        assert_eq!((l.size, l.player), (ivec2(3, 2), ivec2(1, 0)));
-        assert_eq!(l.solid, [false, false, true, true, false, false]);
-        assert!(l.solid_at(ivec2(0, 1)) && l.solid_at(ivec2(2, 0)));
-        assert!(!l.solid_at(ivec2(1, 0)));
-    }
-
-    #[test]
-    fn solid_at_outside_map_is_empty() {
-        let l = parse("###\n#P#\n");
-        for cell in [ivec2(-1, 0), ivec2(3, 0), ivec2(0, -1), ivec2(0, 2)] {
-            assert!(!l.solid_at(cell), "{cell}");
-        }
-    }
-
-    #[test]
-    fn spawns_are_cells_from_bottom() {
-        let l = parse("E o.^\nX!P  \n");
-        assert_eq!(l.enemies, [ivec2(0, 1)]);
-        assert_eq!(l.coins, [ivec2(2, 1)]);
-        assert_eq!(l.spikes, [ivec2(4, 1)]);
-        assert_eq!(l.exits, [ivec2(0, 0)]);
-        assert_eq!(l.stops, [ivec2(1, 0)]);
-        assert_eq!(l.player, ivec2(2, 0));
-        assert!(l.solid.iter().all(|&s| !s));
-    }
-
-    #[test]
-    fn runs_of_eq_and_h_are_one_platform_each() {
-        let l = parse("==.=\n=..H\nP.HH\n");
-        let p = |min, size, axis| PlatformSpawn {
-            cells: Aabb { min, size },
-            axis,
-        };
-        assert_eq!(
-            l.platforms,
-            [
-                p(ivec2(0, 2), ivec2(2, 1), Axis::X),
-                p(ivec2(3, 2), ivec2(1, 1), Axis::X),
-                p(ivec2(0, 1), ivec2(1, 1), Axis::X),
-                p(ivec2(3, 0), ivec2(1, 2), Axis::Y),
-                p(ivec2(2, 0), ivec2(1, 1), Axis::Y),
-            ]
-        );
-    }
-
-    #[test]
-    fn h_run_starts_at_top_row() {
-        let l = parse("H\nH\nP\n");
-        assert_eq!(l.platforms[0].cells.min, ivec2(0, 1));
-        assert_eq!(l.platforms[0].cells.size, ivec2(1, 2));
-    }
-
-    #[test]
-    fn parse_errors_name_the_line() {
-        assert_eq!(
-            Level::parse("P..\n..\n"),
-            Err(LevelError::Ragged { line: 2 })
-        );
-        assert_eq!(
-            Level::parse("P..\n.?.\n"),
-            Err(LevelError::Unknown { line: 2, ch: '?' })
-        );
-        assert_eq!(Level::parse("...\n###\n"), Err(LevelError::NoPlayer));
-        assert_eq!(Level::parse(""), Err(LevelError::NoPlayer));
-        assert_eq!(
-            Level::parse("P..\n..P\n"),
-            Err(LevelError::TwoPlayers { line: 2 })
-        );
-    }
-
-    #[test]
-    fn errors_print_line_and_cause() {
-        let msg = |text| Level::parse(text).unwrap_err().to_string();
-        assert_eq!(msg("P..\n..\n"), "строка 2: длина не как у первой");
-        assert_eq!(msg("P..\n.?.\n"), "строка 2: неизвестный символ '?'");
-        assert_eq!(msg(""), "нет P");
-        assert_eq!(msg("P\nP\n"), "строка 2: второй P");
-    }
-
-    #[test]
-    fn level1_is_at_least_four_screens_wide() {
-        let l = parse(LEVEL1);
-        assert!(l.bounds().x >= 4 * VIEW.x, "{}", l.bounds());
-        assert!(l.bounds().y >= VIEW.y, "{}", l.bounds());
-        assert!(!l.exits.is_empty() && !l.platforms.is_empty());
     }
 
     const BOUNDS: IVec2 = ivec2(1000, 400);
@@ -1161,7 +1011,7 @@ mod tests {
 
     fn started() -> (Platformer, Context) {
         let mut ctx = Context::default();
-        let g = Platformer::init(&mut ctx);
+        let g = Platformer::new(parse(LEVEL01)).with_assets(&mut ctx);
         (g, ctx)
     }
 
@@ -1193,7 +1043,7 @@ mod tests {
         g.camera.pos = ivec2(900, 300);
         g.update(&mut ctx);
         assert_eq!(g.camera.prev, ivec2(900, 300));
-        assert_eq!(g.camera.pos, Platformer::new(parse(LEVEL1)).camera.pos);
+        assert_eq!(g.camera.pos, Platformer::new(parse(LEVEL01)).camera.pos);
     }
 
     fn tile_sprites(gfx: &Gfx) -> Vec<Sprite> {
@@ -2378,27 +2228,88 @@ mod tests {
         assert!((text_width(font, "0\u{e9}0", HUD_SCALE) - 3.0 * one).abs() < 1e-4);
     }
 
+    const CLEAR: &str = "o.....\nP.oX..\n######\n";
+    const SECOND: &str = "P..\n###\n";
+
     #[test]
-    fn enter_after_exit_restarts_level_and_keeps_assets() {
-        let (art, _) = started();
-        let mut g = room(&["o.....", "P.oX..", "######"]);
+    fn enter_after_exit_only_sets_advance() {
+        let mut g = room(&["P.X", "###"]);
+        sounds(&mut g, D, 40);
+        assert!(g.cleared);
+        g.tick(&input(&[KeyCode::Space]));
+        assert!(!g.advance);
+        g.tick(&input(&[KeyCode::Enter]));
+        assert!(g.advance && g.cleared);
+        g.tick(&Input::default());
+        assert!(g.advance);
+    }
+
+    /// Пройденный первый уровень каталога `files`, с ассетами.
+    fn cleared_in(name: &str, files: &[(&str, &str)]) -> (Platformer, Context) {
+        let (art, mut ctx) = started();
+        let dir = levels::temp_dir(name, files);
+        let mut g = Platformer {
+            levels_dir: dir.clone(),
+            path: dir.join(files[0].0),
+            ..Platformer::new(parse(files[0].1))
+        };
         (g.tiles, g.chars, g.hud, g.sounds) = (art.tiles, art.chars, art.hud, art.sounds);
         sounds(&mut g, D, 40);
         g.deaths = 2;
         assert!(g.cleared && g.coins == 1);
-        g.tick(&input(&[KeyCode::Space]));
-        assert!(g.cleared);
-        g.tick(&input(&[KeyCode::Enter]));
-        assert!(!g.cleared);
+        ctx.input = input(&[KeyCode::Enter]);
+        (g, ctx)
+    }
+
+    #[test]
+    fn update_after_enter_loads_next_level_and_keeps_assets() {
+        let files = [("level01.txt", CLEAR), ("level02.txt", SECOND)];
+        let (mut g, mut ctx) = cleared_in("next", &files);
+        let art = (g.tiles, g.chars, g.hud.unwrap().big, g.sounds.unwrap().jump);
+        g.update(&mut ctx);
+        assert_eq!(g.path, g.levels_dir.join("level02.txt"));
+        assert_eq!(g.level, parse(SECOND));
+        assert!(!g.cleared && !g.advance);
         assert_eq!((g.coins, g.deaths, g.ticks), (0, 0, 0));
         assert_eq!(g.player.body.aabb, Player::spawn(g.level.player).body.aabb);
+        let kept = (g.tiles, g.chars, g.hud.unwrap().big, g.sounds.unwrap().jump);
+        assert_eq!(kept, art);
+        g.cleared = true;
+        g.update(&mut ctx);
+        assert_eq!(g.path, g.levels_dir.join("level01.txt"));
         assert_eq!(coins(&g).len(), 2);
-        assert_eq!((g.tiles, g.chars), (art.tiles, art.chars));
-        assert_eq!(g.hud.unwrap().big, art.hud.unwrap().big);
-        let jump = |g: &Platformer| g.sounds.unwrap().sound(Sfx::Jump);
-        assert_eq!(jump(&g), jump(&art));
-        g.tick(&input(D));
-        assert_eq!(g.ticks, 1);
+    }
+
+    #[test]
+    fn unparsable_next_level_restarts_current() {
+        let files = [("level01.txt", CLEAR), ("level02.txt", "P?\n")];
+        let (mut g, mut ctx) = cleared_in("broken-next", &files);
+        g.update(&mut ctx);
+        assert_eq!(g.path, g.levels_dir.join("level01.txt"));
+        assert_eq!(g.level, parse(CLEAR));
+        assert!(!g.cleared && !g.advance);
+        assert_eq!((g.coins, g.deaths), (0, 0));
+        assert_eq!(coins(&g).len(), 2);
+    }
+
+    #[test]
+    fn open_takes_first_level_by_name() {
+        let dir = levels::temp_dir("first", &[("b.txt", "P\n"), ("a.txt", SECOND)]);
+        let g = Platformer::open(dir.clone());
+        assert_eq!((&g.path, &g.level), (&dir.join("a.txt"), &parse(SECOND)));
+        assert_eq!(g.levels_dir, dir);
+    }
+
+    #[test]
+    #[should_panic(expected = "нет уровней")]
+    fn open_empty_dir_panics() {
+        Platformer::open(levels::temp_dir("empty", &[]));
+    }
+
+    #[test]
+    #[should_panic(expected = "a.txt: строка 1")]
+    fn open_unparsable_level_panics_with_path() {
+        Platformer::open(levels::temp_dir("first-broken", &[("a.txt", "P?\n")]));
     }
 
     /// Игрок пересекает твёрдый тайл или платформу.
@@ -2557,7 +2468,7 @@ mod tests {
     }
 
     #[test]
-    fn random_play_on_level1_never_overlaps_solids() {
+    fn random_play_on_level01_never_overlaps_solids() {
         // Клавиша, шансы 1/n нажать и 1/n отпустить за тик: D чаще A — прогон уходит вглубь уровня.
         const KEYS: [(KeyCode, u64, u64); 4] = [
             (KeyCode::KeyA, 16, 4),
@@ -2573,7 +2484,7 @@ mod tests {
         ];
         for (seed, start) in runs {
             let mut rng = Xorshift(seed);
-            let mut level = parse(LEVEL1);
+            let mut level = parse(LEVEL01);
             level.player = start;
             let mut g = Platformer::new(level);
             let mut keys = Input::default();
@@ -2591,6 +2502,9 @@ mod tests {
                     }
                 }
                 g.tick(&keys);
+                if g.advance {
+                    g.restart();
+                }
                 keys.end_tick();
                 assert!(
                     !stuck(&g),
