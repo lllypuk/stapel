@@ -219,11 +219,11 @@ struct Maze {
     arrow: Handle<Texture>,
     /// Стены, пол и баннеры: за уровень не меняются.
     statics: Vec<ModelDraw>,
-    /// Анимация `open` ворот; без неё ворота открываются мгновенно.
-    open: Option<usize>,
+    /// Анимация `open` ворот.
+    open: usize,
     open_secs: f32,
-    /// Анимация `walk` орка; без неё орк скользит в покое.
-    walk: Option<usize>,
+    /// Анимация `walk` орка.
+    walk: usize,
     level: Level,
     /// Тиков с запуска; рестарт не сбрасывает — от него отсчитаны `Gate::opened`.
     tick: u64,
@@ -259,10 +259,14 @@ impl Maze {
                 .iter()
                 .map(|t| at(models.banner, t.cell, t.wall.yaw())),
         );
-        let animations = &assets.model(models.gate).animations;
-        let open = animations.iter().position(|a| a.name == "open");
-        let open_secs = open.map_or(0.0, |i| animations[i].duration);
-        let walk = (assets.model(models.orc).animations.iter()).position(|a| a.name == "walk");
+        let animation = |model, name| {
+            let animations = &assets.model(model).animations;
+            let i = (animations.iter().position(|a| a.name == name))
+                .unwrap_or_else(|| panic!("нет анимации {name}"));
+            (i, animations[i].duration)
+        };
+        let (open, open_secs) = animation(models.gate, "open");
+        let (walk, _) = animation(models.orc, "walk");
         Self {
             level: Level::new(&map),
             minimap: Minimap::new(&map),
@@ -342,11 +346,11 @@ impl Maze {
             models.extend(cells.iter().map(|&c| at(model, c, 0.0)));
         }
         models.extend(l.gates.iter().map(|g| {
-            let pose = g.opened.zip(self.open).map(|(t, anim)| {
+            let pose = g.opened.map(|t| {
                 let mut pose = Pose::default();
                 assets
                     .model(m.gate)
-                    .pose(anim, secs(self.tick - t), false, &mut pose);
+                    .pose(self.open, secs(self.tick - t), false, &mut pose);
                 pose
             });
             ModelDraw {
@@ -356,11 +360,9 @@ impl Maze {
         }));
         let orc = assets.model(m.orc);
         models.extend(l.orcs.iter().map(|o| {
-            let pose = self.walk.map(|anim| {
-                let mut pose = Pose::default();
-                orc.pose(anim, o.walked_at(alpha) / enemy::SPEED, true, &mut pose);
-                pose
-            });
+            let mut pose = Pose::default();
+            let t = o.walked_at(alpha) / enemy::SPEED;
+            orc.pose(self.walk, t, true, &mut pose);
             let p = o.at(alpha);
             ModelDraw {
                 model: m.orc,
@@ -368,7 +370,7 @@ impl Maze {
                     Quat::from_rotation_y(o.yaw()),
                     vec3(p.x, 0.0, p.y),
                 ),
-                pose,
+                pose: Some(pose),
             }
         }));
         let lights = (self.map.torches.iter().enumerate())
@@ -457,7 +459,13 @@ impl Game for Maze {
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
         self.fps = ctx.time.fps;
-        let camera = self.level.player.camera(alpha, ctx.input.mouse_delta());
+        // После выхода `update` не крутит игрока, и непотреблённый сдвиг дёргал бы камеру до тика.
+        let delta = if self.level.won {
+            Vec2::ZERO
+        } else {
+            ctx.input.mouse_delta()
+        };
+        let camera = self.level.player.camera(alpha, delta);
         let scene = self.scene(camera, alpha, &ctx.assets);
         ctx.gfx.clear_color = scene.fog.color;
         ctx.gfx.scene = Some(scene);
@@ -802,6 +810,16 @@ mod tests {
     }
 
     #[test]
+    fn mouse_does_not_turn_camera_after_win() {
+        let (mut g, mut ctx) = maze(LEVEL01);
+        g.level.won = true;
+        ctx.input.on_mouse_motion(vec2(100.0, -40.0));
+        g.draw(&mut ctx, 0.0);
+        let camera = ctx.gfx.scene.as_ref().unwrap().camera;
+        assert_eq!((camera.yaw, camera.pitch), (g.level.player.yaw, 0.0));
+    }
+
+    #[test]
     fn pitch_stays_clamped_in_draw() {
         let (mut g, mut ctx) = maze(LEVEL01);
         ctx.input.on_mouse_motion(vec2(0.0, -1e6));
@@ -1009,7 +1027,7 @@ mod tests {
         g.draw(&mut ctx, 0.5);
         let model = ctx.assets.model(g.models.gate);
         let mut want = Pose::default();
-        model.pose(g.open.unwrap(), 21.0 / 60.0, false, &mut want);
+        model.pose(g.open, 21.0 / 60.0, false, &mut want);
         assert_ne!(want.globals, model.rest.globals);
         let scene = ctx.gfx.scene.as_ref().unwrap();
         let gate = draws(scene, g.models.gate).next().unwrap();
@@ -1067,10 +1085,10 @@ mod tests {
         let model = ctx.assets.model(g.models.orc);
         let mut want = Pose::default();
         let secs = (o.walked - 0.75 * o.prev.distance(o.pos)) / enemy::SPEED;
-        model.pose(g.walk.unwrap(), secs, true, &mut want);
+        model.pose(g.walk, secs, true, &mut want);
         assert_eq!(d.pose.as_ref(), Some(&want));
         let mut later = Pose::default();
-        model.pose(g.walk.unwrap(), o.walked / enemy::SPEED, true, &mut later);
+        model.pose(g.walk, o.walked / enemy::SPEED, true, &mut later);
         assert_ne!(want, later, "фаза следует за путём");
     }
 

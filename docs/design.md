@@ -123,6 +123,8 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 - Палитра идёт в порядке `skin.joints`, не узлов модели: `Vertex::joints` индексирует суставы скина, другой порядок крутит руку вместо ноги. → тест `model::palette_is_joint_global_times_ibm_in_skin_joints_order`
 - Жёсткий меш с позой берёт `G_mesh` из `pose.globals`, не из покоя: иначе ворота не поднимаются. → тест `scene::rigid_mesh_takes_node_from_pose_or_rest`
 - Глобальные матрицы считаются в порядке «родитель раньше ребёнка»: в порядке файла ребёнок перед родителем умножился бы на его локальную матрицу вместо глобальной. → тест `model::child_global_is_parent_times_local_in_any_file_order`
+- Инстансы мешей со скином лежат в буфере после жёстких, вызов на инстанс берёт индекс со смещением `first_skinned`: без него орк рисуется с матрицей стены. → офскрин `mesh_pipeline::skinned_instances_follow_rigid_ones`
+- Нормаль меша со скином поворачивается той же матрицей скина, что и позиция: иначе свет на анимированном орке ложится по позе покоя. → офскрин `mesh_pipeline::skinned_normal_turns_with_joint`
 - Палитры — uniform, не storage: storage-буфера в вершинном шейдере на GL может не быть, и скиннинг упал бы на создании пайплайна только там. → ревью
 - Шаг палитр кратен `min_uniform_buffer_offset_alignment`: иначе динамическое смещение не проходит валидацию. → `assert` в `MeshPipeline::new`, тест `mesh_pipeline::palette_stride_is_multiple_of_device_alignment`
 - Буфер глубины пересоздаётся в `resize` вместе с поверхностью: иначе проход падает на валидации размеров вложений. → запуск: ресайз окна с 3D

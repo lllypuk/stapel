@@ -223,7 +223,7 @@ struct RawPrimitive {
     image: Option<String>,
 }
 
-/// GLB или glTF с буферами внутри файла.
+/// GLB: буфер — только бинарный блок файла, внешние и `data:` буферы — ошибка.
 pub(crate) fn parse(bytes: &[u8]) -> Result<Parsed, String> {
     let gltf = Gltf::from_slice(bytes).map_err(|e| e.to_string())?;
     if gltf

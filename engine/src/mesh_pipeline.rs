@@ -978,6 +978,72 @@ mod tests {
     }
 
     #[test]
+    fn skinned_instances_follow_rigid_ones() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let mut assets = Assets::default();
+        let rigid = cube(&mut assets);
+        let skin = skinned_cube(&mut assets, [0; 4], [1.0, 0.0, 0.0, 0.0]);
+        let red = load_png(&mut assets, "skin-after-red", 1, 1, &[255, 0, 0, 255]);
+        let green = load_png(&mut assets, "skin-after-green", 1, 1, &[0, 255, 0, 255]);
+        let white = load_png(&mut assets, "skin-after-white", 1, 1, &[255; 4]);
+        let x = |x| Mat4::from_translation(vec3(x, 0.0, -3.0));
+        let mut gfx = lit_scene();
+        gfx.scene.as_mut().unwrap().meshes = vec![MeshDraw {
+            mesh: rigid,
+            texture: red,
+            transform: x(-1.0),
+        }];
+        let models = ExpandedModels {
+            skinned: [(green, 0.0), (white, 1.0)]
+                .map(|(texture, at)| SkinnedDraw {
+                    transform: x(at),
+                    ..skinned(skin, texture, 0)
+                })
+                .into(),
+            palettes: vec![vec![Mat4::IDENTITY]],
+            ..Default::default()
+        };
+        let img = render_models(&device, &queue, &mut assets, &gfx, &models);
+        assert_pixel(&img, "rigid", (14, 32), [255, 0, 0]);
+        assert_pixel(&img, "first skinned", CENTER, [0, 255, 0]);
+        assert_pixel(&img, "second skinned", (50, 32), [255, 255, 255]);
+    }
+
+    #[test]
+    fn skinned_normal_turns_with_joint() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let mut assets = Assets::default();
+        let cube = skinned_cube(&mut assets, [0; 4], [1.0, 0.0, 0.0, 0.0]);
+        let [r, g, b] = TEX;
+        let tex = load_png(&mut assets, "skin-normal", 1, 1, &[r, g, b, 255]);
+        let gfx = gfx(Scene {
+            ambient: gray(0.2),
+            lights: vec![light(0.0, -1.0, Color::WHITE, 4.0)],
+            camera: Camera3D {
+                pos: vec3(0.0, 0.0, 1.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        // К камере повёрнута грань с нормалью −Z: без поворота нормали она осталась бы в тени.
+        let models = ExpandedModels {
+            skinned: vec![SkinnedDraw {
+                transform: Mat4::from_translation(vec3(0.0, 0.0, -4.0))
+                    * Mat4::from_scale(Vec3::splat(2.0)),
+                ..skinned(cube, tex, 0)
+            }],
+            palettes: vec![vec![Mat4::from_rotation_y(std::f32::consts::PI)]],
+            ..Default::default()
+        };
+        let img = render_models(&device, &queue, &mut assets, &gfx, &models);
+        assert_pixel(&img, "face toward light", CENTER, lit(0.45));
+    }
+
+    #[test]
     fn max_joints_drawn_one_more_skipped() {
         let Some((device, queue)) = gpu() else {
             return;

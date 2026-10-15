@@ -18,7 +18,7 @@ NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color # без vsync
 
 Платформа — Linux (Wayland, X11), нужен Vulkan. Для сборки нужны `alsa-lib` и `pkg-config` (в Debian — `libasound2-dev pkg-config`): их требует `cpal`.
 
-Уровни и редактор уровней платформера (F1) — [games/platformer/README.md](games/platformer/README.md).
+Уровни и редактор уровней платформера (F1) — [games/platformer/README.md](games/platformer/README.md); формат карты лабиринта — [games/maze/README.md](games/maze/README.md).
 
 Ассеты платформера — CC0 (Kenney, Juhani Junkala), источники и команды конвертации — в [games/platformer/assets/CREDITS.md](games/platformer/assets/CREDITS.md); ассеты `maze` — CC0 (Kenney Mini Dungeon), [games/maze/assets/CREDITS.md](games/maze/assets/CREDITS.md).
 
@@ -34,4 +34,4 @@ make cov      # покрытие с порогом
 make mutants  # мутационное тестирование
 ```
 
-CI — `.gitlab-ci.yml`: на каждый push линты и `make cov` (он же прогон тестов, офскрин-тест — на lavapipe), мутанты — по расписанию раз в неделю.
+CI — `.gitlab-ci.yml`: на каждый push линты и `make cov` (он же прогон тестов, офскрин-тесты 2D и 3D — на lavapipe), мутанты — по расписанию раз в неделю.

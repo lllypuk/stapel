@@ -165,12 +165,6 @@ impl From<Mat4> for MeshInstance {
     }
 }
 
-impl From<&MeshDraw> for MeshInstance {
-    fn from(d: &MeshDraw) -> Self {
-        Self::from(d.transform)
-    }
-}
-
 /// Подряд идущие инстансы одного меша с одной текстурой — один draw call.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MeshBatch {
@@ -205,7 +199,7 @@ pub fn batch_meshes<'a>(
                 range: n..n + 1,
             }),
         }
-        instances.push(MeshInstance::from(d));
+        instances.push(MeshInstance::from(d.transform));
     }
     (instances, batches)
 }
@@ -229,10 +223,7 @@ mod tests {
         let transform = Mat4::from_translation(vec3(5.0, 6.0, 7.0))
             * Mat4::from_rotation_y(0.7)
             * Mat4::from_scale(vec3(4.0, 1.0, 0.5));
-        let inst = MeshInstance::from(&MeshDraw {
-            transform,
-            ..draw(0, 0, 0.0)
-        });
+        let inst = MeshInstance::from(transform);
         assert_eq!(inst.model, transform.to_cols_array_2d());
 
         // Грань наклонена 45° в плоскости XY; растяжение по X её поворачивает, нормаль должна остаться перпендикулярной.
@@ -250,7 +241,7 @@ mod tests {
 
     #[test]
     fn translation_does_not_reach_normal() {
-        let inst = MeshInstance::from(&draw(0, 0, 9.0));
+        let inst = MeshInstance::from(draw(0, 0, 9.0).transform);
         assert_eq!(Mat3::from_cols_array_2d(&inst.normal) * Vec3::Y, Vec3::Y);
     }
 

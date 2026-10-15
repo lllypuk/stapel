@@ -89,7 +89,8 @@ impl Renderer {
         let textures = GpuTextures::new(&device, &queue);
         let meshes = MeshPipeline::new(&device, &queue, config.format, &textures);
         let sprites = SpritePipeline::new(&device, &queue, config.format, &textures);
-        let depth = depth_texture(&device, (config.width, config.height));
+        // Настоящий размер — в `resize` ниже: только он зажимает его под лимит текстур.
+        let depth = depth_texture(&device, (1, 1));
         let ui =
             egui_wgpu::Renderer::new(&device, ui_format, egui_wgpu::RendererOptions::default());
 
