@@ -58,13 +58,14 @@ pub use gpu_textures::GpuTextures;
 pub use input::Input;
 pub use mesh::{Mesh, PendingMesh, Vertex};
 pub use mesh_pipeline::MeshPipeline;
-pub use model::{Animation, Channel, Model, Node, Primitive, Skin, Values};
+pub use model::{Animation, Channel, Model, Node, Pose, Primitive, Skin, Values};
 pub use physics::{
     Aabb, Actor, Axis, Contact, Hits, Solid, Tilemap, grounded, move_actor, move_solid,
 };
 pub use renderer::{RenderError, Renderer};
 pub use scene::{
-    Fog, MAX_LIGHTS, MeshBatch, MeshDraw, MeshInstance, PointLight, Scene, batch_meshes,
+    ExpandedModels, Fog, MAX_LIGHTS, MeshBatch, MeshDraw, MeshInstance, ModelDraw, PointLight,
+    Scene, SkinnedDraw, batch_meshes,
 };
 pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;

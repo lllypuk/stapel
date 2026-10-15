@@ -4,7 +4,8 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat3, Mat4, Vec3};
 
 use crate::mesh::Mesh;
-use crate::{Camera3D, Color, Handle, Texture};
+use crate::model::{Model, Pose};
+use crate::{Assets, Camera3D, Color, Handle, Texture};
 
 /// Сколько точечных источников доходит до шейдера; остальные отбрасываются.
 pub const MAX_LIGHTS: usize = 16;
@@ -22,6 +23,8 @@ pub struct Scene {
     pub lights: Vec<PointLight>,
     /// Меши кадра.
     pub meshes: Vec<MeshDraw>,
+    /// Модели кадра.
+    pub models: Vec<ModelDraw>,
 }
 
 /// Точечный источник с затуханием `max(1 - d / range, 0)²` и Ламбертом.
@@ -66,6 +69,76 @@ pub struct MeshDraw {
     pub texture: Handle<Texture>,
     /// Меш → мир.
     pub transform: Mat4,
+}
+
+/// Модель в мире.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModelDraw {
+    /// Что рисовать.
+    pub model: Handle<Model>,
+    /// Модель → мир.
+    pub transform: Mat4,
+    /// Поза от `Model::pose` этой же модели, иначе паника при раскрытии; `None` — `Model::rest`.
+    pub pose: Option<Pose>,
+}
+
+/// Меш со скином: вершины смешивают матрицы `palettes[palette]` своего `ExpandedModels`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkinnedDraw {
+    /// Что рисовать.
+    pub mesh: Handle<Mesh>,
+    /// Текстура по UV меша.
+    pub texture: Handle<Texture>,
+    /// Модель → мир; матрица узла меша не применяется, позу задают суставы.
+    pub transform: Mat4,
+    /// Индекс в `ExpandedModels::palettes`.
+    pub palette: usize,
+}
+
+/// Меши моделей кадра: жёсткие идут в общие батчи с `Scene::meshes`, со скином — вызовом на меш.
+#[derive(Debug, Default, PartialEq)]
+pub struct ExpandedModels {
+    /// Жёсткие меши: модель → мир × узел меша.
+    pub meshes: Vec<MeshDraw>,
+    /// Меши со скином.
+    pub skinned: Vec<SkinnedDraw>,
+    /// Палитры суставов: своя на каждую пару «модель кадра — скин».
+    pub palettes: Vec<Vec<Mat4>>,
+}
+
+impl ExpandedModels {
+    /// Раскрывает модели кадра.
+    pub fn new(draws: &[ModelDraw], assets: &Assets) -> Self {
+        let mut out = Self::default();
+        for d in draws {
+            out.push(assets.model(d.model), d);
+        }
+        out
+    }
+
+    /// Добавляет меши `model`, нарисованной как `draw`.
+    pub fn push(&mut self, model: &Model, draw: &ModelDraw) {
+        let pose = draw.pose.as_ref().unwrap_or(&model.rest);
+        let base = self.palettes.len();
+        self.palettes.extend_from_slice(&pose.palettes);
+        for (node, global) in model.nodes.iter().zip(&pose.globals) {
+            for p in &node.primitives {
+                match node.skin {
+                    Some(skin) => self.skinned.push(SkinnedDraw {
+                        mesh: p.mesh,
+                        texture: p.texture,
+                        transform: draw.transform,
+                        palette: base + skin,
+                    }),
+                    None => self.meshes.push(MeshDraw {
+                        mesh: p.mesh,
+                        texture: p.texture,
+                        transform: draw.transform * *global,
+                    }),
+                }
+            }
+        }
+    }
 }
 
 /// Данные одного меша в буфере инстансов.
@@ -130,6 +203,7 @@ pub fn batch_meshes(draws: &[MeshDraw]) -> (Vec<MeshInstance>, Vec<MeshBatch>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::tests::{patched, testdata};
     use glam::{Vec3, vec3};
 
     fn draw(mesh: u32, texture: u32, x: f32) -> MeshDraw {
@@ -192,5 +266,90 @@ mod tests {
     #[test]
     fn no_draws_no_batches() {
         assert_eq!(batch_meshes(&[]), (Vec::new(), Vec::new()));
+    }
+
+    fn model_draw(model: Handle<Model>, transform: Mat4, pose: Option<Pose>) -> ModelDraw {
+        ModelDraw {
+            model,
+            transform,
+            pose,
+        }
+    }
+
+    #[test]
+    fn rigid_mesh_takes_node_from_pose_or_rest() {
+        let mut assets = Assets::default();
+        let h = assets.load_model(testdata("gate.glb"));
+        let gate = assets.model(h);
+        let mut open = Pose::default();
+        gate.pose(0, 1.0, false, &mut open);
+        let at = Mat4::from_translation(vec3(5.0, 0.0, 0.0));
+        let out = ExpandedModels::new(
+            &[model_draw(h, at, None), model_draw(h, at, Some(open))],
+            &assets,
+        );
+        let door = gate.nodes[1].primitives[0];
+        let [rest, opened] = &out.meshes[..] else {
+            panic!("{:?}", out.meshes)
+        };
+        assert_eq!((rest.mesh, rest.texture), (door.mesh, door.texture));
+        assert_eq!(rest.transform, at * gate.rest.globals[1]);
+        let lift = opened.transform.w_axis - rest.transform.w_axis;
+        assert!((lift.y - 0.75).abs() < 1e-3, "{lift}");
+        assert_eq!(out.skinned, []);
+        assert_eq!(out.palettes, Vec::<Vec<Mat4>>::new());
+    }
+
+    #[test]
+    fn skinned_mesh_ignores_its_node_transform() {
+        let bytes = patched(
+            "character-orc.glb",
+            &[(
+                r#""skin":0,"mesh":0,"#,
+                r#""skin":0,"mesh":0,"translation":[0,5,0],"#,
+            )],
+        );
+        let mut assets = Assets::default();
+        let orc = crate::model::parse(&bytes)
+            .unwrap()
+            .upload(&mut assets, std::path::Path::new(""));
+        assert_ne!(orc.rest.globals[8], Mat4::IDENTITY);
+        let at = Mat4::from_rotation_y(1.0);
+        let mut out = ExpandedModels::default();
+        out.push(&orc, &model_draw(Handle::new(0), at, None));
+        assert_eq!(out.meshes, []);
+        let body = orc.nodes[8].primitives[0];
+        assert_eq!(
+            out.skinned[0],
+            SkinnedDraw {
+                mesh: body.mesh,
+                texture: body.texture,
+                transform: at,
+                palette: 0,
+            }
+        );
+        assert_eq!(out.palettes, orc.rest.palettes);
+    }
+
+    #[test]
+    fn each_instance_gets_its_own_palettes() {
+        let mut assets = Assets::default();
+        let h = assets.load_model(testdata("character-orc.glb"));
+        let orc = assets.model(h);
+        let walk = orc.animations.iter().position(|a| a.name == "walk");
+        let mut pose = Pose::default();
+        orc.pose(walk.unwrap(), 0.2, true, &mut pose);
+        let out = ExpandedModels::new(
+            &[
+                model_draw(h, Mat4::IDENTITY, None),
+                model_draw(h, Mat4::IDENTITY, Some(pose.clone())),
+            ],
+            &assets,
+        );
+        let palettes: Vec<_> = out.skinned.iter().map(|d| d.palette).collect();
+        assert_eq!(palettes, [0, 1, 2, 3]);
+        assert_eq!(out.palettes[..2], orc.rest.palettes);
+        assert_eq!(out.palettes[2..], pose.palettes);
+        assert_ne!(out.palettes[0], out.palettes[2]);
     }
 }

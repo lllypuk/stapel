@@ -640,6 +640,7 @@ mod tests {
                 pos: vec3(0.0, 0.0, 1.0),
                 ..Default::default()
             },
+            ..Default::default()
         };
         render(&device, &queue, &mut assets, &gfx(scene))
     }

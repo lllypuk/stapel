@@ -40,6 +40,7 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 - `gfx.scene: Option<Scene>` — immediate-mode, как спрайты: игра заполняет в `draw`, `step_frame` ставит `None` перед `draw`.
 - Меш — `Assets::add_mesh(vertices, indices)` → `Handle<Mesh>`, заливка через pending, как текстуры; индексы u32. `MeshDraw { mesh, texture, transform }` раскрывается на CPU в инстанс (матрица и нормальная матрица), батчи — по `(mesh, texture)`, порядок между ними решает глубина.
 - Модель — `Assets::load_model(path)` → `Handle<Model>`: GLB с буфером внутри, узлы с локальным TRS, скины (суставы в порядке `skin.joints`, IBM), анимации только `LINEAR` с каналами T/R/S. Меши заливаются через `add_mesh` (индексы расширяются до u32), базовая текстура — `load_texture` по URI относительно файла, так что делит хэндл и горячую перезагрузку с остальными текстурами. Сам файл модели горячо не перезагружается: замена узлов и мешей под живыми позами игры — сложность без нужды этапа. Ошибка разбора — пустая модель и `warn`; разбор целиком идёт до заливки, полмодели в `Assets` не остаётся.
+- Поза — CPU: `Model::pose(anim, t, looped, &mut Pose)` сэмплирует каналы (T/S — lerp, R — slerp по короткой дуге, за краями — крайний ключ), собирает глобальные матрицы узлов (родитель раньше детей при любом порядке в файле; цикл в иерархии — ошибка загрузки) и палитры скинов `G_joint × IBM`. Поза покоя `Model::rest` считается при загрузке. `ModelDraw { model, transform, pose }` раскрывается в `ExpandedModels`: жёсткий меш — `MeshDraw` с `transform × G_mesh` в общие батчи, меш со скином — `SkinnedDraw` с `transform` и своей палитрой на пару «экземпляр — скин».
 - Отсечения граней нет: материалы Kenney двусторонние.
 - Свет по фрагменту: `ambient` + до `MAX_LIGHTS = 16` `PointLight` — Ламберт × затухание `max(1 - d/range, 0)²`; затем туман `clamp((d - start)/(end - start), 0, 1)` по расстоянию от камеры к `fog.color`. Лишние источники отбрасываются с одним `warn` за жизнь конвейера; `Fog::default()` — без тумана.
 
@@ -112,6 +113,10 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 - Sprite pass при `gfx.scene` — с `LoadOp::Load`: `Clear` стёр бы 3D под HUD. → тест `mesh_pipeline::unlit_color_is_ambient_times_texture_and_sprites_stay_on_top`; выбор режима в `renderer.rs` — ревью
 - Затухание — `max(1 - d/range, 0)²`: без `max` за `range` основание отрицательное, квадрат снова растёт, и дальние стены светятся. → офскрин `mesh_pipeline::point_light_lambert_and_falloff`
 - WGSL выравнивает `vec3` в uniform до 16 байт, массив структур — до 16: Rust-структура без этого сдвигает поля, и шейдер читает свет и туман со смещением. → тест `mesh_pipeline::uniform_layout_matches_wgsl` сверяет смещения с разбором `mesh.wgsl` naga
+- Меш со скином не берёт матрицу своего узла `G_mesh`: позу задают суставы, а `G_mesh` сдвинул бы меш второй раз (glTF требует её игнорировать). → тест `scene::skinned_mesh_ignores_its_node_transform`
+- Палитра идёт в порядке `skin.joints`, не узлов модели: `Vertex::joints` индексирует суставы скина, другой порядок крутит руку вместо ноги. → тест `model::palette_is_joint_global_times_ibm_in_skin_joints_order`
+- Жёсткий меш с позой берёт `G_mesh` из `pose.globals`, не из покоя: иначе ворота не поднимаются. → тест `scene::rigid_mesh_takes_node_from_pose_or_rest`
+- Глобальные матрицы считаются в порядке «родитель раньше ребёнка»: в порядке файла ребёнок перед родителем умножился бы на его локальную матрицу вместо глобальной. → тест `model::child_global_is_parent_times_local_in_any_file_order`
 - Буфер глубины пересоздаётся в `resize` вместе с поверхностью: иначе проход падает на валидации размеров вложений. → запуск: ресайз окна с 3D
 
 ### Физика

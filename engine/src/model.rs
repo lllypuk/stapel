@@ -18,6 +18,20 @@ pub struct Model {
     pub skins: Vec<Skin>,
     /// Анимации.
     pub animations: Vec<Animation>,
+    /// Поза из TRS узлов без анимации.
+    pub rest: Pose,
+    /// Индексы узлов, родитель раньше детей: glTF такого порядка не обещает.
+    order: Vec<usize>,
+}
+
+/// Матрицы модели в одной позе; буфер для `Model::pose`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Pose {
+    /// Узел → модель по индексам `Model::nodes`.
+    pub globals: Vec<Mat4>,
+    /// По скину: `globals[сустав] × IBM` в порядке `Skin::joints`.
+    pub palettes: Vec<Vec<Mat4>>,
+    locals: Vec<(Vec3, Quat, Vec3)>,
 }
 
 /// Узел иерархии с локальным TRS.
@@ -88,6 +102,103 @@ pub enum Values {
     Rotation(Vec<Quat>),
     /// Масштаб.
     Scale(Vec<Vec3>),
+}
+
+impl Model {
+    fn new(nodes: Vec<Node>, skins: Vec<Skin>, animations: Vec<Animation>) -> Result<Self, String> {
+        let mut depths = Vec::with_capacity(nodes.len());
+        for n in &nodes {
+            let mut depth = 0;
+            let mut parent = n.parent;
+            while let Some(p) = parent {
+                depth += 1;
+                if depth == nodes.len() {
+                    return Err(format!("node {:?}: hierarchy has a cycle", n.name));
+                }
+                parent = nodes[p].parent;
+            }
+            depths.push(depth);
+        }
+        let mut order: Vec<usize> = (0..nodes.len()).collect();
+        order.sort_by_key(|&i| depths[i]);
+        let mut model = Self {
+            nodes,
+            skins,
+            animations,
+            rest: Pose::default(),
+            order,
+        };
+        let mut rest = Pose::default();
+        rest.locals.extend(model.nodes.iter().map(Node::trs));
+        model.compose(&mut rest);
+        model.rest = rest;
+        Ok(model)
+    }
+
+    /// Поза анимации `anim` в момент `t` с: при `looped` — по модулю длины, иначе за краями — крайние ключи.
+    ///
+    /// # Panics
+    /// Если `anim` вне `animations`.
+    pub fn pose(&self, anim: usize, t: f32, looped: bool, pose: &mut Pose) {
+        let a = &self.animations[anim];
+        // При нулевой длине — NaN, и `sample` отдаёт первый ключ.
+        let t = if looped { t.rem_euclid(a.duration) } else { t };
+        pose.locals.clear();
+        pose.locals.extend(self.nodes.iter().map(Node::trs));
+        for c in &a.channels {
+            let (translation, rotation, scale) = &mut pose.locals[c.node];
+            match &c.values {
+                Values::Translation(v) => {
+                    *translation = sample(&c.times, v, t, Vec3::lerp).unwrap_or(*translation);
+                }
+                Values::Rotation(v) => {
+                    *rotation = sample(&c.times, v, t, Quat::slerp).unwrap_or(*rotation);
+                }
+                Values::Scale(v) => *scale = sample(&c.times, v, t, Vec3::lerp).unwrap_or(*scale),
+            }
+        }
+        self.compose(pose);
+    }
+
+    /// Глобальные матрицы и палитры из `pose.locals`.
+    fn compose(&self, pose: &mut Pose) {
+        pose.globals.clear();
+        pose.globals.extend(
+            pose.locals
+                .iter()
+                .map(|&(t, r, s)| Mat4::from_scale_rotation_translation(s, r, t)),
+        );
+        for &i in &self.order {
+            if let Some(p) = self.nodes[i].parent {
+                pose.globals[i] = pose.globals[p] * pose.globals[i];
+            }
+        }
+        pose.palettes.resize_with(self.skins.len(), Vec::new);
+        for (palette, skin) in pose.palettes.iter_mut().zip(&self.skins) {
+            palette.clear();
+            palette.extend(
+                skin.joints
+                    .iter()
+                    .zip(&skin.inverse_bind)
+                    .map(|(&j, ibm)| pose.globals[j] * *ibm),
+            );
+        }
+    }
+}
+
+impl Node {
+    fn trs(&self) -> (Vec3, Quat, Vec3) {
+        (self.translation, self.rotation, self.scale)
+    }
+}
+
+/// Значение в момент `t` между соседними ключами; до первого и после последнего — крайний ключ.
+fn sample<T: Copy>(times: &[f32], values: &[T], t: f32, mix: fn(T, T, f32) -> T) -> Option<T> {
+    let i = times.partition_point(|&k| k <= t);
+    match (i.checked_sub(1).and_then(|p| values.get(p)), values.get(i)) {
+        (Some(&a), Some(&b)) => Some(mix(a, b, (t - times[i - 1]) / (times[i] - times[i - 1]))),
+        (a, b) => a.or(b).copied(),
+    }
 }
 
 impl Values {
@@ -191,11 +302,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Parsed, String> {
         .collect::<Result<_, _>>()?;
 
     Ok(Parsed {
-        model: Model {
-            nodes,
-            skins,
-            animations,
-        },
+        model: Model::new(nodes, skins, animations)?,
         node_meshes,
         meshes,
     })
@@ -334,11 +441,12 @@ impl Parsed {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use std::f32::consts::FRAC_PI_2;
     use std::path::PathBuf;
 
-    fn testdata(name: &str) -> PathBuf {
+    pub(crate) fn testdata(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("src/testdata")
             .join(name)
@@ -352,7 +460,7 @@ mod tests {
     }
 
     /// Файл из testdata с первой заменой `from` на `to` в JSON-чанке для каждой пары.
-    fn patched(name: &str, edits: &[(&str, &str)]) -> Vec<u8> {
+    pub(crate) fn patched(name: &str, edits: &[(&str, &str)]) -> Vec<u8> {
         let bytes = std::fs::read(testdata(name)).unwrap();
         let mut glb = gltf::Glb::from_slice(&bytes).unwrap();
         let mut json = String::from_utf8(glb.json.to_vec()).unwrap();
@@ -386,6 +494,171 @@ mod tests {
                 Values::Scale(_) => "S",
             })
             .collect()
+    }
+
+    fn node(parent: Option<usize>, translation: Vec3) -> Node {
+        Node {
+            name: String::new(),
+            parent,
+            translation,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+            primitives: Vec::new(),
+            skin: None,
+        }
+    }
+
+    fn animation(channels: Vec<Channel>) -> Animation {
+        Animation {
+            name: String::new(),
+            duration: channels
+                .iter()
+                .filter_map(|c| c.times.last().copied())
+                .fold(0.0, f32::max),
+            channels,
+        }
+    }
+
+    /// Узел 0 едет по X от 0 до 4 и растёт от 1 до 3 за ключи 1..3 с; узел 1 стоит в (0, 5, 0).
+    fn slider() -> Model {
+        let anim = animation(vec![
+            Channel {
+                node: 0,
+                times: vec![1.0, 3.0],
+                values: Values::Translation(vec![Vec3::ZERO, Vec3::X * 4.0]),
+            },
+            Channel {
+                node: 0,
+                times: vec![1.0, 3.0],
+                values: Values::Scale(vec![Vec3::ONE, Vec3::splat(3.0)]),
+            },
+        ]);
+        Model::new(
+            vec![node(None, Vec3::ZERO), node(None, Vec3::Y * 5.0)],
+            Vec::new(),
+            vec![anim],
+        )
+        .unwrap()
+    }
+
+    fn x_and_scale(model: &Model, t: f32, looped: bool) -> (f32, f32) {
+        let mut pose = Pose::default();
+        model.pose(0, t, looped, &mut pose);
+        (pose.globals[0].w_axis.x, pose.globals[0].x_axis.x)
+    }
+
+    #[test]
+    fn lerps_between_keys_and_holds_edge_keys() {
+        let model = slider();
+        assert_eq!(x_and_scale(&model, 2.0, false), (2.0, 2.0));
+        assert_eq!(x_and_scale(&model, 2.5, false), (3.0, 2.5));
+        assert_eq!(x_and_scale(&model, 0.0, false), (0.0, 1.0));
+        assert_eq!(x_and_scale(&model, 9.0, false), (4.0, 3.0));
+    }
+
+    #[test]
+    fn node_without_channels_keeps_its_trs() {
+        let mut pose = Pose::default();
+        slider().pose(0, 2.0, false, &mut pose);
+        assert_eq!(pose.globals[1], Mat4::from_translation(Vec3::Y * 5.0));
+    }
+
+    #[test]
+    fn looped_time_wraps_by_duration() {
+        let model = slider();
+        assert_eq!(x_and_scale(&model, 5.0, true), (2.0, 2.0));
+        assert_eq!(x_and_scale(&model, -1.0, true), (2.0, 2.0));
+        assert_eq!(x_and_scale(&model, 3.0, true), (0.0, 1.0));
+
+        let still = animation(vec![Channel {
+            node: 0,
+            times: vec![0.0],
+            values: Values::Translation(vec![Vec3::X * 7.0]),
+        }]);
+        let model = Model::new(vec![node(None, Vec3::ZERO)], Vec::new(), vec![still]).unwrap();
+        assert_eq!(x_and_scale(&model, 1.3, true), (7.0, 1.0));
+    }
+
+    #[test]
+    fn rotation_takes_short_arc() {
+        let turn = animation(vec![Channel {
+            node: 0,
+            times: vec![0.0, 1.0],
+            values: Values::Rotation(vec![Quat::IDENTITY, Quat::from_rotation_y(3.0 * FRAC_PI_2)]),
+        }]);
+        let model = Model::new(vec![node(None, Vec3::ZERO)], Vec::new(), vec![turn]).unwrap();
+        let mut pose = Pose::default();
+        model.pose(0, 0.5, false, &mut pose);
+        let z = pose.globals[0].transform_vector3(Vec3::Z);
+        let expected = Quat::from_rotation_y(-FRAC_PI_2 / 2.0) * Vec3::Z;
+        assert!(z.abs_diff_eq(expected, 1e-5), "{z}");
+    }
+
+    #[test]
+    fn child_global_is_parent_times_local_in_any_file_order() {
+        let mut root = node(None, Vec3::X);
+        root.rotation = Quat::from_rotation_y(FRAC_PI_2);
+        let model = Model::new(
+            vec![node(Some(1), Vec3::Z), node(Some(2), Vec3::Y), root],
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        let g = &model.rest.globals;
+        let local = |i: usize| Mat4::from_translation(model.nodes[i].translation);
+        assert!(g[1].abs_diff_eq(g[2] * local(1), 1e-6));
+        assert!(g[0].abs_diff_eq(g[1] * local(0), 1e-6));
+        assert!(
+            g[0].w_axis
+                .abs_diff_eq(glam::vec4(2.0, 1.0, 0.0, 1.0), 1e-6),
+            "{}",
+            g[0]
+        );
+    }
+
+    #[test]
+    fn palette_is_joint_global_times_ibm_in_skin_joints_order() {
+        let ibm = [
+            Mat4::from_scale(Vec3::splat(2.0)),
+            Mat4::from_rotation_x(1.0),
+        ];
+        let model = Model::new(
+            vec![
+                node(None, Vec3::X),
+                node(None, Vec3::Y),
+                node(None, Vec3::Z),
+            ],
+            vec![
+                Skin {
+                    joints: vec![2, 0],
+                    inverse_bind: ibm.to_vec(),
+                },
+                Skin {
+                    joints: vec![1],
+                    inverse_bind: vec![Mat4::IDENTITY],
+                },
+            ],
+            Vec::new(),
+        )
+        .unwrap();
+        let g = &model.rest.globals;
+        assert_eq!(
+            model.rest.palettes,
+            [vec![g[2] * ibm[0], g[0] * ibm[1]], vec![g[1]]]
+        );
+    }
+
+    #[test]
+    fn orc_rest_palettes_are_identity() {
+        let orc = load("character-orc.glb");
+        assert_eq!(orc.rest.palettes.len(), 2);
+        for m in orc.rest.palettes.iter().flatten() {
+            assert!(m.abs_diff_eq(Mat4::IDENTITY, 1e-5), "{m}");
+        }
+        let mut walk = Pose::default();
+        let anim = orc.animations.iter().position(|a| a.name == "walk");
+        orc.pose(anim.unwrap(), 0.2, true, &mut walk);
+        assert!(!walk.palettes[0][1].abs_diff_eq(Mat4::IDENTITY, 1e-3));
     }
 
     #[test]
@@ -582,6 +855,12 @@ mod tests {
                 r#""joints":[1,2,3,4,5,6,7]"#,
                 r#""joints":[1,2,3,4,5,6]"#,
                 "skin: 7 inverse bind matrices for 6 joints",
+            ),
+            (
+                "character-orc.glb",
+                r#""children":[5,6,7]"#,
+                r#""children":[5,6,7,1]"#,
+                "node \"root\": hierarchy has a cycle",
             ),
             (
                 "character-orc.glb",
