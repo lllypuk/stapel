@@ -7,6 +7,7 @@
 ```sh
 cargo test --workspace
 make platformer                                   # платформер: A/D или ←/→ — бег, Space/W — прыжок, Enter — следующий уровень после финиша, F1 — редактор
+make maze                                         # лабиринт от первого лица: WASD — ходьба, мышь — обзор, клик — захват мыши, Esc — отпустить, Enter — заново после выхода, F1 — панель света и тумана
 make asteroids                                    # Asteroids: A/D — поворот, W — тяга, Space — огонь, Enter — рестарт
 RUST_LOG=info cargo run -p pong                   # Pong на двоих: W/S — левая ракетка, O/L — правая
 RUST_LOG=info cargo run -p clear-color            # Space меняет цвет фона
@@ -19,7 +20,7 @@ NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color # без vsync
 
 Уровни и редактор уровней платформера (F1) — [games/platformer/README.md](games/platformer/README.md).
 
-Ассеты платформера — CC0 (Kenney, Juhani Junkala), источники и команды конвертации — в [games/platformer/assets/CREDITS.md](games/platformer/assets/CREDITS.md).
+Ассеты платформера — CC0 (Kenney, Juhani Junkala), источники и команды конвертации — в [games/platformer/assets/CREDITS.md](games/platformer/assets/CREDITS.md); ассеты `maze` — CC0 (Kenney Mini Dungeon), [games/maze/assets/CREDITS.md](games/maze/assets/CREDITS.md).
 
 ## Проверки
 
