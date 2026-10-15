@@ -1145,7 +1145,7 @@ impl Game for Platformer {
     }
 
     fn ui(&mut self, ui: &egui::Context) {
-        panel::set_fonts(ui);
+        engine::ui::set_font(ui, FONT_PATH);
         if !self.editing {
             return;
         }
@@ -2657,7 +2657,7 @@ mod tests {
         g.enter_editor();
         ui_shapes(&mut g, &ctx);
         assert!(ui_shapes(&mut g, &ctx) > 0);
-        assert!(ctx.fonts(|f| f.definitions().font_data.contains_key("JetBrainsMono")));
+        assert!(ctx.fonts(|f| f.definitions().font_data.contains_key(FONT_PATH)));
     }
 
     #[test]

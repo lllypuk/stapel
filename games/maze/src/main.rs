@@ -1,5 +1,7 @@
 mod enemy;
 mod map;
+mod minimap;
+mod panel;
 mod player;
 
 use std::f32::consts::{FRAC_PI_2, TAU};
@@ -7,10 +9,13 @@ use std::{fs, mem};
 
 use enemy::Orc;
 use engine::{
-    Assets, Camera3D, Color, Config, Context, Fog, Game, Handle, IVec2, KeyCode, Mat4, Model,
-    ModelDraw, MouseButton, PointLight, Pose, Quat, Scene, Vec2, vec3,
+    Assets, Camera2D, Camera3D, Color, Config, Context, Fog, Font, FontData, Game, Gfx, Handle,
+    IVec2, KeyCode, Mat4, Model, ModelDraw, MouseButton, PointLight, Pose, Quat, Scene, Texture,
+    Vec2, egui, vec2, vec3,
 };
 use map::{Dir, Map, Torch, cell_center};
+use minimap::Minimap;
+use panel::Cmd;
 use player::{Player, RADIUS};
 
 const TICK_HZ: u32 = 60;
@@ -52,7 +57,20 @@ const TORCH_HEIGHT: f32 = 0.8;
 const TORCH_GAP: f32 = 0.25;
 /// Доля яркости, которую мерцание гасит в худший тик.
 const FLICKER: f32 = 0.3;
+/// HUD в единицах окна 1280×720; иной аспект — letterbox.
+const VIEW: Vec2 = vec2(1280.0, 720.0);
+/// При `VIEW` в окне 1280×720 тексель атласа — пиксель экрана.
+const HUD_PX: f32 = 24.0;
+const HUD_MARGIN: f32 = 12.0;
+/// Поверх миникарты.
+const HUD_LAYER: i32 = 3;
+const WIN: &str = "EXIT FOUND";
+const RESTART: &str = "PRESS ENTER";
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
+const FONT_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/fonts/JetBrainsMono-Regular.ttf"
+);
 const LEVEL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/levels/level01.txt");
 /// Замороженная копия первого уровня: тесты не зависят от правок `assets/levels/`.
 #[cfg(test)]
@@ -107,6 +125,8 @@ struct Level {
     gates: Vec<Gate>,
     orcs: Vec<Orc>,
     won: bool,
+    /// Тиков игры на уровне; после победы стоит.
+    ticks: u64,
 }
 
 impl Level {
@@ -123,6 +143,7 @@ impl Level {
                 .collect(),
             orcs: map.orcs.iter().map(|&cell| Orc::new(map, cell)).collect(),
             won: false,
+            ticks: 0,
         }
     }
 }
@@ -152,20 +173,32 @@ fn flicker(tick: u64, i: usize) -> f32 {
     1.0 - FLICKER * (0.5 + 0.25 * wave)
 }
 
+/// `color` с RGB, умноженными на `k`.
+fn scaled(color: Color, k: f32) -> Color {
+    let k = f64::from(k);
+    Color {
+        r: color.r * k,
+        g: color.g * k,
+        b: color.b * k,
+        a: color.a,
+    }
+}
+
 /// Свет факела `torch` с яркостью `bright` у его стены.
 fn torch_light(torch: &Torch, bright: f32) -> PointLight {
     let o = torch.wall.offset().as_vec2() * (0.5 - TORCH_GAP);
-    let k = f64::from(bright);
     PointLight {
         pos: cell_center(torch.cell) + vec3(o.x, TORCH_HEIGHT, o.y),
-        color: Color {
-            r: TORCH.r * k,
-            g: TORCH.g * k,
-            b: TORCH.b * k,
-            a: 1.0,
-        },
+        color: scaled(TORCH, bright),
         range: TORCH_RANGE,
     }
+}
+
+fn text_width(font: &FontData, text: &str) -> f32 {
+    text.chars()
+        .filter_map(|c| font.glyph(c).or_else(|| font.glyph('?')))
+        .map(|g| g.advance)
+        .sum()
 }
 
 /// Центр игрока `pos` касается предмета в центре клетки `cell`.
@@ -182,6 +215,8 @@ fn touches_cell(pos: Vec2, cell: IVec2) -> bool {
 struct Maze {
     map: Map,
     models: Models,
+    font: Handle<Font>,
+    arrow: Handle<Texture>,
     /// Стены, пол и баннеры: за уровень не меняются.
     statics: Vec<ModelDraw>,
     /// Анимация `open` ворот; без неё ворота открываются мгновенно.
@@ -192,6 +227,16 @@ struct Maze {
     level: Level,
     /// Тиков с запуска; рестарт не сбрасывает — от него отсчитаны `Gate::opened`.
     tick: u64,
+    /// Рестарт не сбрасывает: пройденное остаётся известным.
+    minimap: Minimap,
+    /// Панель отладки по F1.
+    panel: bool,
+    queue: Vec<Cmd>,
+    /// Множитель `AMBIENT`.
+    ambient: f32,
+    fog_end: f32,
+    /// FPS для панели: `ui` не видит `Context`.
+    fps: u32,
 }
 
 impl Maze {
@@ -220,13 +265,21 @@ impl Maze {
         let walk = (assets.model(models.orc).animations.iter()).position(|a| a.name == "walk");
         Self {
             level: Level::new(&map),
+            minimap: Minimap::new(&map),
             map,
             models,
+            font: assets.load_font(FONT_PATH, HUD_PX),
+            arrow: assets.load_texture(format!("{ASSETS}arrow.png")),
             statics,
             open,
             open_secs,
             walk,
             tick: 0,
+            panel: false,
+            queue: Vec::new(),
+            ambient: 1.0,
+            fog_end: FOG.end,
+            fps: 0,
         }
     }
 
@@ -251,9 +304,11 @@ impl Maze {
         let dt = ctx.time.step.as_secs_f32();
         let mut player = self.level.player;
         player.update(&ctx.input, dt, |c| self.solid(c));
+        let pos = player.pos;
+        self.minimap.reveal(pos);
         let l = &mut self.level;
         l.player = player;
-        let pos = player.pos;
+        l.ticks += 1;
         l.coins.retain(|&c| !touches_item(pos, c));
         let keys = l.keys.len();
         l.keys.retain(|&c| !touches_item(pos, c));
@@ -321,11 +376,47 @@ impl Maze {
             .collect();
         Scene {
             camera,
-            ambient: AMBIENT,
-            fog: FOG,
+            ambient: scaled(AMBIENT, self.ambient),
+            fog: Fog {
+                end: self.fog_end,
+                ..FOG
+            },
             lights,
             models,
             meshes: Vec::new(),
+        }
+    }
+
+    fn status(&self) -> String {
+        let total = self.map.coins.len();
+        let l = &self.level;
+        format!(
+            "COINS {}/{total}\nKEYS {}\nTIME {:.1}",
+            total - l.coins.len(),
+            l.held,
+            secs(l.ticks)
+        )
+    }
+
+    /// Миникарта в правом верхнем углу, счёт в левом, победа по центру.
+    fn draw_hud(&self, gfx: &mut Gfx, assets: &Assets, camera: Camera3D) {
+        let half = VIEW / 2.0;
+        let width = self.map.size.x as f32 * minimap::CELL;
+        let origin = vec2(half.x - HUD_MARGIN - width, half.y - HUD_MARGIN);
+        let pos = vec2(camera.pos.x, camera.pos.z);
+        (self.minimap).draw(gfx, &self.map, origin, self.arrow, pos, camera.yaw);
+        let mut text = |s: &str, pos| {
+            gfx.draw_text(assets, self.font, s, pos, 1.0, Color::WHITE, HUD_LAYER);
+        };
+        text(
+            &self.status(),
+            vec2(-half.x + HUD_MARGIN, half.y - HUD_MARGIN - HUD_PX),
+        );
+        if self.level.won {
+            let font = assets.font(self.font);
+            for (s, y) in [(WIN, HUD_PX), (RESTART, -HUD_PX)] {
+                text(s, vec2(-text_width(font, s) / 2.0, y));
+            }
         }
     }
 }
@@ -338,8 +429,19 @@ impl Game for Maze {
     }
 
     fn update(&mut self, ctx: &mut Context) {
+        for cmd in mem::take(&mut self.queue) {
+            match cmd {
+                Cmd::Ambient(k) => self.ambient = k,
+                Cmd::FogEnd(end) => self.fog_end = end,
+            }
+        }
+        if ctx.input.just_pressed(KeyCode::F1) {
+            self.panel = !self.panel;
+            // И при закрытии: курсор остаётся у панели до клика в мир.
+            ctx.cursor_grab = false;
+        }
         // Клик, пришедший до потери фокуса, захватил бы курсор в фоновом окне.
-        if ctx.input.mouse_just_pressed(MouseButton::Left) && ctx.focused {
+        if ctx.input.mouse_just_pressed(MouseButton::Left) && ctx.focused && !self.panel {
             ctx.cursor_grab = true;
         }
         if ctx.input.just_pressed(KeyCode::Escape) {
@@ -354,10 +456,28 @@ impl Game for Maze {
     }
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
+        self.fps = ctx.time.fps;
         let camera = self.level.player.camera(alpha, ctx.input.mouse_delta());
         let scene = self.scene(camera, alpha, &ctx.assets);
         ctx.gfx.clear_color = scene.fog.color;
         ctx.gfx.scene = Some(scene);
+        ctx.gfx.camera = Camera2D {
+            center: Vec2::ZERO,
+            size: VIEW,
+        };
+        self.draw_hud(&mut ctx.gfx, &ctx.assets, camera);
+    }
+
+    fn ui(&mut self, ui: &egui::Context) {
+        engine::ui::set_font(ui, FONT_PATH);
+        if !self.panel {
+            return;
+        }
+        egui::Window::new("Отладка")
+            .resizable(false)
+            .show(ui, |ui| {
+                panel::show(ui, self.fps, self.ambient, self.fog_end, &mut self.queue);
+            });
     }
 }
 
@@ -375,9 +495,15 @@ fn main() -> Result<(), engine::EventLoopError> {
 mod tests {
     use std::time::Duration;
 
+    use egui_kittest::{
+        Harness,
+        kittest::{NodeT, Queryable},
+    };
     use engine::{
         ElementState::{Pressed, Released},
-        FixedClock, MAX_PITCH, Vec2, Vec3, ivec2, step_frame, vec2, vec3,
+        FixedClock, MAX_PITCH, Sprite, Vec2, Vec3,
+        egui::accesskit::{Action, ActionData, ActionRequest, Role},
+        ivec2, step_frame, text, vec2, vec3,
     };
 
     use crate::player::{EYE, SENSITIVITY, SPEED};
@@ -426,7 +552,11 @@ mod tests {
         assert!(anims(m.gate).contains(&"open".into()));
         assert!(anims(m.orc).contains(&"walk".into()));
         let textures = ctx.assets.take_pending();
-        assert_eq!(textures.len(), 2, "белая и общая colormap");
+        assert_eq!(
+            textures.len(),
+            4,
+            "белая, общая colormap, атлас шрифта, стрелка"
+        );
         assert_eq!((textures[1].width, textures[1].height), (512, 512));
     }
 
@@ -821,7 +951,10 @@ mod tests {
         tick(&mut g, &mut ctx);
         assert_eq!(
             g.level,
-            Level::new(&g.map),
+            Level {
+                ticks: 1,
+                ..Level::new(&g.map)
+            },
             "Enter до победы ничего не делает"
         );
         ctx.input.on_key(KeyCode::Enter, Released, false);
@@ -957,5 +1090,232 @@ mod tests {
         assert_eq!(g.level.coins.len(), 1);
         assert_eq!(g.level.player.prev, g.level.player.pos);
         assert!(g.level.orcs.iter().all(|o| o.prev == o.pos));
+    }
+
+    fn hud(gfx: &Gfx) -> Vec<Sprite> {
+        (gfx.sprites.iter())
+            .filter(|s| s.layer == HUD_LAYER)
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn hud_counts_coins_keys_and_time_and_centers_win() {
+        let (mut g, mut ctx) = maze("#######\n#Pooo.#\n#######\n");
+        g.level.coins.remove(1);
+        (g.level.held, g.level.ticks) = (2, 150);
+        g.draw(&mut ctx, 0.0);
+        assert_eq!(
+            ctx.gfx.camera,
+            Camera2D {
+                center: Vec2::ZERO,
+                size: VIEW
+            }
+        );
+        let playing = hud(&ctx.gfx);
+        ctx.gfx.sprites.clear();
+        g.level.won = true;
+        g.draw(&mut ctx, 0.0);
+        let won = hud(&ctx.gfx);
+
+        let font = ctx.assets.font(g.font);
+        let text = |s, pos| text::layout(font, s, pos, 1.0, Color::WHITE, HUD_LAYER);
+        let status: Vec<_> = text("COINS 1/3\nKEYS 2\nTIME 2.5", vec2(-628.0, 324.0)).collect();
+        assert_eq!(status.len(), "COINS1/3KEYS2TIME2.5".len());
+        assert_eq!(playing, status);
+        let centered = |s, y| text(s, vec2(-text_width(font, s) / 2.0, y));
+        let want: Vec<_> = (status.into_iter())
+            .chain(centered(WIN, HUD_PX))
+            .chain(centered(RESTART, -HUD_PX))
+            .collect();
+        assert_eq!(won, want);
+    }
+
+    #[test]
+    fn text_width_sums_advances() {
+        let mut assets = Assets::default();
+        let font = assets.load_font(FONT_PATH, HUD_PX);
+        let font = assets.font(font);
+        let one = text_width(font, "0");
+        assert_eq!(one, font.glyph('0').unwrap().advance);
+        assert!(one > 0.0);
+        assert_eq!(text_width(font, "0\u{e9}0"), 3.0 * one);
+    }
+
+    #[test]
+    fn play_reveals_minimap_and_draw_puts_arrow_at_camera() {
+        let (mut g, mut ctx) = maze(LEVEL01);
+        assert!(!g.minimap.seen(g.map.player));
+        press(&mut ctx, KeyCode::KeyW);
+        tick(&mut g, &mut ctx);
+        assert!(g.minimap.seen(g.map.player));
+        ctx.input.on_mouse_motion(vec2(30.0, 0.0));
+        g.draw(&mut ctx, 0.5);
+        let camera = ctx.gfx.scene.as_ref().unwrap().camera;
+        let arrow: Vec<_> = (ctx.gfx.sprites.iter())
+            .filter(|s| s.layer == minimap::ARROW_LAYER)
+            .collect();
+        let width = g.map.size.x as f32 * minimap::CELL;
+        let origin = vec2(640.0 - HUD_MARGIN - width, 360.0 - HUD_MARGIN);
+        assert_eq!(arrow.len(), 1);
+        assert_eq!(
+            arrow[0].pos,
+            origin + vec2(camera.pos.x, -camera.pos.z) * minimap::CELL
+        );
+        assert_eq!(arrow[0].rotation, camera.yaw);
+        assert_ne!(camera.yaw, g.level.player.yaw, "с непотреблённым сдвигом");
+        assert_eq!(arrow[0].texture, g.arrow);
+    }
+
+    #[test]
+    fn restart_keeps_minimap_and_resets_time() {
+        let (mut g, mut ctx) = maze("######\n#PoX.#\n######\n");
+        press(&mut ctx, KeyCode::KeyW);
+        until(&mut g, &mut ctx, |g| g.level.won);
+        let ticks = g.level.ticks;
+        assert!(ticks > 0);
+        for _ in 0..5 {
+            tick(&mut g, &mut ctx);
+        }
+        assert_eq!(g.level.ticks, ticks, "после победы время стоит");
+        let seen = g.minimap.clone();
+        press(&mut ctx, KeyCode::Enter);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.level.ticks, 0);
+        assert_eq!(g.minimap, seen);
+    }
+
+    #[test]
+    fn f1_toggles_panel_and_releases_grab_until_click() {
+        let (mut g, mut ctx) = maze(LEVEL01);
+        ctx.focused = true;
+        ctx.cursor_grab = true;
+        press(&mut ctx, KeyCode::F1);
+        tick(&mut g, &mut ctx);
+        assert!(g.panel);
+        assert!(!ctx.cursor_grab);
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        tick(&mut g, &mut ctx);
+        assert!(!ctx.cursor_grab, "клик при панели не захватывает");
+        ctx.input.on_button(MouseButton::Left, Released);
+
+        ctx.input.on_key(KeyCode::F1, Released, false);
+        press(&mut ctx, KeyCode::F1);
+        tick(&mut g, &mut ctx);
+        assert!(!g.panel);
+        assert!(!ctx.cursor_grab, "закрытие без клика не захватывает");
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        tick(&mut g, &mut ctx);
+        assert!(ctx.cursor_grab);
+    }
+
+    #[test]
+    fn closing_panel_releases_grab_taken_meanwhile() {
+        let (mut g, mut ctx) = maze(LEVEL01);
+        g.panel = true;
+        ctx.cursor_grab = true;
+        press(&mut ctx, KeyCode::F1);
+        tick(&mut g, &mut ctx);
+        assert!(!g.panel);
+        assert!(!ctx.cursor_grab);
+    }
+
+    fn harness(g: Maze) -> Harness<'static, Maze> {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(500.0, 400.0))
+            .build_ui_state(|ui, g: &mut Maze| g.ui(ui.ctx()), g);
+        h.run();
+        h
+    }
+
+    fn set_value(h: &Harness<'_, Maze>, label: &str, value: f64) {
+        let slider = h.get_by_role_and_label(Role::Slider, label);
+        let (target_node, target_tree) = slider.accesskit_node().locate();
+        h.event(egui::Event::AccessKitActionRequest(ActionRequest {
+            target_node,
+            target_tree,
+            action: Action::SetValue,
+            data: Some(ActionData::NumericValue(value)),
+        }));
+    }
+
+    #[test]
+    fn panel_shows_fps_only_when_open() {
+        let (mut g, _) = maze(LEVEL01);
+        g.fps = 57;
+        let h = harness(g);
+        assert!(h.query_by_label("FPS 57").is_none());
+        let (mut g, _) = maze(LEVEL01);
+        (g.fps, g.panel) = (57, true);
+        let h = harness(g);
+        h.get_by_label("FPS 57");
+        assert!(
+            h.ctx
+                .fonts(|f| f.definitions().font_data.contains_key(FONT_PATH))
+        );
+    }
+
+    #[test]
+    fn sliders_queue_commands_applied_in_update() {
+        let (mut g, mut ctx) = maze(LEVEL01);
+        g.panel = true;
+        let mut h = harness(g);
+        set_value(&h, "ambient ×", 3.0);
+        h.run();
+        set_value(&h, "туман, м", 12.0);
+        h.run();
+        let mut g = h.into_state();
+        assert_eq!(g.queue, [Cmd::Ambient(3.0), Cmd::FogEnd(12.0)]);
+        assert_eq!(
+            (g.ambient, g.fog_end),
+            (1.0, FOG.end),
+            "до update не применены"
+        );
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.queue, []);
+        g.draw(&mut ctx, 0.0);
+        let scene = ctx.gfx.scene.as_ref().unwrap();
+        assert_eq!(scene.ambient, scaled(AMBIENT, 3.0));
+        assert_eq!(scene.fog, Fog { end: 12.0, ..FOG });
+        assert_eq!(ctx.gfx.clear_color, FOG.color);
+    }
+
+    #[test]
+    fn fog_slider_stops_short_of_fog_start() {
+        let (mut g, _) = maze(LEVEL01);
+        g.panel = true;
+        let mut h = harness(g);
+        set_value(&h, "туман, м", 0.0);
+        h.run();
+        let end = FOG.start + 0.5;
+        assert_eq!(h.into_state().queue, [Cmd::FogEnd(end)]);
+    }
+
+    #[test]
+    fn untouched_sliders_queue_nothing() {
+        let (mut g, _) = maze(LEVEL01);
+        g.panel = true;
+        let mut h = harness(g);
+        h.run();
+        assert_eq!(h.into_state().queue, []);
+    }
+
+    #[test]
+    fn scaled_multiplies_rgb_keeps_alpha() {
+        let c = Color {
+            r: 0.5,
+            g: 0.25,
+            b: 1.0,
+            a: 0.5,
+        };
+        assert_eq!(
+            scaled(c, 2.0),
+            Color {
+                r: 1.0,
+                g: 0.5,
+                b: 2.0,
+                a: 0.5
+            }
+        );
     }
 }

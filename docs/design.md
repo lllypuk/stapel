@@ -105,7 +105,7 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 - Глубина в wgpu — `0..1`, не `-1..1` как в OpenGL: ортоматрица — `glam::camera::rh::proj::directx::orthographic` (Z `0..1`, Y вверх), с `near = -1, far = 1` она кладёт `z = 0` в 0.5. Матрица из `opengl` отсекла бы половину сцены без ошибки, из `vulkan` — перевернула бы Y. → тест `camera::z_zero_is_mid_depth`, `camera::y_points_up`
 - Перспектива — `directx::perspective` (глубина `0..1`): вариант `opengl` (`-1..1`) молча срезал бы ближнюю половину глубины. → тест `camera::near_is_depth_zero_far_is_one`
 - egui смешивает в гамме: рисует в не-sRGB вид поверхности (`view_formats`), иначе полутона панели искажены и egui пишет warn на старте. Второй вид требует `SURFACE_VIEW_FORMATS` (в wgpu — только Vulkan), без него `configure` паникует, поэтому на GL egui рисует в основной вид. → запуск: warn в логе
-- egui собран без `default_fonts`: игра с `Game::ui` без своего `set_fonts` получит панель без шрифта. → запуск
+- egui собран без `default_fonts`: игра с `Game::ui` без `engine::ui::set_font` получит панель без шрифта. → запуск
 - `textures_delta.set` применяется до проверки поверхности, как `textures.upload`: атлас шрифта egui присылает один раз, и на пропущенном кадре он пропал бы навсегда. `free` — после submit или сразу на пропущенном кадре. → ревью
 - egui-pass — с `LoadOp::Load`: `Clear` стёр бы кадр игры под панелью. → запуск
 - Замена текстуры идёт через тот же pending, что и создание: одна пачка может нести `[0, 1, 1]` — слот 1 создаётся и тут же заменяется. `upload` без ветки замены упал бы на ассерте порядка, а без строгого FIFO в `take_pending` замена ушла бы раньше создания. → тест `gpu_textures::reloaded_texture_replaces_its_slot`

@@ -1,3 +1,6 @@
+use std::fs;
+use std::path::Path;
+
 use glam::Vec2;
 use winit::event::{ElementState, WindowEvent};
 
@@ -42,6 +45,33 @@ pub(crate) fn release_focus(ctx: &egui::Context) {
             m.surrender_focus(id);
         }
     });
+}
+
+/// Шрифт файла `path` для всех семейств egui, действует со следующего прохода; файл читается один раз.
+/// Без него у egui нет ни одного шрифта; ошибка чтения — `warn` один раз.
+pub fn set_font(ctx: &egui::Context, path: impl AsRef<Path>) {
+    let path = path.as_ref();
+    let name = path.to_string_lossy().into_owned();
+    let id = egui::Id::new(("set_font", &name));
+    if ctx.data(|d| d.get_temp::<()>(id)).is_some() {
+        return;
+    }
+    ctx.data_mut(|d| d.insert_temp(id, ()));
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            log::warn!("{}: {e}", path.display());
+            return;
+        }
+    };
+    let mut fonts = egui::FontDefinitions::empty();
+    fonts
+        .font_data
+        .insert(name.clone(), egui::FontData::from_owned(bytes).into());
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts.families.insert(family, vec![name.clone()]);
+    }
+    ctx.set_fonts(fonts);
 }
 
 #[cfg(test)]
@@ -114,5 +144,61 @@ mod tests {
         release_focus(&ctx);
         assert!(!ctx.egui_wants_keyboard_input());
         release_focus(&ctx);
+    }
+
+    const FONT: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../assets/fonts/JetBrainsMono-Regular.ttf"
+    );
+
+    fn pass(ctx: &egui::Context) {
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.label("ж");
+        })
+        .drop_without_applying_deltas();
+    }
+
+    fn families(ctx: &egui::Context) -> Vec<Vec<String>> {
+        ctx.fonts(|f| {
+            let defs = f.definitions();
+            [egui::FontFamily::Proportional, egui::FontFamily::Monospace]
+                .map(|family| defs.families[&family].clone())
+                .into()
+        })
+    }
+
+    #[test]
+    fn set_font_serves_all_families() {
+        let ctx = egui::Context::default();
+        set_font(&ctx, FONT);
+        pass(&ctx);
+        assert_eq!(families(&ctx), [[FONT], [FONT]]);
+        assert_eq!(ctx.fonts(|f| f.definitions().font_data.len()), 1);
+    }
+
+    #[test]
+    fn set_font_reads_file_once() {
+        let path = std::env::temp_dir().join(format!("engine-ui-{}.ttf", std::process::id()));
+        fs::copy(FONT, &path).unwrap();
+        let ctx = egui::Context::default();
+        set_font(&ctx, &path);
+        pass(&ctx);
+        let font = ctx.fonts(|f| f.definitions().font_data.clone());
+        fs::write(&path, b"not a font").unwrap();
+        set_font(&ctx, &path);
+        pass(&ctx);
+        fs::remove_file(&path).unwrap();
+        assert_eq!(ctx.fonts(|f| f.definitions().font_data.clone()), font);
+    }
+
+    #[test]
+    fn missing_font_leaves_fonts_alone() {
+        let ctx = egui::Context::default();
+        pass(&ctx);
+        let before = ctx.fonts(|f| f.definitions().clone());
+        set_font(&ctx, "/nonexistent/font.ttf");
+        set_font(&ctx, "/nonexistent/font.ttf");
+        pass(&ctx);
+        assert_eq!(ctx.fonts(|f| f.definitions().clone()), before);
     }
 }

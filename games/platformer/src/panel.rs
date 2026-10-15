@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use engine::egui::{Color32, Context, FontData, FontDefinitions, FontFamily, Ui};
+use engine::egui::{Color32, Ui};
 
 use crate::editor::{Editor, EditorCmd, Resize};
 
@@ -18,29 +18,6 @@ const PALETTE: [(char, &str); 10] = [
     ('H', "блок"),
 ];
 const ERROR: Color32 = Color32::from_rgb(255, 110, 110);
-/// Без `default_fonts` у egui нет ни одного шрифта.
-const FONT: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../assets/fonts/JetBrainsMono-Regular.ttf"
-));
-
-const FONT_NAME: &str = "JetBrainsMono";
-
-/// `JetBrainsMono` для всех семейств egui; `set_fonts` действует со следующего прохода.
-pub(crate) fn set_fonts(ctx: &Context) {
-    if ctx.fonts(|f| f.definitions().font_data.contains_key(FONT_NAME)) {
-        return;
-    }
-    let mut fonts = FontDefinitions::empty();
-    fonts
-        .font_data
-        .insert(FONT_NAME.into(), FontData::from_static(FONT).into());
-    for family in [FontFamily::Proportional, FontFamily::Monospace] {
-        fonts.families.insert(family, vec![FONT_NAME.into()]);
-    }
-    ctx.set_fonts(fonts);
-}
-
 /// Панель редактора: нажатые кнопки — команды в `queue`.
 pub(crate) fn show(
     ui: &mut Ui,
@@ -126,7 +103,7 @@ mod tests {
                     queue: Vec::new(),
                 },
             );
-        set_fonts(&h.ctx);
+        engine::ui::set_font(&h.ctx, crate::FONT_PATH);
         h
     }
 
