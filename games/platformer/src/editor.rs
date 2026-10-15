@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, iter};
 
-use engine::{IVec2, ivec2};
+use engine::{IVec2, Input, MouseButton, ivec2};
 
 /// Символ пустой клетки: им дополняются строки и заполняются новые столбцы и строки.
 const EMPTY: char = '.';
@@ -140,10 +140,180 @@ impl History {
     }
 }
 
+/// Кнопка мазка и сетка до него.
+struct Stroke {
+    button: MouseButton,
+    before: Grid,
+}
+
+/// Правка сетки уровня: кисть, история, ошибка разбора.
+pub(crate) struct Editor {
+    pub(crate) grid: Grid,
+    history: History,
+    /// Символ ЛКМ; ПКМ стирает.
+    pub(crate) brush: char,
+    stroke: Option<Stroke>,
+    /// Почему сетку нельзя играть.
+    pub(crate) error: Option<String>,
+}
+
+impl Default for Editor {
+    fn default() -> Self {
+        Self::new("")
+    }
+}
+
+impl Editor {
+    /// Чистый редактор уровня с текстом `text` на диске.
+    pub(crate) fn new(text: &str) -> Self {
+        let grid = Grid::parse(text);
+        Self {
+            history: History::new(grid.clone()),
+            grid,
+            brush: '#',
+            stroke: None,
+            error: None,
+        }
+    }
+
+    /// Мазок по снимку тика: красит `cell` каждый тик, пока кнопка `down`.
+    /// Конец — по `!down`, не по отпусканию: клик между тиками красит одну клетку.
+    pub(crate) fn paint(&mut self, input: &Input, cell: Option<IVec2>) {
+        if self.stroke.is_some() {
+            self.stroke_tick(input, cell);
+        }
+        if self.stroke.is_none() {
+            self.stroke = [MouseButton::Left, MouseButton::Right]
+                .into_iter()
+                .find(|&b| input.mouse_just_pressed(b))
+                .map(|button| Stroke {
+                    button,
+                    before: self.grid.clone(),
+                });
+            self.stroke_tick(input, cell);
+        }
+    }
+
+    fn stroke_tick(&mut self, input: &Input, cell: Option<IVec2>) {
+        let Some(stroke) = &self.stroke else { return };
+        let ch = if stroke.button == MouseButton::Left {
+            self.brush
+        } else {
+            EMPTY
+        };
+        if let Some(cell) = cell {
+            self.grid.set(cell, ch);
+        }
+        if !input.mouse_down(stroke.button) {
+            self.end_stroke();
+        }
+    }
+
+    /// Мазок — в историю одним снимком.
+    pub(crate) fn end_stroke(&mut self) {
+        if let Some(s) = self.stroke.take() {
+            self.history.commit(s.before, &self.grid);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::LEVEL01;
+
+    use engine::ElementState::{Pressed, Released};
+
+    /// Кнопки, нажатые с прошлого тика; `released` уже отпущены.
+    fn clicked(pressed: &[MouseButton], released: &[MouseButton]) -> Input {
+        let mut i = Input::default();
+        for &b in pressed {
+            i.on_button(b, Pressed);
+        }
+        for &b in released {
+            i.on_button(b, Released);
+        }
+        i
+    }
+
+    #[test]
+    fn click_between_ticks_paints_one_cell_with_one_snapshot() {
+        let mut e = Editor::new("...\n");
+        e.brush = 'o';
+        let click = clicked(&[MouseButton::Left], &[MouseButton::Left]);
+        e.paint(&click, Some(ivec2(1, 0)));
+        assert_eq!(e.grid.to_text(), ".o.\n");
+        e.paint(&Input::default(), Some(ivec2(2, 0)));
+        assert_eq!(e.grid.to_text(), ".o.\n");
+        e.history.undo(&mut e.grid);
+        assert_eq!(e.grid.to_text(), "...\n");
+        e.history.undo(&mut e.grid);
+        assert_eq!(e.grid.to_text(), "...\n");
+    }
+
+    #[test]
+    fn stroke_paints_each_tick_until_button_is_up() {
+        let mut e = Editor::new("....\n");
+        let mut held = clicked(&[MouseButton::Left], &[]);
+        e.paint(&held, Some(ivec2(0, 0)));
+        held.end_tick();
+        e.paint(&held, None);
+        e.paint(&held, Some(ivec2(1, 0)));
+        e.paint(&clicked(&[], &[MouseButton::Left]), Some(ivec2(2, 0)));
+        e.paint(&Input::default(), Some(ivec2(3, 0)));
+        assert_eq!(e.grid.to_text(), "###.\n");
+        e.history.undo(&mut e.grid);
+        assert_eq!(e.grid.to_text(), "....\n");
+    }
+
+    #[test]
+    fn right_button_erases_and_left_wins_when_both() {
+        let mut e = Editor::new("##\n");
+        e.brush = 'o';
+        e.paint(
+            &clicked(&[MouseButton::Right], &[MouseButton::Right]),
+            Some(ivec2(0, 0)),
+        );
+        assert_eq!(e.grid.to_text(), ".#\n");
+        let both = clicked(&[MouseButton::Left, MouseButton::Right], &[]);
+        e.paint(&both, Some(ivec2(1, 0)));
+        assert_eq!(e.grid.to_text(), ".o\n");
+    }
+
+    #[test]
+    fn press_in_tick_that_ends_stroke_starts_next() {
+        let mut e = Editor::new("...\n");
+        let mut i = clicked(&[MouseButton::Left], &[]);
+        e.paint(&i, Some(ivec2(0, 0)));
+        i.end_tick();
+        i.on_button(MouseButton::Left, Released);
+        i.on_button(MouseButton::Right, Pressed);
+        e.paint(&i, Some(ivec2(1, 0)));
+        assert_eq!(e.grid.to_text(), "#..\n");
+        i.end_tick();
+        e.paint(&i, Some(ivec2(2, 0)));
+        assert_eq!(e.grid.to_text(), "#..\n");
+        i.on_button(MouseButton::Right, Released);
+        e.paint(&i, Some(ivec2(0, 0)));
+        assert_eq!(e.grid.to_text(), "...\n");
+        e.history.undo(&mut e.grid);
+        assert_eq!(e.grid.to_text(), "##.\n");
+        e.history.undo(&mut e.grid);
+        assert_eq!(e.grid.to_text(), "...\n");
+    }
+
+    #[test]
+    fn end_stroke_commits_held_stroke() {
+        let mut e = Editor::new("..\n");
+        e.paint(&clicked(&[MouseButton::Left], &[]), Some(ivec2(0, 0)));
+        e.end_stroke();
+        let mut idle = clicked(&[MouseButton::Left], &[]);
+        idle.end_tick();
+        e.paint(&idle, Some(ivec2(1, 0)));
+        assert_eq!(e.grid.to_text(), "#.\n");
+        e.history.undo(&mut e.grid);
+        assert_eq!(e.grid.to_text(), "..\n");
+    }
 
     #[test]
     fn level01_round_trips() {

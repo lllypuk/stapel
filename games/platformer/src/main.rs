@@ -1,6 +1,9 @@
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "редактор подключается в Task 9")
+    expect(
+        dead_code,
+        reason = "отмену, размер и сохранение подключают Task 10, 12"
+    )
 )]
 mod editor;
 mod level;
@@ -11,12 +14,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use editor::Editor;
 use engine::{
     Aabb, Actor, Assets, Axis, Camera2D, Color, Commands, Config, Contact, Context, Entity, Font,
     FontData, Game, Gfx, Handle, IVec2, Input, KeyCode, Rect, Solid, Sound, SparseSet, Sprite,
     Texture, Tilemap, Vec2, World, grounded, ivec2, move_actor, move_solid, vec2,
 };
-use level::{Level, PlatformSpawn};
+use level::{Level, LevelError, PlatformSpawn};
 use levels::Watcher;
 
 const TICK_HZ: u32 = 60;
@@ -77,6 +81,8 @@ const COYOTE: u32 = 6;
 const JUMP_BUFFER: u32 = 6;
 /// Тиков на кадр анимации бега.
 const RUN_FRAME: u32 = 8;
+/// Скролл камеры редактора, пикселей за тик.
+const SCROLL: i32 = 4;
 const LEVELS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/levels");
 /// Замороженная копия первого уровня: тесты не зависят от правок `assets/levels/`.
 #[cfg(test)]
@@ -264,6 +270,8 @@ fn from_above(c: Contact) -> bool {
 const LEFT: &[KeyCode] = &[KeyCode::KeyA, KeyCode::ArrowLeft];
 const RIGHT: &[KeyCode] = &[KeyCode::KeyD, KeyCode::ArrowRight];
 const JUMP_KEYS: &[KeyCode] = &[KeyCode::Space, KeyCode::KeyW];
+const UP: &[KeyCode] = &[KeyCode::KeyW, KeyCode::ArrowUp];
+const DOWN: &[KeyCode] = &[KeyCode::KeyS, KeyCode::ArrowDown];
 
 /// Ввод игрока за тик.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -560,6 +568,9 @@ struct Platformer {
     /// Файл текущего уровня.
     path: PathBuf,
     watch: Watcher,
+    /// Мир стоит, камеру двигает редактор.
+    editing: bool,
+    editor: Editor,
 }
 
 impl Platformer {
@@ -605,10 +616,12 @@ impl Platformer {
             levels_dir: PathBuf::new(),
             path: PathBuf::new(),
             watch: Watcher::default(),
+            editing: false,
+            editor: Editor::default(),
         }
     }
 
-    /// Новый уровень с начала; ассеты и каталог остаются.
+    /// Новый уровень с начала, в игре; ассеты, каталог и редактор остаются.
     fn load(&mut self, level: Level) {
         *self = Self {
             tiles: self.tiles,
@@ -618,6 +631,7 @@ impl Platformer {
             levels_dir: mem::take(&mut self.levels_dir),
             path: mem::take(&mut self.path),
             watch: mem::take(&mut self.watch),
+            editor: mem::take(&mut self.editor),
             ..Self::new(level)
         };
     }
@@ -626,21 +640,34 @@ impl Platformer {
         self.load(self.level.clone());
     }
 
-    /// Следующий по имени уровень каталога; не прочитался или не разобрался — текущий заново.
+    /// Уровень из файла `path` с текстом `text` с начала; не разобрался — редактор с ошибкой.
+    fn open_level(&mut self, path: PathBuf, text: String) {
+        self.path = path;
+        self.editor = Editor::new(&text);
+        let level = Level::parse(&text);
+        self.watch = Watcher::new(text);
+        match level {
+            Ok(level) => self.load(level),
+            Err(e) => self.edit_broken(&e),
+        }
+    }
+
+    fn edit_broken(&mut self, e: &LevelError) {
+        self.enter_editor();
+        self.editor.error = Some(format!("{}: {e}", self.path.display()));
+    }
+
+    /// Следующий по имени уровень каталога; не прочитался — текущий заново.
     fn next_level(&mut self) {
         let next = levels::list(&self.levels_dir)
             .map_err(|e| format!("{}: {e}", self.levels_dir.display()))
             .and_then(|list| {
                 let path = levels::next(&list, &self.path)
                     .ok_or_else(|| format!("{}: нет уровней", self.levels_dir.display()))?;
-                Ok((path.to_path_buf(), read_level(path)?))
+                Ok((path.to_path_buf(), read_text(path)?))
             });
         match next {
-            Ok((path, (text, level))) => {
-                self.path = path;
-                self.watch = Watcher::new(text);
-                self.load(level);
-            }
+            Ok((path, text)) => self.open_level(path, text),
             Err(e) => {
                 log::warn!("{e}");
                 self.restart();
@@ -648,17 +675,42 @@ impl Platformer {
         }
     }
 
-    /// Изменённый на диске уровень — заново; не разобрался — играем старый.
+    /// Изменённый на диске уровень — заново.
     fn reload_changed(&mut self) {
-        let text = match self.watch.tick(&self.path) {
-            Ok(Some(text)) => text,
-            Ok(None) => return,
-            Err(e) => return log::warn!("{e}"),
-        };
-        match Level::parse(&text) {
-            Ok(level) => self.load(level),
-            Err(e) => log::warn!("{}: {e}", self.path.display()),
+        match self.watch.tick(&self.path) {
+            Ok(Some(text)) => self.open_level(self.path.clone(), text),
+            Ok(None) => {}
+            Err(e) => log::warn!("{e}"),
         }
+    }
+
+    /// Мир замирает на месте, без интерполяции.
+    fn enter_editor(&mut self) {
+        self.editing = true;
+        self.save_prev();
+    }
+
+    /// Сетка разобралась — играем её с начала; нет — остаёмся с ошибкой.
+    fn leave_editor(&mut self) {
+        self.editor.end_stroke();
+        match Level::parse(&self.editor.grid.to_text()) {
+            Ok(level) => {
+                self.editor.error = None;
+                self.load(level);
+            }
+            Err(e) => self.editor.error = Some(e.to_string()),
+        }
+    }
+
+    /// Тик редактора: скролл в пределах уровня с полем в экран, мазок по клетке под `cursor`.
+    fn edit(&mut self, input: &Input, cursor: Option<Vec2>) {
+        let held = |keys: &[KeyCode]| i32::from(keys.iter().any(|&k| input.is_down(k)));
+        let dir = ivec2(held(RIGHT) - held(LEFT), held(UP) - held(DOWN));
+        let bounds = self.editor.grid.size() * TILE;
+        self.camera.prev = self.camera.pos;
+        self.camera.pos = (self.camera.pos + dir * SCROLL).clamp(-VIEW / 2, bounds + VIEW / 2);
+        let cell = cursor.map(|p| (p / TILE as f32).floor().as_ivec2());
+        self.editor.paint(input, cell);
     }
 
     fn tick(&mut self, input: &Input) {
@@ -895,13 +947,14 @@ impl Platformer {
             .ok()
             .and_then(|list| list.into_iter().next())
             .unwrap_or_else(|| panic!("{}: нет уровней", levels_dir.display()));
-        let (text, level) = read_level(&path).unwrap_or_else(|e| panic!("{e}"));
-        Self {
+        let text = read_text(&path).unwrap_or_else(|e| panic!("{e}"));
+        let blank = Level::parse("P\n").expect("карта из одного P разбирается");
+        let mut g = Self {
             levels_dir,
-            path,
-            watch: Watcher::new(text),
-            ..Self::new(level)
-        }
+            ..Self::new(blank)
+        };
+        g.open_level(path, text);
+        g
     }
 
     /// Текстуры, шрифты, звуки и музыка.
@@ -927,11 +980,9 @@ impl Platformer {
     }
 }
 
-/// Текст и уровень из файла; ошибка — текстом с путём.
-fn read_level(path: &Path) -> Result<(String, Level), String> {
-    let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let level = Level::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok((text, level))
+/// Ошибка — текстом с путём.
+fn read_text(path: &Path) -> Result<String, String> {
+    fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 impl Game for Platformer {
@@ -940,6 +991,17 @@ impl Game for Platformer {
     }
 
     fn update(&mut self, ctx: &mut Context) {
+        if ctx.input.just_pressed(KeyCode::F1) {
+            if self.editing {
+                self.leave_editor();
+            } else {
+                self.enter_editor();
+            }
+            return;
+        }
+        if self.editing {
+            return self.edit(&ctx.input, ctx.cursor_world());
+        }
         self.tick(&ctx.input);
         if let Some(sounds) = self.sounds {
             for &sfx in &self.sfx {
@@ -2307,13 +2369,32 @@ mod tests {
         assert_eq!(coins(&g).len(), 2);
     }
 
+    /// Редактор открыт на сетке `text` с ошибкой о строке 1 файла `path`.
+    fn assert_broken(g: &Platformer, path: &Path, text: &str) {
+        assert!(g.editing);
+        assert_eq!(g.path, path);
+        assert_eq!(g.editor.grid.to_text(), text);
+        let error = g.editor.error.as_deref().unwrap();
+        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(error.contains("строка 1"), "{error}");
+    }
+
     #[test]
-    fn unparsable_next_level_restarts_current() {
+    fn unparsable_next_level_opens_editor_with_error() {
         let files = [("level01.txt", CLEAR), ("level02.txt", "P?\n")];
         let (mut g, mut ctx) = cleared_in("broken-next", &files);
         g.update(&mut ctx);
-        assert_eq!(g.path, g.levels_dir.join("level01.txt"));
-        assert_eq!(g.level, parse(CLEAR));
+        assert_broken(&g, &g.levels_dir.join("level02.txt"), "P?\n");
+        assert_eq!(g.watch.poll(&g.path), Ok(None));
+    }
+
+    #[test]
+    fn unreadable_next_level_restarts_current() {
+        let (mut g, mut ctx) = cleared_in("missing-next", &[("level01.txt", CLEAR)]);
+        g.levels_dir = g.levels_dir.join("gone");
+        g.update(&mut ctx);
+        assert!(!g.editing);
+        assert_eq!(g.path.file_name().unwrap(), "level01.txt");
         assert!(!g.cleared && !g.advance);
         assert_eq!((g.coins, g.deaths), (0, 0));
         assert_eq!(coins(&g).len(), 2);
@@ -2344,12 +2425,14 @@ mod tests {
     }
 
     #[test]
-    fn unparsable_level_file_keeps_old_level() {
+    fn unparsable_level_file_opens_editor_and_freezes_world() {
         let (mut g, mut ctx) = edited("reload-broken", "P?\n");
         for _ in 0..levels::WATCH_TICKS {
             g.update(&mut ctx);
         }
+        assert_broken(&g, &g.levels_dir.join("level01.txt"), "P?\n");
         assert_eq!(g.level, parse(SECOND));
+        g.update(&mut ctx);
         assert_eq!(g.ticks, levels::WATCH_TICKS);
     }
 
@@ -2369,9 +2452,166 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "a.txt: строка 1")]
-    fn open_unparsable_level_panics_with_path() {
-        Platformer::open(levels::temp_dir("first-broken", &[("a.txt", "P?\n")]));
+    fn open_unparsable_level_opens_editor_with_error() {
+        let dir = levels::temp_dir("first-broken", &[("a.txt", "P?\n")]);
+        let mut g = Platformer::open(dir.clone());
+        assert_broken(&g, &dir.join("a.txt"), "P?\n");
+        assert_eq!(g.levels_dir, dir);
+        assert_eq!(g.watch.poll(&g.path), Ok(None));
+    }
+
+    #[test]
+    #[should_panic(expected = "a.txt")]
+    fn open_unreadable_level_panics_with_path() {
+        let dir = levels::temp_dir("first-unreadable", &[]);
+        fs::write(dir.join("a.txt"), [0xff]).unwrap();
+        Platformer::open(dir);
+    }
+
+    use engine::{MouseButton, Shown, Viewport};
+
+    /// Игра на уровне `text` из файла, как после `open`.
+    fn editable(text: &str) -> Platformer {
+        Platformer {
+            editor: Editor::new(text),
+            ..Platformer::new(parse(text))
+        }
+    }
+
+    /// Контекст, где пиксель окна `(x, y)` — точка мира `(x, 180 − y)`.
+    fn shown_1to1() -> Context {
+        Context {
+            shown: Some(Shown {
+                camera: Camera2D {
+                    center: (VIEW / 2).as_vec2(),
+                    size: VIEW.as_vec2(),
+                },
+                viewport: Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 320.0,
+                    h: 180.0,
+                },
+            }),
+            ..Context::default()
+        }
+    }
+
+    /// Тик `update` с клавишами `keys`; ввод тика сбрасывается после.
+    fn press(g: &mut Platformer, ctx: &mut Context, keys: &[KeyCode]) {
+        for &k in keys {
+            ctx.input.on_key(k, Pressed, false);
+        }
+        g.update(ctx);
+        for &k in keys {
+            ctx.input.on_key(k, Released, false);
+        }
+        ctx.input.end_tick();
+    }
+
+    const F1: &[KeyCode] = &[KeyCode::F1];
+
+    #[test]
+    fn f1_freezes_world_and_frees_camera() {
+        let mut g = editable(&LEVEL01.replace('P', ".").replacen("...", ".P.", 1));
+        let mut ctx = Context::default();
+        press(&mut g, &mut ctx, D);
+        press(&mut g, &mut ctx, D);
+        let body = g.player.body.aabb;
+        let start = g.camera.pos;
+        press(&mut g, &mut ctx, F1);
+        assert!(g.editing);
+        assert_eq!(g.player.prev, body.min);
+        assert_eq!(g.camera.prev, start);
+        ctx.input.on_key(KeyCode::KeyD, Pressed, false);
+        ctx.input.on_key(KeyCode::ArrowUp, Pressed, false);
+        g.update(&mut ctx);
+        g.update(&mut ctx);
+        assert_eq!(g.player.body.aabb, body);
+        assert_eq!(g.ticks, 2);
+        assert_eq!(g.camera.pos, start + 2 * ivec2(SCROLL, SCROLL));
+        assert_eq!(g.camera.prev, start + ivec2(SCROLL, SCROLL));
+    }
+
+    #[test]
+    fn editor_scroll_stops_one_screen_past_level() {
+        let mut g = editable("P..\n###\n");
+        let mut ctx = Context::default();
+        press(&mut g, &mut ctx, F1);
+        let keys = [
+            [KeyCode::ArrowLeft, KeyCode::KeyS],
+            [KeyCode::KeyA, KeyCode::ArrowDown],
+            [KeyCode::ArrowRight, KeyCode::KeyW],
+        ];
+        let ends = [-VIEW / 2, -VIEW / 2, ivec2(3, 2) * TILE + VIEW / 2];
+        for (keys, end) in keys.into_iter().zip(ends) {
+            ctx.input = input(&keys);
+            for _ in 0..100 {
+                g.update(&mut ctx);
+            }
+            assert_eq!(g.camera.pos, end, "{keys:?}");
+        }
+    }
+
+    #[test]
+    fn editor_paints_cell_under_cursor_world() {
+        let mut g = editable("P...\n####\n");
+        let mut ctx = shown_1to1();
+        press(&mut g, &mut ctx, F1);
+        g.editor.brush = 'o';
+        ctx.input.on_cursor(Some(vec2(20.0, 179.0)));
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        g.update(&mut ctx);
+        ctx.input.end_tick();
+        ctx.input.on_cursor(Some(vec2(54.0, 162.0)));
+        g.update(&mut ctx);
+        ctx.input.on_button(MouseButton::Left, Released);
+        ctx.input.on_cursor(Some(vec2(60.0, 175.0)));
+        g.update(&mut ctx);
+        assert_eq!(g.editor.grid.to_text(), "P..o\n#o#o\n");
+        ctx.input.end_tick();
+        ctx.input.on_button(MouseButton::Right, Pressed);
+        ctx.input.on_button(MouseButton::Right, Released);
+        g.update(&mut ctx);
+        assert_eq!(g.editor.grid.to_text(), "P..o\n#o#.\n");
+    }
+
+    #[test]
+    fn f1_ends_stroke_and_plays_edit() {
+        let mut g = editable("P..\n...\n###\n");
+        let mut ctx = shown_1to1();
+        press(&mut g, &mut ctx, F1);
+        ctx.input.on_cursor(Some(vec2(40.0, 150.0)));
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        g.update(&mut ctx);
+        ctx.input.end_tick();
+        press(&mut g, &mut ctx, F1);
+        assert!(!g.editing && g.editor.error.is_none());
+        assert_eq!(g.level, parse("P..\n..#\n###\n"));
+        assert_eq!(g.ticks, 0);
+        press(&mut g, &mut ctx, F1);
+        ctx.input.on_cursor(Some(vec2(4.0, 150.0)));
+        g.update(&mut ctx);
+        assert_eq!(g.editor.grid.to_text(), "P..\n..#\n###\n");
+    }
+
+    #[test]
+    fn f1_with_unparsable_grid_stays_in_editor() {
+        let mut g = editable("P.\n##\n");
+        let mut ctx = shown_1to1();
+        press(&mut g, &mut ctx, F1);
+        g.editor.grid.set(ivec2(1, 1), '?');
+        press(&mut g, &mut ctx, F1);
+        assert!(g.editing);
+        assert_eq!(
+            g.editor.error.as_deref(),
+            Some("строка 1: неизвестный символ '?'")
+        );
+        assert_eq!(g.level, parse("P.\n##\n"));
+        g.editor.grid.set(ivec2(1, 1), 'o');
+        press(&mut g, &mut ctx, F1);
+        assert!(!g.editing && g.editor.error.is_none());
+        assert_eq!(g.level, parse("Po\n##\n"));
     }
 
     /// Игрок пересекает твёрдый тайл или платформу.
