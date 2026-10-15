@@ -132,7 +132,9 @@ pub struct Assets {
     fonts: Vec<FontData>,
     font_keys: HashMap<(PathBuf, u32), Handle<Font>>,
     sounds: Vec<Sound>,
-    sound_paths: HashMap<PathBuf, Handle<Sound>>,
+    /// Заменённые перезагрузкой: последний `Arc` у голоса освободился бы в аудиоколбэке.
+    retired: Vec<Sound>,
+    sound_paths: HashMap<PathBuf, Watched<Sound>>,
     sample_rate: u32,
 }
 
@@ -145,6 +147,7 @@ impl Default for Assets {
             fonts: Vec::new(),
             font_keys: HashMap::new(),
             sounds: Vec::new(),
+            retired: Vec::new(),
             sound_paths: HashMap::new(),
             sample_rate: 48_000,
         };
@@ -172,8 +175,8 @@ impl Assets {
         handle
     }
 
-    /// Перечитывает изменившиеся файлы текстур в pending под прежними хэндлами.
-    /// Версия запоминается и при ошибке: битый файл даёт один `warn` и оставляет прежнюю текстуру.
+    /// Перечитывает изменившиеся текстуры (в pending) и звуки под прежними хэндлами.
+    /// Версия запоминается и при ошибке: битый файл даёт один `warn` и оставляет прежний ресурс.
     pub fn reload_changed(&mut self) {
         for (path, w) in &mut self.paths {
             let stamp = Stamp::of(path);
@@ -190,6 +193,23 @@ impl Assets {
                     rgba,
                 }),
                 Err(e) => log::warn!("texture {}: {e}", path.display()),
+            }
+        }
+        for (path, w) in &mut self.sound_paths {
+            let stamp = Stamp::of(path);
+            if stamp == w.stamp {
+                continue;
+            }
+            w.stamp = stamp;
+            match decode::load(path, self.sample_rate) {
+                Ok(frames) => {
+                    let new = Sound {
+                        frames: frames.into(),
+                    };
+                    let old = std::mem::replace(&mut self.sounds[w.handle.index as usize], new);
+                    self.retired.push(old);
+                }
+                Err(e) => log::warn!("sound {}: {e}", path.display()),
             }
         }
     }
@@ -233,9 +253,10 @@ impl Assets {
     /// Повторный путь отдаёт прежний хэндл; ошибка чтения или формата — пустой звук и `warn`.
     pub fn load_sound(&mut self, path: impl AsRef<Path>) -> Handle<Sound> {
         let path = path.as_ref();
-        if let Some(&h) = self.sound_paths.get(path) {
-            return h;
+        if let Some(w) = self.sound_paths.get(path) {
+            return w.handle;
         }
+        let stamp = Stamp::of(path);
         let frames = decode::load(path, self.sample_rate).unwrap_or_else(|e| {
             log::warn!("sound {}: {e}", path.display());
             Vec::new()
@@ -248,7 +269,8 @@ impl Assets {
         self.sounds.push(Sound {
             frames: frames.into(),
         });
-        self.sound_paths.insert(path.to_path_buf(), handle);
+        self.sound_paths
+            .insert(path.to_path_buf(), Watched { handle, stamp });
         handle
     }
 
@@ -337,6 +359,7 @@ fn checkerboard() -> (u32, u32, Vec<u8>) {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("engine-assets-{}-{name}", std::process::id()))
@@ -655,6 +678,64 @@ mod tests {
         let mut assets = Assets::default();
         assets.load_sound(SINE);
         assets.set_sample_rate(44_100);
+    }
+
+    fn write_wav(path: &Path, samples: &[i16]) {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut w = hound::WavWriter::create(path, spec).unwrap();
+        for &s in samples {
+            w.write_sample(s).unwrap();
+        }
+        w.finalize().unwrap();
+    }
+
+    #[test]
+    fn changed_sound_replaces_frames_and_retires_old() {
+        let path = temp_path("reload.wav");
+        write_wav(&path, &[0]);
+        let mut assets = Assets::default();
+        let h = assets.load_sound(&path);
+        let old = assets.sound(h).frames.clone();
+        write_wav(&path, &[16384, 0]);
+        set_mtime(&path, 1000);
+        assets.reload_changed();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(&*assets.sound(h).frames, [0.5, 0.5, 0.0, 0.0]);
+        assert_eq!(&*old, [0.0, 0.0]);
+        assert_eq!(Arc::strong_count(&old), 2);
+    }
+
+    #[test]
+    fn broken_sound_reload_keeps_old_sound() {
+        let path = temp_path("broken-reload.wav");
+        write_wav(&path, &[16384]);
+        let mut assets = Assets::default();
+        let h = assets.load_sound(&path);
+        std::fs::write(&path, b"RIFF not a wav").unwrap();
+        set_mtime(&path, 1000);
+        assets.reload_changed();
+        let stamp = Stamp::of(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(&*assets.sound(h).frames, [0.5, 0.5]);
+        assert!(assets.retired.is_empty());
+        assert!(stamp.is_some());
+        assert_eq!(assets.sound_paths[&path].stamp, stamp);
+    }
+
+    #[test]
+    fn unchanged_sound_is_not_reloaded() {
+        let path = temp_path("unchanged.wav");
+        write_wav(&path, &[0]);
+        let mut assets = Assets::default();
+        assets.load_sound(&path);
+        assets.reload_changed();
+        std::fs::remove_file(&path).unwrap();
+        assert!(assets.retired.is_empty());
     }
 
     #[test]
