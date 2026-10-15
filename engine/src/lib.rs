@@ -14,6 +14,8 @@ pub mod ecs;
 pub mod frame;
 /// Клавиатура по тикам.
 pub mod input;
+/// Целочисленные коллизии: AABB и тайловая карта.
+pub mod physics;
 /// Поверхность окна и рендер кадра.
 pub mod renderer;
 /// Спрайты и их батчинг в инстансы.
@@ -31,8 +33,9 @@ pub use camera::{Camera2D, Viewport, letterbox};
 pub use clock::FixedClock;
 pub use ecs::{Commands, Entity, SparseSet, World};
 pub use frame::{Color, Context, Game, Gfx, Time, step_frame};
-pub use glam::{Vec2, vec2};
+pub use glam::{IVec2, Vec2, ivec2, vec2};
 pub use input::Input;
+pub use physics::{Aabb, Tilemap};
 pub use renderer::{RenderError, Renderer};
 pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;

@@ -84,9 +84,9 @@
 - Create: `engine/src/physics/mod.rs`, `engine/src/physics/aabb.rs`, `engine/src/physics/tilemap.rs`
 - Modify: `engine/src/lib.rs`
 
-- [ ] тесты: `overlaps` — пересечение, касание гранью и углом не пересечение; `Tilemap` — твёрдая клетка, отрицательные координаты через `div_euclid`, AABB ровно до границы клетки не задевает соседнюю (`max − 1`), вне карты слева/справа твёрдое, сверху/снизу пусто
-- [ ] `Aabb`, `Tilemap::new`, `overlaps_solid`
-- [ ] тесты — зелёные
+- [x] тесты: `overlaps` — пересечение, касание гранью и углом не пересечение; `Tilemap` — твёрдая клетка, отрицательные координаты через `div_euclid`, AABB ровно до границы клетки не задевает соседнюю (`max − 1`), вне карты слева/справа твёрдое, сверху/снизу пусто
+- [x] `Aabb`, `Tilemap::new`, `overlaps_solid`
+- [x] тесты — зелёные
 
 ### Task 2: `move_actor`, сенсоры, `grounded`
 
