@@ -35,7 +35,9 @@ pub use ecs::{Commands, Entity, SparseSet, World};
 pub use frame::{Color, Context, Game, Gfx, Time, step_frame};
 pub use glam::{IVec2, Vec2, ivec2, vec2};
 pub use input::Input;
-pub use physics::{Aabb, Actor, Axis, Contact, Hits, Tilemap, grounded, move_actor};
+pub use physics::{
+    Aabb, Actor, Axis, Contact, Hits, Solid, Tilemap, grounded, move_actor, move_solid,
+};
 pub use renderer::{RenderError, Renderer};
 pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;
