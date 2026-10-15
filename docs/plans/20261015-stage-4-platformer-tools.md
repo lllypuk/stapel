@@ -200,11 +200,11 @@
 **Files:**
 - Modify: `games/platformer/src/editor.rs`, `games/platformer/src/main.rs`
 
-- [ ] тесты `EditorCmd`: `Pick(ch)`; `Open(level)` — история очищена, редактор чистый; `New` — `levelNN.txt` следующего NN с шаблоном, список обновлён, открыт; `Resize(..)` — через историю; `Save`; `Undo`; `LoadFromDisk`
-- [ ] тесты: `Open` и `New` при `dirty` — отказ с текстом «сохраните или отмените»
-- [ ] очередь в `update`
-- [ ] `docs/design.md`: «смена уровня при `dirty` запрещена» → тест
-- [ ] `make check`
+- [x] тесты `EditorCmd`: `Pick(ch)`; `Open(level)` — история очищена, редактор чистый; `New` — `levelNN.txt` следующего NN с шаблоном, список обновлён, открыт; `Resize(..)` — через историю; `Save`; `Undo`; `LoadFromDisk`
+- [x] тесты: `Open` и `New` при `dirty` — отказ с текстом «сохраните или отмените»
+- [x] очередь в `update`
+- [x] `docs/design.md`: «смена уровня при `dirty` запрещена» → тест
+- [x] `make check`
 
 ### Task 13: Панель на egui
 

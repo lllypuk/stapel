@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, iter};
+use std::{collections::VecDeque, iter, path::PathBuf};
 
 use engine::{Color, Gfx, Handle, IVec2, Input, MouseButton, Sprite, Texture, Vec2, ivec2, vec2};
 
@@ -217,6 +217,27 @@ impl History {
     }
 }
 
+/// Изменение размера сетки: столбец справа, строка сверху.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Resize {
+    AddColumn,
+    RemoveColumn,
+    AddRow,
+    RemoveRow,
+}
+
+/// Команда панели редактора; разбирает следующий `update`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum EditorCmd {
+    Pick(char),
+    Open(PathBuf),
+    New,
+    Resize(Resize),
+    Save,
+    Undo,
+    LoadFromDisk,
+}
+
 /// Кнопка мазка и сетка до него.
 struct Stroke {
     button: MouseButton,
@@ -234,7 +255,7 @@ pub(crate) struct Editor {
     pub(crate) error: Option<String>,
     /// Файл изменился на диске при `dirty`; держится до загрузки с диска или сохранения.
     pub(crate) changed_on_disk: bool,
-    /// Последняя ошибка записи или чтения файла уровня.
+    /// Последняя ошибка записи или чтения файла уровня или отказ сменить уровень.
     pub(crate) file_error: Option<String>,
 }
 
@@ -282,6 +303,19 @@ impl Editor {
     pub(crate) fn undo(&mut self) {
         self.end_stroke();
         self.history.undo(&mut self.grid);
+    }
+
+    /// Начатый мазок кончается; размер — одним снимком в историю.
+    pub(crate) fn resize(&mut self, resize: Resize) {
+        self.end_stroke();
+        let before = self.grid.clone();
+        match resize {
+            Resize::AddColumn => self.grid.add_column(),
+            Resize::RemoveColumn => self.grid.remove_column(),
+            Resize::AddRow => self.grid.add_row(),
+            Resize::RemoveRow => self.grid.remove_row(),
+        }
+        self.history.commit(before, &self.grid);
     }
 
     /// Мазок по снимку тика: красит `cell` каждый тик, пока кнопка `down`.
@@ -591,6 +625,26 @@ mod tests {
         assert!(e.dirty());
         e.saved();
         assert!(!e.dirty() && !e.changed_on_disk && e.file_error.is_none());
+    }
+
+    #[test]
+    fn resize_ends_stroke_and_undoes_in_one_step() {
+        let mut e = Editor::new("..\n");
+        let mut held = clicked(&[MouseButton::Left], &[]);
+        e.paint(&held, Some(ivec2(0, 0)));
+        e.resize(Resize::AddColumn);
+        held.end_tick();
+        e.paint(&held, Some(ivec2(2, 0)));
+        assert_eq!(e.grid.to_text(), "#..\n");
+        e.resize(Resize::AddRow);
+        e.resize(Resize::RemoveRow);
+        e.resize(Resize::RemoveColumn);
+        assert_eq!(e.grid.to_text(), "#.\n");
+        e.resize(Resize::RemoveRow);
+        for text in ["#..\n", "...\n#..\n", "#..\n", "#.\n", "..\n", "..\n"] {
+            e.undo();
+            assert_eq!(e.grid.to_text(), text);
+        }
     }
 
     #[test]

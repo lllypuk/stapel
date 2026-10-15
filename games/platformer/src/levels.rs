@@ -3,17 +3,50 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Файлы `*.txt` каталога по имени.
-pub(crate) fn list(dir: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut levels = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_file() && path.extension().is_some_and(|e| e == "txt") {
-            levels.push(path);
+/// Новый уровень: 20×10, пол и игрок.
+pub(crate) const TEMPLATE: &str = concat!(
+    "....................\n",
+    "....................\n",
+    "....................\n",
+    "....................\n",
+    "....................\n",
+    "....................\n",
+    "....................\n",
+    "....................\n",
+    ".P..................\n",
+    "####################\n",
+);
+
+/// Файлы `*.txt` каталога по имени; ошибка — текстом с путём.
+pub(crate) fn list(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let read = || -> io::Result<Vec<PathBuf>> {
+        let mut levels = Vec::new();
+        for entry in fs::read_dir(dir)? {
+            let path = entry?.path();
+            if path.is_file() && path.extension().is_some_and(|e| e == "txt") {
+                levels.push(path);
+            }
         }
-    }
-    levels.sort();
-    Ok(levels)
+        levels.sort();
+        Ok(levels)
+    };
+    read().map_err(|e| format!("{}: {e}", dir.display()))
+}
+
+/// `levelNN.txt` после наибольшего NN списка; без таких — `level01.txt`.
+pub(crate) fn new_name(levels: &[PathBuf]) -> String {
+    let nn = levels
+        .iter()
+        .filter_map(|p| {
+            let name = p.file_name()?.to_str()?;
+            name.strip_prefix("level")?
+                .strip_suffix(".txt")?
+                .parse::<u32>()
+                .ok()
+        })
+        .max()
+        .map_or(1, |n| n + 1);
+    format!("level{nn:02}.txt")
 }
 
 /// Уровень после `current`; после последнего и вне списка — первый.
@@ -121,7 +154,17 @@ mod tests {
             list(&dir).unwrap(),
             [dir.join("level01.txt"), dir.join("level02.txt")]
         );
-        assert!(list(&dir.join("missing")).is_err());
+        assert!(list(&dir.join("missing")).unwrap_err().contains("missing"));
+    }
+
+    #[test]
+    fn new_name_follows_largest_number() {
+        let names = |names: &[&str]| names.iter().map(PathBuf::from).collect::<Vec<_>>();
+        assert_eq!(new_name(&[]), "level01.txt");
+        assert_eq!(new_name(&names(&["a.txt", "level.txt"])), "level01.txt");
+        let gap = names(&["d/level03.txt", "d/level01.txt", "d/level7.md"]);
+        assert_eq!(new_name(&gap), "level04.txt");
+        assert_eq!(new_name(&names(&["level99.txt"])), "level100.txt");
     }
 
     #[test]

@@ -1,10 +1,4 @@
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "отмену, размер и сохранение подключают Task 10, 12"
-    )
-)]
+#[cfg_attr(not(test), expect(dead_code, reason = "команды шлёт панель, Task 13"))]
 mod editor;
 mod level;
 mod levels;
@@ -14,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use editor::Editor;
+use editor::{Editor, EditorCmd};
 use engine::{
     Aabb, Actor, Assets, Axis, Camera2D, Color, Commands, Config, Contact, Context, Entity, Font,
     FontData, Game, Gfx, Handle, IVec2, Input, KeyCode, Rect, Solid, Sound, SparseSet, Sprite,
@@ -570,13 +564,20 @@ struct Platformer {
     hud: Option<Hud>,
     sounds: Option<Sounds>,
     levels_dir: PathBuf,
+    /// Уровни каталога по имени.
+    levels: Vec<PathBuf>,
     /// Файл текущего уровня.
     path: PathBuf,
     watch: Watcher,
     /// Мир стоит, камеру двигает редактор.
     editing: bool,
     editor: Editor,
+    /// Команды панели до следующего `update`.
+    queue: Vec<EditorCmd>,
 }
+
+/// Отказ сменить уровень при `dirty`.
+const UNSAVED: &str = "есть несохранённые правки: сохраните или отмените их";
 
 impl Platformer {
     fn new(level: Level) -> Self {
@@ -619,14 +620,16 @@ impl Platformer {
             hud: None,
             sounds: None,
             levels_dir: PathBuf::new(),
+            levels: Vec::new(),
             path: PathBuf::new(),
             watch: Watcher::default(),
             editing: false,
             editor: Editor::default(),
+            queue: Vec::new(),
         }
     }
 
-    /// Новый уровень с начала, в игре; ассеты, каталог и редактор остаются.
+    /// Новый уровень с начала, в игре; ассеты, каталог, список уровней и редактор остаются.
     fn load(&mut self, level: Level) {
         *self = Self {
             tiles: self.tiles,
@@ -634,6 +637,7 @@ impl Platformer {
             hud: self.hud,
             sounds: self.sounds,
             levels_dir: mem::take(&mut self.levels_dir),
+            levels: mem::take(&mut self.levels),
             path: mem::take(&mut self.path),
             watch: mem::take(&mut self.watch),
             editor: mem::take(&mut self.editor),
@@ -648,7 +652,7 @@ impl Platformer {
     /// Уровень из файла `path` с текстом `text` с начала; не разобрался — редактор с ошибкой.
     fn open_level(&mut self, path: PathBuf, text: String) {
         self.path = path;
-        self.editor = Editor::new(&text);
+        self.editor.replace(&text);
         let level = Level::parse(&text);
         self.watch = Watcher::new(text);
         match level {
@@ -685,10 +689,6 @@ impl Platformer {
     }
 
     /// Сетка — файл с диска; несохранённые правки теряются.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "зовёт EditorCmd::LoadFromDisk, Task 12")
-    )]
     fn load_from_disk(&mut self) {
         match read_text(&self.path) {
             Ok(text) => {
@@ -701,13 +701,11 @@ impl Platformer {
 
     /// Следующий по имени уровень каталога; не прочитался — текущий заново.
     fn next_level(&mut self) {
-        let next = levels::list(&self.levels_dir)
-            .map_err(|e| format!("{}: {e}", self.levels_dir.display()))
-            .and_then(|list| {
-                let path = levels::next(&list, &self.path)
-                    .ok_or_else(|| format!("{}: нет уровней", self.levels_dir.display()))?;
-                Ok((path.to_path_buf(), read_text(path)?))
-            });
+        let next = levels::list(&self.levels_dir).and_then(|list| {
+            let path = levels::next(&list, &self.path)
+                .ok_or_else(|| format!("{}: нет уровней", self.levels_dir.display()))?;
+            Ok((path.to_path_buf(), read_text(path)?))
+        });
         match next {
             Ok((path, text)) => self.open_level(path, text),
             Err(e) => {
@@ -715,6 +713,47 @@ impl Platformer {
                 self.restart();
             }
         }
+    }
+
+    /// Команда панели; смена уровня при `dirty` — отказ текстом.
+    fn apply(&mut self, cmd: EditorCmd) {
+        let dirty = self.editor.dirty();
+        match cmd {
+            EditorCmd::Pick(ch) => self.editor.brush = ch,
+            EditorCmd::Open(_) | EditorCmd::New if dirty => {
+                self.editor.file_error = Some(UNSAVED.into());
+            }
+            EditorCmd::Open(path) => self.edit_level(path),
+            EditorCmd::New => match self.create_level() {
+                Ok(path) => self.edit_level(path),
+                Err(e) => self.editor.file_error = Some(e),
+            },
+            EditorCmd::Resize(r) => self.editor.resize(r),
+            EditorCmd::Save => self.save(),
+            EditorCmd::Undo => self.editor.undo(),
+            EditorCmd::LoadFromDisk => self.load_from_disk(),
+        }
+    }
+
+    /// Уровень `path` в редакторе; не прочитался — сетка прежняя, ошибка текстом.
+    fn edit_level(&mut self, path: PathBuf) {
+        match read_text(&path) {
+            Ok(text) => {
+                self.open_level(path, text);
+                self.enter_editor();
+            }
+            Err(e) => self.editor.file_error = Some(e),
+        }
+    }
+
+    /// Файл `levels::TEMPLATE` со следующим номером; список уровней — заново.
+    fn create_level(&mut self) -> Result<PathBuf, String> {
+        let path = self
+            .levels_dir
+            .join(levels::new_name(&levels::list(&self.levels_dir)?));
+        levels::write(&path, levels::TEMPLATE)?;
+        self.levels = levels::list(&self.levels_dir)?;
+        Ok(path)
     }
 
     /// Изменённый на диске уровень: в игре — заново, в чистом редакторе — сетка, в грязном — флаг.
@@ -996,14 +1035,16 @@ impl Platformer {
 
     /// Первый уровень каталога; уровни лежат в репозитории, поэтому без них — паника с путём.
     fn open(levels_dir: PathBuf) -> Self {
-        let path = levels::list(&levels_dir)
-            .ok()
-            .and_then(|list| list.into_iter().next())
+        let levels = levels::list(&levels_dir).unwrap_or_default();
+        let path = levels
+            .first()
+            .cloned()
             .unwrap_or_else(|| panic!("{}: нет уровней", levels_dir.display()));
         let text = read_text(&path).unwrap_or_else(|e| panic!("{e}"));
         let blank = Level::parse("P\n").expect("карта из одного P разбирается");
         let mut g = Self {
             levels_dir,
+            levels,
             ..Self::new(blank)
         };
         g.open_level(path, text);
@@ -1044,6 +1085,9 @@ impl Game for Platformer {
     }
 
     fn update(&mut self, ctx: &mut Context) {
+        for cmd in mem::take(&mut self.queue) {
+            self.apply(cmd);
+        }
         if ctx.input.just_pressed(KeyCode::F1) {
             if self.editing {
                 self.leave_editor();
@@ -2826,6 +2870,106 @@ mod tests {
         g.load_from_disk();
         assert_eq!(g.editor.grid.to_text(), mine);
         assert!(g.editor.file_error.clone().unwrap().contains("level01.txt"));
+    }
+
+    /// Тик `update` с командами панели `cmds`.
+    fn send(g: &mut Platformer, ctx: &mut Context, cmds: &[EditorCmd]) {
+        g.queue.extend_from_slice(cmds);
+        g.update(ctx);
+        assert_eq!(g.queue, []);
+    }
+
+    #[test]
+    fn editor_cmds_edit_save_and_reload_grid() {
+        use editor::Resize::{AddColumn, AddRow};
+        let (mut g, mut ctx) = editing_in("cmds");
+        send(&mut g, &mut ctx, &[EditorCmd::Pick('o')]);
+        assert_eq!(g.editor.brush, 'o');
+        send(&mut g, &mut ctx, &[EditorCmd::Resize(AddColumn)]);
+        assert_eq!(g.editor.grid.to_text(), "P...\n###.\n");
+        assert!(g.editor.dirty());
+        send(&mut g, &mut ctx, &[EditorCmd::Undo]);
+        assert_eq!(g.editor.grid.to_text(), SECOND);
+        send(
+            &mut g,
+            &mut ctx,
+            &[EditorCmd::Resize(AddRow), EditorCmd::Save],
+        );
+        assert_eq!(fs::read_to_string(&g.path).unwrap(), "...\nP..\n###\n");
+        assert!(!g.editor.dirty());
+        fs::write(&g.path, CLEAR).unwrap();
+        send(&mut g, &mut ctx, &[EditorCmd::LoadFromDisk]);
+        assert_eq!(g.editor.grid.to_text(), CLEAR);
+        assert!(g.editing && !g.editor.dirty());
+    }
+
+    #[test]
+    fn open_cmd_edits_level_with_fresh_history() {
+        let (mut g, mut ctx) = editing_in("open");
+        fs::write(g.levels_dir.join("level02.txt"), CLEAR).unwrap();
+        g.editor.brush = 'o';
+        send(
+            &mut g,
+            &mut ctx,
+            &[EditorCmd::Resize(editor::Resize::AddRow), EditorCmd::Save],
+        );
+        let second = g.levels_dir.join("level02.txt");
+        send(&mut g, &mut ctx, &[EditorCmd::Open(second.clone())]);
+        assert!(g.editing);
+        assert_eq!(g.path, second);
+        assert_eq!(g.level, parse(CLEAR));
+        assert_eq!(g.editor.grid.to_text(), CLEAR);
+        assert_eq!(g.editor.brush, 'o');
+        assert!(!g.editor.dirty());
+        assert_eq!(g.watch.poll(&g.path), Ok(None));
+        send(&mut g, &mut ctx, &[EditorCmd::Undo]);
+        assert_eq!(g.editor.grid.to_text(), CLEAR);
+        let gone = g.levels_dir.join("gone.txt");
+        send(&mut g, &mut ctx, &[EditorCmd::Open(gone)]);
+        assert_eq!(g.path, second);
+        assert!(g.editor.file_error.clone().unwrap().contains("gone.txt"));
+    }
+
+    #[test]
+    fn new_cmd_creates_and_edits_next_level_from_template() {
+        let (mut g, mut ctx) = editing_in("new");
+        fs::write(g.levels_dir.join("level03.txt"), CLEAR).unwrap();
+        send(&mut g, &mut ctx, &[EditorCmd::New]);
+        let created = g.levels_dir.join("level04.txt");
+        assert_eq!(fs::read_to_string(&created).unwrap(), levels::TEMPLATE);
+        assert_eq!(g.editor.grid.size(), ivec2(20, 10));
+        assert_eq!(g.level, parse(levels::TEMPLATE));
+        assert_eq!(g.levels, levels::list(&g.levels_dir).unwrap());
+        assert_eq!(g.levels.last(), Some(&created));
+        assert_eq!(g.levels.len(), 3);
+        assert_eq!(g.path, created);
+        assert!(g.editing && !g.editor.dirty());
+        g.levels_dir = g.levels_dir.join("gone");
+        send(&mut g, &mut ctx, &[EditorCmd::New]);
+        assert_eq!(g.path, created);
+        assert!(g.editor.file_error.clone().unwrap().contains("gone"));
+    }
+
+    #[test]
+    fn open_and_new_refuse_while_dirty() {
+        let (mut g, mut ctx) = editing_in("refuse");
+        let other = g.levels_dir.join("level02.txt");
+        fs::write(&other, CLEAR).unwrap();
+        send(
+            &mut g,
+            &mut ctx,
+            &[EditorCmd::Resize(editor::Resize::AddColumn)],
+        );
+        let mine = g.editor.grid.to_text();
+        for cmd in [EditorCmd::Open(other), EditorCmd::New] {
+            g.editor.file_error = None;
+            send(&mut g, &mut ctx, &[cmd]);
+            let error = g.editor.file_error.clone().unwrap();
+            assert!(error.contains("сохраните или отмените"), "{error}");
+            assert_eq!(g.path.file_name().unwrap(), "level01.txt");
+            assert_eq!(g.editor.grid.to_text(), mine);
+            assert_eq!(fs::read_dir(&g.levels_dir).unwrap().count(), 2);
+        }
     }
 
     /// Игрок пересекает твёрдый тайл или платформу.
