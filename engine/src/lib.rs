@@ -14,7 +14,7 @@ pub mod clock;
 pub mod ecs;
 /// Контекст кадра, трейт `Game` и шаг кадра.
 pub mod frame;
-/// Клавиатура по тикам.
+/// Клавиатура и мышь по тикам.
 pub mod input;
 /// Целочисленные коллизии и движение тел: AABB, тайловая карта, Actor.
 pub mod physics;
@@ -46,7 +46,7 @@ pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;
 pub use stats::{FrameReport, FrameStats, RateCounter};
 pub use text::{FontData, Glyph};
-pub use winit::event::ElementState;
+pub use winit::event::{ElementState, MouseButton};
 pub use winit::keyboard::KeyCode;
 
 use winit::event_loop::{ControlFlow, EventLoop};

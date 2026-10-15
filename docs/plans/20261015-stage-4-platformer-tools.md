@@ -80,10 +80,10 @@
 **Files:**
 - Modify: `engine/src/input.rs`, `engine/src/lib.rs`, `engine/src/app.rs`
 
-- [ ] тесты: нажатие кнопки — один тик `just_pressed`; клик между тиками — `just_pressed` без `down`; отпускание без нажатия — без изменений; `focus_lost` снимает `down` кнопок; курсор `None` при уходе
-- [ ] `on_button`, `on_cursor`, запросы; реэкспорт `MouseButton`
-- [ ] `app.rs`: `MouseInput`, `CursorMoved`, `CursorLeft` → `Input` (пока без egui)
-- [ ] `make check`
+- [x] тесты: нажатие кнопки — один тик `just_pressed`; клик между тиками — `just_pressed` без `down`; отпускание без нажатия — без изменений; `focus_lost` снимает `down` кнопок; курсор `None` при уходе
+- [x] `on_button`, `on_cursor`, запросы; реэкспорт `MouseButton`
+- [x] `app.rs`: `MouseInput`, `CursorMoved`, `CursorLeft` → `Input` (пока без egui)
+- [x] `make check`
 
 ### Task 2: Курсор в мир по показанному кадру
 

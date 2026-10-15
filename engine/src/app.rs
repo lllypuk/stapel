@@ -9,7 +9,9 @@ use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
 use crate::audio::device;
-use crate::{Config, Context, FixedClock, FrameStats, Game, RateCounter, Renderer, step_frame};
+use crate::{
+    Config, Context, FixedClock, FrameStats, Game, RateCounter, Renderer, Vec2, step_frame,
+};
 
 /// Ниже 4 FPS симуляция замедляется, а не догоняет лавиной тиков.
 pub(crate) const MAX_FRAME: Duration = Duration::from_millis(250);
@@ -93,6 +95,12 @@ impl<G: Game> ApplicationHandler for App<G> {
                     r.ctx.input.on_key(code, event.state, event.repeat);
                 }
             }
+            WindowEvent::MouseInput { state, button, .. } => r.ctx.input.on_button(button, state),
+            WindowEvent::CursorMoved { position, .. } => {
+                let p = position.cast::<f32>();
+                r.ctx.input.on_cursor(Some(Vec2::new(p.x, p.y)));
+            }
+            WindowEvent::CursorLeft { .. } => r.ctx.input.on_cursor(None),
             WindowEvent::Focused(false) => r.ctx.input.focus_lost(),
             WindowEvent::Resized(size) => {
                 r.renderer.resize(size);
