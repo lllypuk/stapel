@@ -1,8 +1,8 @@
 use std::fmt;
 
 use engine::{
-    Aabb, Axis, Camera2D, Color, Config, Context, Game, Gfx, Handle, IVec2, Rect, Sprite, Texture,
-    Vec2, ivec2, vec2,
+    Aabb, Actor, Axis, Camera2D, Color, Config, Context, Game, Gfx, Handle, IVec2, Input, KeyCode,
+    Rect, Sprite, Texture, Tilemap, Vec2, grounded, ivec2, move_actor, vec2,
 };
 
 const TICK_HZ: u32 = 60;
@@ -17,6 +17,28 @@ const TILES_ATLAS: Vec2 = vec2(360.0, 162.0);
 const GRASS: IVec2 = ivec2(2, 0);
 const DIRT: IVec2 = ivec2(2, 6);
 const TILE_LAYER: i32 = 1;
+const CHARS_ATLAS: Vec2 = vec2(216.0, 72.0);
+/// Сторона кадра персонажа.
+const CHAR: i32 = 24;
+/// Кадры игрока в атласе персонажей; нарисован лицом влево.
+const IDLE: IVec2 = ivec2(0, 0);
+const WALK: IVec2 = ivec2(1, 0);
+const PLAYER_LAYER: i32 = 3;
+const PLAYER_SIZE: IVec2 = ivec2(12, 16);
+/// Скорости — в px/тик, ускорения — в px/тик².
+const RUN_MAX: f32 = 1.5;
+const RUN_ACCEL: f32 = 0.1;
+const GRAVITY: f32 = 0.25;
+const JUMP: f32 = 4.5;
+const FALL_MAX: f32 = 5.0;
+/// Множитель скорости при отпускании прыжка; через `min` подъём режет, а падение — нет.
+const JUMP_CUT: f32 = 0.5;
+/// Сколько тиков после края прыжок ещё срабатывает.
+const COYOTE: u32 = 6;
+/// За сколько тиков до приземления нажатие прыжка ещё срабатывает.
+const JUMP_BUFFER: u32 = 6;
+/// Тиков на кадр анимации бега.
+const RUN_FRAME: u32 = 8;
 const LEVEL1: &str = include_str!("../assets/level1.txt");
 
 /// Ошибка разбора карты; `line` — с единицы, первая строка — верх.
@@ -167,6 +189,148 @@ fn lerp_round(prev: IVec2, cur: IVec2, alpha: f32) -> Vec2 {
     prev.as_vec2().lerp(cur.as_vec2(), alpha).round()
 }
 
+/// Звуковое событие тика.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sfx {
+    Jump,
+}
+
+const LEFT: &[KeyCode] = &[KeyCode::KeyA, KeyCode::ArrowLeft];
+const RIGHT: &[KeyCode] = &[KeyCode::KeyD, KeyCode::ArrowRight];
+const JUMP_KEYS: &[KeyCode] = &[KeyCode::Space, KeyCode::KeyW];
+
+/// Ввод игрока за тик.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Controls {
+    /// `-1`, `0` или `1`.
+    run: i32,
+    jump: bool,
+    /// Отпущены все клавиши прыжка.
+    release: bool,
+}
+
+impl Controls {
+    fn read(input: &Input) -> Self {
+        let any =
+            |keys: &[KeyCode], f: fn(&Input, KeyCode) -> bool| keys.iter().any(|&k| f(input, k));
+        Self {
+            run: i32::from(any(RIGHT, Input::is_down)) - i32::from(any(LEFT, Input::is_down)),
+            jump: any(JUMP_KEYS, Input::just_pressed),
+            release: any(JUMP_KEYS, Input::just_released) && !any(JUMP_KEYS, Input::is_down),
+        }
+    }
+}
+
+/// `v`, сдвинутое к `target` не больше чем на `step`.
+fn approach(v: f32, target: f32, step: f32) -> f32 {
+    v + (target - v).clamp(-step, step)
+}
+
+struct Player {
+    body: Actor,
+    /// `body.aabb.min` на начало тика.
+    prev: IVec2,
+    vel: Vec2,
+    /// `1` — вправо, `-1` — влево.
+    facing: i32,
+    /// Тиков с последнего тика на земле; `0` — на земле.
+    air: u32,
+    /// Тиков с нажатия прыжка, ещё не потраченного.
+    since_jump: u32,
+    /// Тиков бега по земле подряд.
+    run_ticks: u32,
+}
+
+impl Player {
+    /// Стоит на дне клетки `cell`, по центру.
+    fn spawn(cell: IVec2) -> Self {
+        let min = cell * TILE + ivec2((TILE - PLAYER_SIZE.x) / 2, 0);
+        Self {
+            body: Actor {
+                aabb: Aabb {
+                    min,
+                    size: PLAYER_SIZE,
+                },
+                remainder: Vec2::ZERO,
+            },
+            prev: min,
+            vel: Vec2::ZERO,
+            facing: 1,
+            air: 0,
+            since_jump: u32::MAX,
+            run_ticks: 0,
+        }
+    }
+
+    fn step(&mut self, map: &Tilemap, c: Controls, sfx: &mut Vec<Sfx>) {
+        self.air = if grounded(map, &[], &self.body.aabb) {
+            0
+        } else {
+            self.air.saturating_add(1)
+        };
+        self.since_jump = if c.jump {
+            0
+        } else {
+            self.since_jump.saturating_add(1)
+        };
+        if c.run != 0 {
+            self.facing = c.run;
+        }
+        self.vel.x = approach(self.vel.x, c.run as f32 * RUN_MAX, RUN_ACCEL);
+        self.vel.y = (self.vel.y - GRAVITY).max(-FALL_MAX);
+        if self.air <= COYOTE && self.since_jump <= JUMP_BUFFER {
+            self.vel.y = JUMP;
+            self.air = u32::MAX;
+            self.since_jump = u32::MAX;
+            sfx.push(Sfx::Jump);
+        }
+        if c.release {
+            self.vel.y = self.vel.y.min(self.vel.y * JUMP_CUT);
+        }
+        let hits = move_actor(map, &[], &mut self.body, self.vel, &[], &mut Vec::new());
+        if hits.x {
+            self.vel.x = 0.0;
+        }
+        if hits.y {
+            self.vel.y = 0.0;
+        }
+        self.run_ticks = if self.air == 0 && self.vel.x != 0.0 {
+            self.run_ticks + 1
+        } else {
+            0
+        };
+    }
+
+    fn center(&self) -> IVec2 {
+        self.body.aabb.min + self.body.aabb.size / 2
+    }
+
+    fn frame(&self) -> IVec2 {
+        if self.air > 0 || (self.run_ticks / RUN_FRAME) % 2 == 1 {
+            WALK
+        } else {
+            IDLE
+        }
+    }
+
+    /// Кадр 24×24 низом на низ хитбокса, по центру; края на целых пикселях.
+    fn sprite(&self, texture: Handle<Texture>, alpha: f32) -> Sprite {
+        let min = lerp_round(self.prev, self.body.aabb.min, alpha);
+        let mut uv = atlas_uv(self.frame(), CHAR, CHARS_ATLAS);
+        if self.facing == 1 {
+            std::mem::swap(&mut uv.min.x, &mut uv.max.x);
+        }
+        Sprite {
+            texture,
+            pos: min + vec2(PLAYER_SIZE.x as f32 / 2.0, CHAR as f32 / 2.0),
+            size: Vec2::splat(CHAR as f32),
+            uv,
+            layer: PLAYER_LAYER,
+            ..Default::default()
+        }
+    }
+}
+
 /// Центр камеры в мировых пикселях на конец и начало тика.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Follow {
@@ -192,26 +356,41 @@ impl Follow {
 
 struct Platformer {
     level: Level,
+    map: Tilemap,
+    player: Player,
     camera: Follow,
+    /// События тика; звучат в `update`.
+    sfx: Vec<Sfx>,
     tiles: Handle<Texture>,
+    chars: Handle<Texture>,
 }
 
 impl Platformer {
     fn new(level: Level) -> Self {
+        let map = Tilemap::new(TILE, level.size.x, level.size.y, level.solid.clone());
+        let player = Player::spawn(level.player);
         let mut camera = Follow::at(level.bounds() / 2);
-        camera.follow(cell_center(level.player).as_ivec2(), level.bounds());
+        camera.follow(player.center(), level.bounds());
         camera.prev = camera.pos;
         Self {
             level,
+            map,
+            player,
             camera,
+            sfx: Vec::new(),
             tiles: Handle::WHITE,
+            chars: Handle::WHITE,
         }
     }
 
-    fn tick(&mut self) {
+    fn tick(&mut self, input: &Input) {
+        self.sfx.clear();
         self.camera.prev = self.camera.pos;
-        let target = cell_center(self.level.player).as_ivec2();
-        self.camera.follow(target, self.level.bounds());
+        self.player.prev = self.player.body.aabb.min;
+        self.player
+            .step(&self.map, Controls::read(input), &mut self.sfx);
+        self.camera
+            .follow(self.player.center(), self.level.bounds());
     }
 
     /// Твёрдые клетки, задевающие вид с целым центром `center`; верхняя — трава.
@@ -251,11 +430,15 @@ impl Game for Platformer {
             env!("CARGO_MANIFEST_DIR"),
             "/assets/tilemap_packed.png"
         ));
+        game.chars = ctx.assets.load_texture(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/tilemap-characters_packed.png"
+        ));
         game
     }
 
-    fn update(&mut self, _: &mut Context) {
-        self.tick();
+    fn update(&mut self, ctx: &mut Context) {
+        self.tick(&ctx.input);
     }
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
@@ -265,6 +448,7 @@ impl Game for Platformer {
             size: VIEW.as_vec2(),
         };
         self.draw_tiles(&mut ctx.gfx, center.as_ivec2());
+        ctx.gfx.draw_sprite(self.player.sprite(self.chars, alpha));
     }
 }
 
@@ -442,6 +626,7 @@ mod tests {
     #[test]
     fn new_camera_starts_still_on_spawn() {
         let g = Platformer::new(parse(&format!("{}P{}\n", ".".repeat(50), ".".repeat(149))));
+        assert_eq!(g.player.center().x, 909);
         assert_eq!(g.camera.pos, ivec2(909 + DEAD_ZONE.x, VIEW.y / 2));
         assert_eq!(g.camera.prev, g.camera.pos);
     }
@@ -554,5 +739,354 @@ mod tests {
             assert_eq!(s.size, Vec2::splat(18.0));
             assert_eq!(s.texture, g.tiles);
         }
+    }
+
+    use engine::ElementState::{Pressed, Released};
+
+    fn input(keys: &[KeyCode]) -> Input {
+        let mut i = Input::default();
+        for &k in keys {
+            i.on_key(k, Pressed, false);
+        }
+        i
+    }
+
+    /// `released` отпущены в этом тике, `held` удерживаются.
+    fn release(released: &[KeyCode], held: &[KeyCode]) -> Input {
+        let mut i = input(&[released, held].concat());
+        i.end_tick();
+        for &k in released {
+            i.on_key(k, Released, false);
+        }
+        i
+    }
+
+    fn room(rows: &[&str]) -> Platformer {
+        Platformer::new(parse(&rows.join("\n")))
+    }
+
+    /// Игрок стоит на полу, `min = (39, 18)`.
+    fn flat() -> Platformer {
+        room(&[
+            "............",
+            "............",
+            "............",
+            "............",
+            "..P.........",
+            "############",
+        ])
+    }
+
+    /// Пол обрывается на `x = 90`, под обрывом — яма.
+    fn ledge() -> Platformer {
+        room(&[
+            "............",
+            "............",
+            "...P........",
+            "#####.......",
+        ])
+    }
+
+    /// Игрок падает на пол с высоты 180 px.
+    fn drop() -> Platformer {
+        let mut rows = vec![".........."; 11];
+        rows[0] = "..P.......";
+        rows.push("##########");
+        room(&rows)
+    }
+
+    fn on_ground(g: &Platformer) -> bool {
+        grounded(&g.map, &[], &g.player.body.aabb)
+    }
+
+    const D: &[KeyCode] = &[KeyCode::KeyD];
+    const SPACE: &[KeyCode] = &[KeyCode::Space];
+
+    #[test]
+    fn controls_map_keys() {
+        let read = |keys: &[KeyCode]| Controls::read(&input(keys));
+        assert_eq!(read(&[KeyCode::KeyD]).run, 1);
+        assert_eq!(read(&[KeyCode::ArrowRight]).run, 1);
+        assert_eq!(read(&[KeyCode::KeyA]).run, -1);
+        assert_eq!(read(&[KeyCode::ArrowLeft]).run, -1);
+        assert_eq!(read(&[KeyCode::KeyA, KeyCode::KeyD]).run, 0);
+        assert_eq!(read(&[]), Controls::default());
+        assert!(read(&[KeyCode::Space]).jump && read(&[KeyCode::KeyW]).jump);
+        let mut held = input(&[KeyCode::Space]);
+        held.end_tick();
+        assert_eq!(Controls::read(&held), Controls::default());
+    }
+
+    #[test]
+    fn release_needs_all_jump_keys_up() {
+        let read =
+            |released: &[KeyCode], held: &[KeyCode]| Controls::read(&release(released, held));
+        assert!(read(&[KeyCode::Space], &[]).release);
+        assert!(read(&[KeyCode::KeyW], &[]).release);
+        assert!(!read(&[KeyCode::Space], &[KeyCode::KeyW]).release);
+        assert!(!read(&[KeyCode::KeyD], &[]).release);
+    }
+
+    #[test]
+    fn spawn_stands_centered_on_cell_bottom() {
+        let g = flat();
+        assert_eq!(g.player.body.aabb.min, ivec2(39, 18));
+        assert_eq!(g.player.body.aabb.size, PLAYER_SIZE);
+        assert_eq!(g.player.prev, ivec2(39, 18));
+        assert_eq!(g.player.center(), ivec2(45, 26));
+    }
+
+    #[test]
+    fn run_accelerates_to_limit_and_stops() {
+        let mut g = flat();
+        g.tick(&input(D));
+        assert_eq!(g.player.vel.x, RUN_ACCEL);
+        for _ in 0..30 {
+            g.tick(&input(D));
+        }
+        assert_eq!(g.player.vel.x, RUN_MAX);
+        assert!(g.player.body.aabb.min.x > 60, "{}", g.player.body.aabb.min);
+        g.tick(&Input::default());
+        assert_eq!(g.player.vel.x, RUN_MAX - RUN_ACCEL);
+        for _ in 0..20 {
+            g.tick(&Input::default());
+        }
+        assert_eq!(g.player.vel.x, 0.0);
+        g.tick(&input(&[KeyCode::KeyA]));
+        assert_eq!(g.player.vel.x, -RUN_ACCEL);
+    }
+
+    #[test]
+    fn standing_player_stays_on_floor() {
+        let mut g = flat();
+        for _ in 0..60 {
+            g.tick(&Input::default());
+            assert_eq!(g.player.body.aabb.min, ivec2(39, 18));
+        }
+        assert_eq!(g.sfx, []);
+    }
+
+    #[test]
+    fn wall_stops_run() {
+        let mut g = flat();
+        for _ in 0..60 {
+            g.tick(&input(&[KeyCode::KeyA]));
+        }
+        assert_eq!(g.player.body.aabb.min.x, 0);
+        assert!(g.player.vel.x > -0.5, "{}", g.player.vel.x);
+    }
+
+    #[test]
+    fn jump_from_ground_sounds_jump() {
+        let mut g = flat();
+        g.tick(&input(SPACE));
+        assert_eq!(g.player.vel.y, JUMP);
+        assert_eq!(g.player.body.aabb.min.y, 23);
+        assert_eq!(g.sfx, [Sfx::Jump]);
+        g.tick(&Input::default());
+        assert_eq!(g.sfx, []);
+        assert_eq!(g.player.vel.y, JUMP - GRAVITY);
+    }
+
+    #[test]
+    fn no_jump_in_air_after_jump() {
+        let mut g = flat();
+        g.tick(&input(SPACE));
+        g.tick(&Input::default());
+        g.tick(&input(SPACE));
+        assert_eq!(g.sfx, []);
+        assert_eq!(g.player.vel.y, JUMP - 2.0 * GRAVITY);
+    }
+
+    /// Тик 1 после края — первый, начатый не на земле.
+    fn jumps_on_tick_after_edge(n: u32) -> bool {
+        let mut g = ledge();
+        for _ in 0..100 {
+            if !on_ground(&g) {
+                break;
+            }
+            g.tick(&input(D));
+        }
+        for _ in 1..n {
+            g.tick(&Input::default());
+        }
+        g.tick(&input(SPACE));
+        g.sfx == [Sfx::Jump]
+    }
+
+    #[test]
+    fn coyote_jump_lasts_six_ticks() {
+        assert!(jumps_on_tick_after_edge(1));
+        assert!(jumps_on_tick_after_edge(COYOTE));
+        assert!(!jumps_on_tick_after_edge(COYOTE + 1));
+    }
+
+    /// Прыжок нажат за `n` тиков до тика, начатого на земле.
+    fn jumps_when_pressed_before_landing(n: u32) -> bool {
+        let mut fall = drop();
+        let land = (0..100)
+            .find(|_| {
+                let landed = on_ground(&fall);
+                fall.tick(&Input::default());
+                landed
+            })
+            .unwrap();
+        let mut g = drop();
+        for t in 0..land {
+            g.tick(&input(if t == land - n { SPACE } else { &[] }));
+            assert_eq!(g.sfx, []);
+        }
+        g.tick(&Input::default());
+        g.sfx == [Sfx::Jump]
+    }
+
+    #[test]
+    fn jump_buffer_lasts_six_ticks() {
+        assert!(jumps_when_pressed_before_landing(1));
+        assert!(jumps_when_pressed_before_landing(JUMP_BUFFER));
+        assert!(!jumps_when_pressed_before_landing(JUMP_BUFFER + 1));
+    }
+
+    #[test]
+    fn fall_is_capped_and_lands_on_floor() {
+        let mut g = drop();
+        for _ in 0..25 {
+            g.tick(&Input::default());
+        }
+        assert_eq!(g.player.vel.y, -FALL_MAX);
+        for _ in 0..60 {
+            g.tick(&Input::default());
+        }
+        assert_eq!(g.player.body.aabb.min.y, 18);
+        assert!(g.player.vel.y > -FALL_MAX);
+    }
+
+    #[test]
+    fn release_cuts_rise_only() {
+        let mut g = flat();
+        g.tick(&input(SPACE));
+        g.tick(&release(SPACE, &[]));
+        assert_eq!(g.player.vel.y, (JUMP - GRAVITY) * JUMP_CUT);
+        let mut g = drop();
+        for _ in 0..3 {
+            g.tick(&Input::default());
+        }
+        g.tick(&release(SPACE, &[]));
+        assert_eq!(g.player.vel.y, -4.0 * GRAVITY);
+    }
+
+    #[test]
+    fn ceiling_bump_zeroes_rise() {
+        let mut g = room(&["..#.", "..P.", "####"]);
+        g.tick(&input(SPACE));
+        assert_eq!(g.player.body.aabb.min.y, 20);
+        assert_eq!(g.player.vel.y, 0.0);
+    }
+
+    #[test]
+    fn quick_landing_does_not_reuse_jump_press() {
+        let mut g = room(&["..#.", "..P.", "####"]);
+        g.tick(&input(SPACE));
+        for _ in 0..JUMP_BUFFER {
+            g.tick(&Input::default());
+            assert_eq!(g.sfx, []);
+        }
+        assert_eq!(g.player.body.aabb.min.y, 18);
+    }
+
+    #[test]
+    fn tick_saves_prev_and_camera_follows_player() {
+        let mut g = flat();
+        g.player.body.aabb.min = ivec2(100, 18);
+        g.tick(&input(D));
+        assert_eq!(g.player.prev, ivec2(100, 18));
+        assert_eq!(g.camera.pos, ivec2(106 + DEAD_ZONE.x, 0).max(VIEW / 2));
+    }
+
+    #[test]
+    fn update_reads_context_input() {
+        let (mut g, mut ctx) = started();
+        ctx.input.on_key(KeyCode::KeyD, Pressed, false);
+        g.update(&mut ctx);
+        assert_eq!(g.player.vel.x, RUN_ACCEL);
+    }
+
+    #[test]
+    fn run_frames_alternate_on_ground() {
+        let mut p = Player::spawn(IVec2::ZERO);
+        p.air = 0;
+        assert_eq!(p.frame(), IDLE);
+        p.run_ticks = RUN_FRAME - 1;
+        assert_eq!(p.frame(), IDLE);
+        p.run_ticks = RUN_FRAME;
+        assert_eq!(p.frame(), WALK);
+        p.run_ticks = 2 * RUN_FRAME;
+        assert_eq!(p.frame(), IDLE);
+        p.air = 1;
+        assert_eq!(p.frame(), WALK);
+    }
+
+    #[test]
+    fn run_ticks_count_only_on_ground() {
+        let mut g = flat();
+        for _ in 0..10 {
+            g.tick(&input(D));
+        }
+        assert_eq!(g.player.run_ticks, 10);
+        g.tick(&input(&[KeyCode::KeyD, KeyCode::Space]));
+        g.tick(&input(D));
+        assert_eq!(g.player.run_ticks, 0);
+        let mut g = flat();
+        g.tick(&Input::default());
+        assert_eq!(g.player.run_ticks, 0);
+    }
+
+    #[test]
+    fn sprite_faces_run_direction() {
+        let mut g = flat();
+        let uv = atlas_uv(IDLE, CHAR, CHARS_ATLAS);
+        let flipped = Rect {
+            min: vec2(uv.max.x, uv.min.y),
+            max: vec2(uv.min.x, uv.max.y),
+        };
+        assert_eq!(g.player.sprite(Handle::WHITE, 0.0).uv, flipped);
+        g.tick(&input(&[KeyCode::KeyA]));
+        g.tick(&Input::default());
+        assert_eq!(g.player.facing, -1);
+        assert_eq!(g.player.sprite(Handle::WHITE, 0.0).uv, uv);
+        g.tick(&input(D));
+        assert_eq!(g.player.facing, 1);
+    }
+
+    #[test]
+    fn sprite_interpolates_to_whole_pixels() {
+        let mut p = Player::spawn(IVec2::ZERO);
+        p.prev = IVec2::ZERO;
+        p.body.aabb.min = ivec2(3, -3);
+        let s = p.sprite(Handle::WHITE, 0.3);
+        assert_eq!(s.pos, vec2(1.0 + 6.0, -1.0 + 12.0));
+        assert_eq!(s.size, Vec2::splat(24.0));
+        assert_eq!(s.layer, PLAYER_LAYER);
+        assert_eq!(p.sprite(Handle::WHITE, 1.0).pos, vec2(9.0, 9.0));
+    }
+
+    #[test]
+    fn draw_shows_player_with_characters_atlas() {
+        let (mut g, mut ctx) = started();
+        let pending = ctx.assets.take_pending();
+        let chars = pending.iter().find(|p| p.handle == g.chars).unwrap();
+        assert_eq!(vec2(chars.width as f32, chars.height as f32), CHARS_ATLAS);
+        g.draw(&mut ctx, 1.0);
+        let players: Vec<_> = ctx
+            .gfx
+            .sprites
+            .iter()
+            .filter(|s| s.layer == PLAYER_LAYER)
+            .collect();
+        assert_eq!(players.len(), 1);
+        assert_eq!(players[0].texture, g.chars);
+        assert_ne!(g.chars, g.tiles);
+        let bottom = players[0].pos.y - 12.0;
+        assert_eq!(bottom, g.player.body.aabb.min.y as f32);
     }
 }
