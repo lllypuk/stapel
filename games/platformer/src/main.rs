@@ -12,6 +12,7 @@ use engine::{
     Texture, Tilemap, Vec2, World, grounded, ivec2, move_actor, move_solid, vec2,
 };
 use level::{Level, PlatformSpawn};
+use levels::Watcher;
 
 const TICK_HZ: u32 = 60;
 /// Сторона тайла в мировых пикселях.
@@ -553,6 +554,7 @@ struct Platformer {
     levels_dir: PathBuf,
     /// Файл текущего уровня.
     path: PathBuf,
+    watch: Watcher,
 }
 
 impl Platformer {
@@ -597,6 +599,7 @@ impl Platformer {
             sounds: None,
             levels_dir: PathBuf::new(),
             path: PathBuf::new(),
+            watch: Watcher::default(),
         }
     }
 
@@ -609,6 +612,7 @@ impl Platformer {
             sounds: self.sounds,
             levels_dir: mem::take(&mut self.levels_dir),
             path: mem::take(&mut self.path),
+            watch: mem::take(&mut self.watch),
             ..Self::new(level)
         };
     }
@@ -627,14 +631,28 @@ impl Platformer {
                 Ok((path.to_path_buf(), read_level(path)?))
             });
         match next {
-            Ok((path, level)) => {
+            Ok((path, (text, level))) => {
                 self.path = path;
+                self.watch = Watcher::new(text);
                 self.load(level);
             }
             Err(e) => {
                 log::warn!("{e}");
                 self.restart();
             }
+        }
+    }
+
+    /// Изменённый на диске уровень — заново; не разобрался — играем старый.
+    fn reload_changed(&mut self) {
+        let text = match self.watch.tick(&self.path) {
+            Ok(Some(text)) => text,
+            Ok(None) => return,
+            Err(e) => return log::warn!("{e}"),
+        };
+        match Level::parse(&text) {
+            Ok(level) => self.load(level),
+            Err(e) => log::warn!("{}: {e}", self.path.display()),
         }
     }
 
@@ -872,10 +890,11 @@ impl Platformer {
             .ok()
             .and_then(|list| list.into_iter().next())
             .unwrap_or_else(|| panic!("{}: нет уровней", levels_dir.display()));
-        let level = read_level(&path).unwrap_or_else(|e| panic!("{e}"));
+        let (text, level) = read_level(&path).unwrap_or_else(|e| panic!("{e}"));
         Self {
             levels_dir,
             path,
+            watch: Watcher::new(text),
             ..Self::new(level)
         }
     }
@@ -903,10 +922,11 @@ impl Platformer {
     }
 }
 
-/// Уровень из файла; ошибка — текстом с путём.
-fn read_level(path: &Path) -> Result<Level, String> {
+/// Текст и уровень из файла; ошибка — текстом с путём.
+fn read_level(path: &Path) -> Result<(String, Level), String> {
     let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    Level::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
+    let level = Level::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok((text, level))
 }
 
 impl Game for Platformer {
@@ -925,6 +945,7 @@ impl Game for Platformer {
         if self.advance {
             self.next_level();
         }
+        self.reload_changed();
     }
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
@@ -2269,6 +2290,7 @@ mod tests {
         g.update(&mut ctx);
         assert_eq!(g.path, g.levels_dir.join("level02.txt"));
         assert_eq!(g.level, parse(SECOND));
+        assert_eq!(g.watch.poll(&g.path), Ok(None));
         assert!(!g.cleared && !g.advance);
         assert_eq!((g.coins, g.deaths, g.ticks), (0, 0, 0));
         assert_eq!(g.player.body.aabb, Player::spawn(g.level.player).body.aabb);
@@ -2292,12 +2314,47 @@ mod tests {
         assert_eq!(coins(&g).len(), 2);
     }
 
+    /// Уровень `SECOND` из временного каталога, файл которого заменён на `text`.
+    fn edited(name: &str, text: &str) -> (Platformer, Context) {
+        let dir = levels::temp_dir(name, &[("level01.txt", SECOND)]);
+        let g = Platformer::open(dir.clone());
+        fs::write(dir.join("level01.txt"), text).unwrap();
+        (g, Context::default())
+    }
+
+    #[test]
+    fn changed_level_file_restarts_with_new_map() {
+        let (mut g, mut ctx) = edited("reload", CLEAR);
+        g.deaths = 1;
+        for _ in 1..levels::WATCH_TICKS {
+            g.update(&mut ctx);
+        }
+        assert_eq!(g.level, parse(SECOND));
+        g.update(&mut ctx);
+        assert_eq!(g.level, parse(CLEAR));
+        assert_eq!((g.deaths, g.ticks), (0, 0));
+        assert_eq!(coins(&g).len(), 2);
+        assert_eq!(g.watch.poll(&g.path), Ok(None));
+        assert_eq!(g.path, g.levels_dir.join("level01.txt"));
+    }
+
+    #[test]
+    fn unparsable_level_file_keeps_old_level() {
+        let (mut g, mut ctx) = edited("reload-broken", "P?\n");
+        for _ in 0..levels::WATCH_TICKS {
+            g.update(&mut ctx);
+        }
+        assert_eq!(g.level, parse(SECOND));
+        assert_eq!(g.ticks, levels::WATCH_TICKS);
+    }
+
     #[test]
     fn open_takes_first_level_by_name() {
         let dir = levels::temp_dir("first", &[("b.txt", "P\n"), ("a.txt", SECOND)]);
-        let g = Platformer::open(dir.clone());
+        let mut g = Platformer::open(dir.clone());
         assert_eq!((&g.path, &g.level), (&dir.join("a.txt"), &parse(SECOND)));
         assert_eq!(g.levels_dir, dir);
+        assert_eq!(g.watch.poll(&g.path), Ok(None));
     }
 
     #[test]
