@@ -212,10 +212,10 @@
 - Create: `games/platformer/src/panel.rs`
 - Modify: `games/platformer/Cargo.toml`, `games/platformer/src/main.rs`
 
-- [ ] `egui_kittest` dev-dep; `cargo deny check`
-- [ ] тесты kittest: клик по палитре, уровню, «Новый», ±столбец/строка, «Сохранить», «Отменить», «Загрузить с диска» → `EditorCmd`; ошибка разбора, ошибка записи, флаг конфликта и отказ при `dirty` показаны текстом; после клика `egui_wants_keyboard_input` ложно
-- [ ] `Platformer::ui` — панель только в редакторе, `set_fonts` при первом вызове
-- [ ] `make check`
+- [x] `egui_kittest` dev-dep; `cargo deny check`
+- [x] тесты kittest: клик по палитре, уровню, «Новый», ±столбец/строка, «Сохранить», «Отменить», «Загрузить с диска» → `EditorCmd`; ошибка разбора, ошибка записи, флаг конфликта и отказ при `dirty` показаны текстом; после клика `egui_wants_keyboard_input` ложно
+- [x] `Platformer::ui` — панель (окно egui: `Panel` в 0.36 требует `Ui`, а `Game::ui` получает `Context`) только в редакторе, `set_fonts` при первом вызове
+- [x] `make check`
 
 ### Task 14: Приёмка
 - [ ] все пункты Overview

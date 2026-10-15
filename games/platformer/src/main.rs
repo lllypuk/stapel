@@ -1,7 +1,7 @@
-#[cfg_attr(not(test), expect(dead_code, reason = "команды шлёт панель, Task 13"))]
 mod editor;
 mod level;
 mod levels;
+mod panel;
 
 use std::{
     fs, iter, mem,
@@ -12,7 +12,7 @@ use editor::{Editor, EditorCmd};
 use engine::{
     Aabb, Actor, Assets, Axis, Camera2D, Color, Commands, Config, Contact, Context, Entity, Font,
     FontData, Game, Gfx, Handle, IVec2, Input, KeyCode, Rect, Solid, Sound, SparseSet, Sprite,
-    Texture, Tilemap, Vec2, World, grounded, ivec2, move_actor, move_solid, vec2,
+    Texture, Tilemap, Vec2, World, egui, grounded, ivec2, move_actor, move_solid, vec2,
 };
 use level::{Level, LevelError, PlatformSpawn};
 use levels::Watcher;
@@ -1137,6 +1137,18 @@ impl Game for Platformer {
         }
         ctx.gfx.draw_sprite(self.player.sprite(self.chars, alpha));
         self.draw_hud(&mut ctx.gfx, &ctx.assets, center);
+    }
+
+    fn ui(&mut self, ui: &egui::Context) {
+        panel::set_fonts(ui);
+        if !self.editing {
+            return;
+        }
+        egui::Window::new("Редактор")
+            .resizable(false)
+            .show(ui, |ui| {
+                panel::show(ui, &self.editor, &self.levels, &self.path, &mut self.queue);
+            });
     }
 }
 
@@ -2614,6 +2626,32 @@ mod tests {
     }
 
     const F1: &[KeyCode] = &[KeyCode::F1];
+
+    /// Кадр egui с `Game::ui`; число фигур вывода.
+    fn ui_shapes(g: &mut Platformer, ctx: &egui::Context) -> usize {
+        ctx.begin_pass(egui::RawInput::default());
+        g.ui(ctx);
+        let mut out = ctx.end_pass();
+        out.textures_delta.clear();
+        out.shapes.len()
+    }
+
+    #[test]
+    fn panel_only_in_editor() {
+        let (mut g, ctx) = (strip(), egui::Context::default());
+        assert_eq!(ui_shapes(&mut g, &ctx), 0);
+        g.enter_editor();
+        assert!(ui_shapes(&mut g, &ctx) > 0);
+    }
+
+    #[test]
+    fn editor_on_first_frame_gets_fonts() {
+        let (mut g, ctx) = (strip(), egui::Context::default());
+        g.enter_editor();
+        ui_shapes(&mut g, &ctx);
+        assert!(ui_shapes(&mut g, &ctx) > 0);
+        assert!(ctx.fonts(|f| f.definitions().font_data.contains_key("JetBrainsMono")));
+    }
 
     #[test]
     fn f1_freezes_world_and_frees_camera() {
