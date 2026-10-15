@@ -1,3 +1,8 @@
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "редактор подключается в Task 9")
+)]
+mod editor;
 mod level;
 mod levels;
 
