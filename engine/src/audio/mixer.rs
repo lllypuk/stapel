@@ -322,6 +322,19 @@ mod tests {
     }
 
     #[test]
+    fn effect_on_full_pool_does_not_steal_a_playing_voice() {
+        let (mut tx, mut mixer) = setup();
+        let sound = constant(1024, 1.0 / 64.0, 1.0 / 64.0);
+        for _ in 0..VOICES {
+            play(&mut tx, &sound, 1.0);
+        }
+        render(&mut mixer, 128);
+        play(&mut tx, &sound, 1.0);
+        assert_eq!(render(&mut mixer, 128), [0.25; 256]);
+        assert_eq!(mixer.counters.dropped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
     fn render_takes_at_most_64_commands() {
         let (mut tx, mut mixer) = setup();
         let empty: Arc<[f32]> = Arc::new([]);
