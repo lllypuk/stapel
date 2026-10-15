@@ -6,15 +6,18 @@
 
 ```sh
 cargo test --workspace
+make platformer                                   # платформер: A/D или ←/→ — бег, Space/W — прыжок, Enter — заново после финиша
 make asteroids                                    # Asteroids: A/D — поворот, W — тяга, Space — огонь, Enter — рестарт
 RUST_LOG=info cargo run -p pong                   # Pong на двоих: W/S — левая ракетка, O/L — правая
 RUST_LOG=info cargo run -p clear-color            # Space меняет цвет фона
 NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color # без vsync
 ```
 
-С `RUST_LOG=info` движок раз в секунду пишет в лог FPS, TPS, худший кадр и число спрайтов. `make <игра>` — release-сборка.
+С `RUST_LOG=info` движок раз в секунду пишет в лог FPS, TPS, худший кадр и число спрайтов, а при открытом звуковом устройстве — время аудиоколбэка против бюджета и число отброшенных команд (`audio cb 0.4/10.7ms dropped 0`). `make <игра>` — release-сборка.
 
-Платформа — Linux (Wayland, X11), нужен Vulkan.
+Платформа — Linux (Wayland, X11), нужен Vulkan. Для сборки нужны `alsa-lib` и `pkg-config` (в Debian — `libasound2-dev pkg-config`): их требует `cpal`.
+
+Ассеты платформера — CC0 (Kenney, Juhani Junkala), источники и команды конвертации — в [games/platformer/assets/CREDITS.md](games/platformer/assets/CREDITS.md).
 
 ## Проверки
 
