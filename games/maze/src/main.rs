@@ -7,10 +7,10 @@ use std::{fs, mem};
 
 use enemy::Orc;
 use engine::{
-    Assets, Camera3D, Color, Config, Context, Game, Handle, IVec2, KeyCode, Mat4, Model, ModelDraw,
-    MouseButton, Pose, Quat, Scene, Vec2, vec3,
+    Assets, Camera3D, Color, Config, Context, Fog, Game, Handle, IVec2, KeyCode, Mat4, Model,
+    ModelDraw, MouseButton, PointLight, Pose, Quat, Scene, Vec2, vec3,
 };
-use map::{Dir, Map, cell_center};
+use map::{Dir, Map, Torch, cell_center};
 use player::{Player, RADIUS};
 
 const TICK_HZ: u32 = 60;
@@ -20,8 +20,38 @@ const COIN_TURN: u64 = 2 * TICK_HZ as u64;
 const PICKUP: f32 = 0.5;
 /// Касание ворот: центр игрока ближе к их клетке, м.
 const GATE_REACH: f32 = RADIUS + 0.05;
-/// Свет без источников, пока факелы не светят.
-const AMBIENT: Color = Color::WHITE;
+/// Свет без источников.
+const AMBIENT: Color = Color {
+    r: 0.08,
+    g: 0.08,
+    b: 0.11,
+    a: 1.0,
+};
+/// Им же очищается 3D-проход: дальше `end` сцена сливается с фоном.
+const FOG: Fog = Fog {
+    color: Color {
+        r: 0.01,
+        g: 0.008,
+        b: 0.015,
+        a: 1.0,
+    },
+    start: 2.0,
+    end: 8.0,
+};
+/// Линейный цвет факела в полную силу.
+const TORCH: Color = Color {
+    r: 1.0,
+    g: 0.55,
+    b: 0.2,
+    a: 1.0,
+};
+const TORCH_RANGE: f32 = 4.0;
+/// Высота факела над полом, м.
+const TORCH_HEIGHT: f32 = 0.8;
+/// Отступ факела от стены с баннером, м.
+const TORCH_GAP: f32 = 0.25;
+/// Доля яркости, которую мерцание гасит в худший тик.
+const FLICKER: f32 = 0.3;
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
 const LEVEL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/levels/level01.txt");
 /// Замороженная копия первого уровня: тесты не зависят от правок `assets/levels/`.
@@ -112,6 +142,30 @@ fn secs(ticks: u64) -> f32 {
 /// Поворот монеты на тике `tick`.
 fn coin_yaw(tick: u64) -> f32 {
     (tick % COIN_TURN) as f32 / COIN_TURN as f32 * TAU
+}
+
+/// Яркость факела `i` на тике `tick` в `[1 - FLICKER, 1]`; сдвиг фазы по `i` не даёт факелам мигать хором.
+fn flicker(tick: u64, i: usize) -> f32 {
+    let t = tick as f32;
+    let phase = i as f32 * 1.7;
+    let wave = (t * 0.31 + phase).sin() + (t * 0.83 + 2.0 * phase).sin();
+    1.0 - FLICKER * (0.5 + 0.25 * wave)
+}
+
+/// Свет факела `torch` с яркостью `bright` у его стены.
+fn torch_light(torch: &Torch, bright: f32) -> PointLight {
+    let o = torch.wall.offset().as_vec2() * (0.5 - TORCH_GAP);
+    let k = f64::from(bright);
+    PointLight {
+        pos: cell_center(torch.cell) + vec3(o.x, TORCH_HEIGHT, o.y),
+        color: Color {
+            r: TORCH.r * k,
+            g: TORCH.g * k,
+            b: TORCH.b * k,
+            a: 1.0,
+        },
+        range: TORCH_RANGE,
+    }
 }
 
 /// Центр игрока `pos` касается предмета в центре клетки `cell`.
@@ -262,11 +316,16 @@ impl Maze {
                 pose,
             }
         }));
+        let lights = (self.map.torches.iter().enumerate())
+            .map(|(i, t)| torch_light(t, flicker(self.tick, i)))
+            .collect();
         Scene {
             camera,
             ambient: AMBIENT,
+            fog: FOG,
+            lights,
             models,
-            ..Scene::default()
+            meshes: Vec::new(),
         }
     }
 }
@@ -296,7 +355,9 @@ impl Game for Maze {
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
         let camera = self.level.player.camera(alpha, ctx.input.mouse_delta());
-        ctx.gfx.scene = Some(self.scene(camera, alpha, &ctx.assets));
+        let scene = self.scene(camera, alpha, &ctx.assets);
+        ctx.gfx.clear_color = scene.fog.color;
+        ctx.gfx.scene = Some(scene);
     }
 }
 
@@ -471,6 +532,93 @@ mod tests {
             );
             assert_eq!(banner.transform.w_axis.truncate(), cell_center(ivec2(1, 1)));
         }
+    }
+
+    #[test]
+    fn torch_light_hangs_by_banner_wall() {
+        for (text, wall) in [
+            ("P#.\n.T.\n...\n", Dir::N),
+            (".P.\n.T#\n.#.\n", Dir::E),
+            (".P.\n#T.\n.#.\n", Dir::S),
+            (".P.\n#T.\n...\n", Dir::W),
+        ] {
+            let (g, ctx) = maze(text);
+            let scene = g.scene(Camera3D::default(), 0.0, &ctx.assets);
+            let o = wall.offset().as_vec2() * 0.25;
+            let want = cell_center(ivec2(1, 1)) + vec3(o.x, TORCH_HEIGHT, o.y);
+            assert_eq!(scene.lights.len(), 1, "{wall:?}");
+            assert!(scene.lights[0].pos.abs_diff_eq(want, 1e-6), "{wall:?}");
+            assert_eq!(scene.lights[0].range, TORCH_RANGE);
+        }
+    }
+
+    #[test]
+    fn every_torch_has_banner_and_light() {
+        let (g, ctx) = maze(LEVEL01);
+        let scene = g.scene(Camera3D::default(), 0.0, &ctx.assets);
+        let torches: Vec<_> = g.map.torches.iter().map(|t| t.cell).collect();
+        assert!(torches.len() > 1);
+        assert_eq!(placed(&scene, g.models.banner), centers(torches.clone()));
+        let cells: Vec<_> = (scene.lights.iter())
+            .map(|l| vec2(l.pos.x, l.pos.z).floor().as_ivec2())
+            .collect();
+        assert_eq!(cells, torches);
+    }
+
+    #[test]
+    fn flicker_stays_in_bounds_and_differs_between_torches() {
+        let mut lo = f32::INFINITY;
+        let mut hi = f32::NEG_INFINITY;
+        for i in 0..engine::MAX_LIGHTS {
+            for tick in 0..10_000 {
+                let b = flicker(tick, i);
+                assert!((1.0 - FLICKER..=1.0).contains(&b), "{tick} {i}: {b}");
+                lo = lo.min(b);
+                hi = hi.max(b);
+            }
+        }
+        assert!(
+            lo < 1.0 - 0.9 * FLICKER && hi > 1.0 - 0.1 * FLICKER,
+            "{lo}..{hi}"
+        );
+        assert!((0..60).any(|t| (flicker(t, 0) - flicker(t, 1)).abs() > 0.01));
+        assert_ne!(flicker(0, 0), flicker(1, 0));
+    }
+
+    #[test]
+    fn torch_light_flickers_with_ticks_not_alpha() {
+        let (mut g, mut ctx) = maze(LEVEL01);
+        let (mut twin, _) = maze(LEVEL01);
+        let lights = |g: &mut Maze, ctx: &mut Context, alpha| {
+            g.draw(ctx, alpha);
+            ctx.gfx.scene.as_ref().unwrap().lights.clone()
+        };
+        let first = lights(&mut g, &mut ctx, 0.0);
+        assert_eq!(lights(&mut g, &mut ctx, 0.9), first);
+        let k = f64::from(flicker(0, 0));
+        assert_eq!(
+            (first[0].color.r, first[0].color.g, first[0].color.b),
+            (TORCH.r * k, TORCH.g * k, TORCH.b * k)
+        );
+        for _ in 0..7 {
+            tick(&mut g, &mut ctx);
+            twin.tick += 1;
+        }
+        let later = lights(&mut g, &mut ctx, 0.0);
+        assert_ne!(later, first);
+        let twin = twin.scene(Camera3D::default(), 0.0, &ctx.assets);
+        assert_eq!(twin.lights, later, "мерцание — функция тика");
+        let k = f64::from(flicker(7, 1));
+        assert_eq!(later[1].color.g, TORCH.g * k);
+    }
+
+    #[test]
+    fn scene_has_ambient_and_fog_and_clears_with_fog_color() {
+        let (mut g, mut ctx) = maze(LEVEL01);
+        g.draw(&mut ctx, 0.0);
+        let scene = ctx.gfx.scene.as_ref().unwrap();
+        assert_eq!((scene.ambient, scene.fog), (AMBIENT, FOG));
+        assert_eq!(ctx.gfx.clear_color, FOG.color);
     }
 
     fn press(ctx: &mut Context, key: KeyCode) {
