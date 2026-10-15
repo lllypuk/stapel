@@ -21,7 +21,7 @@ pub(crate) struct App<G> {
 }
 
 struct Running<G> {
-    // Раньше `ctx`: поля дропаются по порядку, колбэк должен встать до освобождения `Assets`.
+    // Раньше `ctx`: поля дропаются по порядку; иначе последний `Arc` звука умрёт в колбэке.
     _stream: Option<cpal::Stream>,
     window: Arc<Window>,
     renderer: Renderer,

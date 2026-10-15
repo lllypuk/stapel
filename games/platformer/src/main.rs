@@ -1552,11 +1552,14 @@ mod tests {
 
     #[test]
     fn tick_saves_prev_and_camera_follows_player() {
-        let mut g = flat();
-        g.player.body.aabb.min = ivec2(100, 18);
+        let mut rows = vec![".".repeat(40); 5];
+        rows[4].replace_range(2..3, "P");
+        rows.push("#".repeat(40));
+        let mut g = Platformer::new(parse(&rows.join("\n")));
+        g.player.body.aabb.min = ivec2(400, 18);
         g.tick(&input(D));
-        assert_eq!(g.player.prev, ivec2(100, 18));
-        assert_eq!(g.camera.pos, ivec2(106 + DEAD_ZONE.x, 0).max(VIEW / 2));
+        assert_eq!(g.player.prev, ivec2(400, 18));
+        assert_eq!(g.camera.pos, ivec2(406 - DEAD_ZONE.x, VIEW.y / 2));
     }
 
     #[test]
