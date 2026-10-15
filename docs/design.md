@@ -113,6 +113,7 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 - Телепорт (подача из центра) ставит `prev = cur`, иначе интерполяция нарисует пролёт через всё поле. → тест `pong::goal_scores_and_serves_to_loser`, `platformer::respawn_resets_motion_and_camera`
 - Перенос через край мира сдвигает `prev` на тот же вектор, что и `pos`: иначе кадр между тиками нарисует пролёт через всё поле. → тест `asteroids::wrap_waits_until_fully_out_and_shifts_prev`
 - Угол для интерполяции не нормализуется: lerp от 6,27 к 0,05 после приведения к `[0, 2π)` крутит спрайт почти полный оборот назад. → тест `asteroids::angle_across_tau_interpolates_short_way`
+
 ## Этапы
 
 | Этап | Движок | Игра | Готово, когда |

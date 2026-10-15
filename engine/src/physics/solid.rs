@@ -34,7 +34,7 @@ pub fn move_solid(
     let step = solids[i].remainder.round();
     solids[i].remainder -= step;
     let step = step.as_ivec2();
-    // Riding — до движения по обеим осям: после сдвига по X пассажир может оказаться не над платформой.
+    // Пассажиры — снимок до движения по обеим осям: выбор, см. docs/design.md «Физика».
     let riding: Vec<bool> = actors
         .iter()
         .map(|a| {
