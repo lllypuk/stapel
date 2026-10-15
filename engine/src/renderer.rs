@@ -6,7 +6,10 @@ use winit::window::Window;
 
 use crate::gpu_textures::depth_texture;
 use crate::surface::{Action, action, pick_format, pick_present_mode, split, surface_size};
-use crate::{Assets, Gfx, GpuTextures, MeshPipeline, SpritePipeline, UiFrame, Viewport, viewport};
+use crate::{
+    Assets, ExpandedModels, Gfx, GpuTextures, MeshPipeline, SpritePipeline, UiFrame, Viewport,
+    viewport,
+};
 
 /// Поверхность окна и GPU-устройство; кадр: 3D на всю поверхность, спрайты во вписанный вьюпорт, egui — поверх.
 pub struct Renderer {
@@ -158,7 +161,7 @@ impl Renderer {
                     .update_texture(&self.device, &self.queue, *id, delta);
             }
         }
-        let shown = self.present(gfx, &ui);
+        let shown = self.present(gfx, assets, &ui);
         // После submit кадра или сразу, если кадр пропущен.
         for id in &ui.textures.free {
             self.ui.free_texture(id);
@@ -168,14 +171,19 @@ impl Renderer {
         shown
     }
 
-    fn present(&mut self, gfx: &Gfx, ui: &UiFrame) -> Result<Option<Viewport>, RenderError> {
+    fn present(
+        &mut self,
+        gfx: &Gfx,
+        assets: &Assets,
+        ui: &UiFrame,
+    ) -> Result<Option<Viewport>, RenderError> {
         if !self.is_available() {
             return Ok(None);
         }
         let (frame, status) = split(self.surface.get_current_texture());
         match (action(&status), frame) {
             (Action::Draw { reconfigure }, Some(frame)) => {
-                let viewport = self.draw(frame, gfx, ui);
+                let viewport = self.draw(frame, gfx, assets, ui);
                 if reconfigure {
                     self.surface.configure(&self.device, &self.config);
                 }
@@ -198,7 +206,13 @@ impl Renderer {
         }
     }
 
-    fn draw(&mut self, frame: wgpu::SurfaceTexture, gfx: &Gfx, ui: &UiFrame) -> Viewport {
+    fn draw(
+        &mut self,
+        frame: wgpu::SurfaceTexture,
+        gfx: &Gfx,
+        assets: &Assets,
+        ui: &UiFrame,
+    ) -> Viewport {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -217,6 +231,7 @@ impl Renderer {
                 &self.depth,
                 &self.textures,
                 scene,
+                &ExpandedModels::new(&scene.models, assets),
                 gfx.clear_color,
             );
         }

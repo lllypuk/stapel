@@ -1,14 +1,18 @@
 use bytemuck::{Pod, Zeroable};
+use glam::Mat4;
 use wgpu::util::DeviceExt;
 
 use crate::gpu_textures::DEPTH_FORMAT;
 use crate::sprite_pipeline::{grow_capacity, instance_buffer, wgpu_color};
 use crate::{
-    Assets, Color, GpuTextures, MAX_LIGHTS, MeshInstance, PointLight, Scene, Vertex, batch_meshes,
+    Assets, Color, ExpandedModels, GpuTextures, MAX_JOINTS, MAX_LIGHTS, MeshInstance, PointLight,
+    Scene, Vertex, batch_meshes,
 };
 
 /// Начальный размер буфера инстансов в байтах.
 const INITIAL_CAPACITY: u64 = 1024;
+/// Шаг палитр в буфере и размер привязки одной палитры: `array<mat4x4<f32>, 64>` из `mesh.wgsl`.
+const PALETTE_STRIDE: u64 = (MAX_JOINTS * size_of::<[[f32; 4]; 4]>()) as u64;
 
 /// Раскладка `Light` из `mesh.wgsl`.
 #[repr(C)]
@@ -73,9 +77,9 @@ impl From<&PointLight> for LightUniform {
     }
 }
 
-/// `true` при первом переполнении `MAX_LIGHTS` за жизнь `warned`.
-fn first_overflow(warned: &mut bool, lights: usize) -> bool {
-    let first = lights > MAX_LIGHTS && !*warned;
+/// `true` при первом `n > max` за жизнь `warned`.
+fn first_overflow(warned: &mut bool, n: usize, max: usize) -> bool {
+    let first = n > max && !*warned;
     *warned |= first;
     first
 }
@@ -92,23 +96,37 @@ pub struct MeshPipeline {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
+    skinned: wgpu::RenderPipeline,
     scene_buf: wgpu::Buffer,
     scene_group: wgpu::BindGroup,
     instances: wgpu::Buffer,
     capacity: u64,
+    palette_layout: wgpu::BindGroupLayout,
+    palettes: wgpu::Buffer,
+    palette_group: wgpu::BindGroup,
+    palette_capacity: u64,
     /// Индекс — `Handle<Mesh>::index`.
     meshes: Vec<GpuMesh>,
     lights_warned: bool,
+    joints_warned: bool,
 }
 
 impl MeshPipeline {
     /// Пайплайн для рендера в цель формата `format` с текстурами из `textures`.
+    ///
+    /// # Panics
+    /// Если шаг палитр не кратен `min_uniform_buffer_offset_alignment` устройства.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
         textures: &GpuTextures,
     ) -> Self {
+        let align = device.limits().min_uniform_buffer_offset_alignment;
+        assert!(
+            PALETTE_STRIDE.is_multiple_of(u64::from(align)),
+            "palette stride {PALETTE_STRIDE} is not a multiple of uniform offset alignment {align}"
+        );
         let shader = device.create_shader_module(wgpu::include_wgsl!("mesh.wgsl"));
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scene"),
@@ -128,7 +146,40 @@ impl MeshPipeline {
             bind_group_layouts: &[Some(&scene_layout), Some(textures.layout())],
             immediate_size: 0,
         });
-        let pipeline = render_pipeline(device, &shader, &layout, format);
+        let pipeline = render_pipeline(
+            device,
+            &shader,
+            &layout,
+            format,
+            "vs_static",
+            &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2],
+        );
+        let palette_layout = palette_layout(device);
+        let skinned_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("skinned mesh"),
+            bind_group_layouts: &[
+                Some(&scene_layout),
+                Some(textures.layout()),
+                Some(&palette_layout),
+            ],
+            immediate_size: 0,
+        });
+        let skinned = render_pipeline(
+            device,
+            &shader,
+            &skinned_layout,
+            format,
+            "vs_skinned",
+            &wgpu::vertex_attr_array![
+                0 => Float32x3,
+                1 => Float32x3,
+                2 => Float32x2,
+                10 => Uint16x4,
+                11 => Float32x4,
+            ],
+        );
+        let palettes = palette_buffer(device, PALETTE_STRIDE);
+        let palette_group = palette_group(device, &palette_layout, &palettes);
         let scene_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("scene"),
             size: size_of::<SceneUniform>() as u64,
@@ -147,12 +198,18 @@ impl MeshPipeline {
             device: device.clone(),
             queue: queue.clone(),
             pipeline,
+            skinned,
             scene_buf,
             scene_group,
             instances: instance_buffer(device, INITIAL_CAPACITY),
             capacity: INITIAL_CAPACITY,
+            palette_layout,
+            palettes,
+            palette_group,
+            palette_capacity: PALETTE_STRIDE,
             meshes: Vec::new(),
             lights_warned: false,
+            joints_warned: false,
         }
     }
 
@@ -195,8 +252,9 @@ impl MeshPipeline {
         }
     }
 
-    /// Очищает `view` цветом `clear` и `depth` и рисует `scene`; aspect камеры — `depth`, он размера цели.
+    /// Очищает `view` цветом `clear` и `depth` и рисует `scene` с её моделями `models`; aspect камеры — `depth`, он размера цели.
     /// Буферы пишутся через `write_buffer`: второй `draw` до `submit` затрёт первый.
+    #[expect(clippy::too_many_arguments, reason = "цель, глубина, текстуры и кадр")]
     pub fn draw(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -204,9 +262,27 @@ impl MeshPipeline {
         depth: &wgpu::Texture,
         textures: &GpuTextures,
         scene: &Scene,
+        models: &ExpandedModels,
         clear: Color,
     ) {
-        let (instances, batches) = batch_meshes(&scene.meshes);
+        let (mut instances, batches) = batch_meshes(scene.meshes.iter().chain(&models.meshes));
+        let longest = models.palettes.iter().map(Vec::len).max().unwrap_or(0);
+        if first_overflow(&mut self.joints_warned, longest, MAX_JOINTS) {
+            log::warn!("skin with {longest} joints, over {MAX_JOINTS} are not drawn");
+        }
+        let skinned: Vec<_> = models
+            .skinned
+            .iter()
+            .filter(|d| models.palettes[d.palette].len() <= MAX_JOINTS)
+            .collect();
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "u32::MAX мешей не поместится в память"
+        )]
+        let first_skinned = instances.len() as u32;
+        instances.extend(skinned.iter().map(|d| MeshInstance::from(d.transform)));
+        self.write_palettes(&models.palettes);
+
         let bytes: &[u8] = bytemuck::cast_slice(&instances);
         if let Some(capacity) = grow_capacity(self.capacity, bytes.len() as u64) {
             self.instances = instance_buffer(&self.device, capacity);
@@ -215,7 +291,7 @@ impl MeshPipeline {
         if !bytes.is_empty() {
             self.queue.write_buffer(&self.instances, 0, bytes);
         }
-        if first_overflow(&mut self.lights_warned, scene.lights.len()) {
+        if first_overflow(&mut self.lights_warned, scene.lights.len(), MAX_LIGHTS) {
             log::warn!(
                 "{} point lights, only the first {MAX_LIGHTS} are drawn",
                 scene.lights.len()
@@ -260,7 +336,87 @@ impl MeshPipeline {
             pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..mesh.count, 0, b.range);
         }
+        pass.set_pipeline(&self.skinned);
+        for (i, d) in (first_skinned..).zip(skinned) {
+            let mesh = &self.meshes[d.mesh.index as usize];
+            if mesh.count == 0 {
+                continue;
+            }
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "смещение ограничено max_buffer_size"
+            )]
+            let offset = (d.palette as u64 * PALETTE_STRIDE) as u32;
+            pass.set_bind_group(1, textures.group(d.texture), &[]);
+            pass.set_bind_group(2, &self.palette_group, &[offset]);
+            pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+            pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..mesh.count, 0, i..i + 1);
+        }
     }
+
+    /// Пишет `palettes` с шагом `PALETTE_STRIDE`; от длинной палитры — первые `MAX_JOINTS`.
+    fn write_palettes(&mut self, palettes: &[Vec<Mat4>]) {
+        let mut data = vec![[[0.0f32; 4]; 4]; palettes.len() * MAX_JOINTS];
+        for (dst, p) in data.chunks_mut(MAX_JOINTS).zip(palettes) {
+            for (d, m) in dst.iter_mut().zip(p) {
+                *d = m.to_cols_array_2d();
+            }
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(&data);
+        if let Some(capacity) = grow_capacity(self.palette_capacity, bytes.len() as u64) {
+            self.palettes = palette_buffer(&self.device, capacity);
+            self.palette_group = palette_group(&self.device, &self.palette_layout, &self.palettes);
+            self.palette_capacity = capacity;
+        }
+        if !bytes.is_empty() {
+            self.queue.write_buffer(&self.palettes, 0, bytes);
+        }
+    }
+}
+
+fn palette_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("palette"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: true,
+                min_binding_size: wgpu::BufferSize::new(PALETTE_STRIDE),
+            },
+            count: None,
+        }],
+    })
+}
+
+fn palette_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("palettes"),
+        size,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+fn palette_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    buffer: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("palettes"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: 0,
+                size: wgpu::BufferSize::new(PALETTE_STRIDE),
+            }),
+        }],
+    })
 }
 
 fn render_pipeline(
@@ -268,23 +424,21 @@ fn render_pipeline(
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     format: wgpu::TextureFormat,
+    entry: &str,
+    vertex: &[wgpu::VertexAttribute],
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("mesh"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some("vs_static"),
+            entry_point: Some(entry),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             buffers: &[
                 Some(wgpu::VertexBufferLayout {
                     array_stride: size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![
-                        0 => Float32x3,
-                        1 => Float32x3,
-                        2 => Float32x2,
-                    ],
+                    attributes: vertex,
                 }),
                 Some(wgpu::VertexBufferLayout {
                     array_stride: size_of::<MeshInstance>() as u64,
@@ -333,10 +487,9 @@ mod tests {
     use crate::gpu_test::{SIZE, assert_pixel, gpu, load_png, offscreen};
     use crate::gpu_textures::depth_texture;
     use crate::{
-        Camera2D, Camera3D, Fog, Gfx, Handle, Mesh, MeshDraw, Sprite, SpritePipeline, Texture,
-        Vec2, Vec3, Viewport, vec2, vec3,
+        Camera2D, Camera3D, Fog, Gfx, Handle, Mesh, MeshDraw, SkinnedDraw, Sprite, SpritePipeline,
+        Texture, Vec2, Vec3, Viewport, vec2, vec3,
     };
-    use glam::Mat4;
     use std::mem::offset_of;
     use wgpu::naga::TypeInner;
 
@@ -460,17 +613,32 @@ mod tests {
     }
 
     #[test]
-    fn light_overflow_warns_once() {
+    fn overflow_warns_once() {
         let mut warned = false;
-        assert!(!first_overflow(&mut warned, MAX_LIGHTS));
+        assert!(!first_overflow(&mut warned, MAX_LIGHTS, MAX_LIGHTS));
         assert!(!warned);
-        assert!(first_overflow(&mut warned, MAX_LIGHTS + 1));
-        assert!(!first_overflow(&mut warned, MAX_LIGHTS + 1));
+        assert!(first_overflow(&mut warned, MAX_LIGHTS + 1, MAX_LIGHTS));
+        assert!(!first_overflow(&mut warned, MAX_LIGHTS + 1, MAX_LIGHTS));
         assert!(warned);
+    }
+
+    #[test]
+    fn palette_stride_is_multiple_of_device_alignment() {
+        let Some((device, _)) = gpu() else {
+            return;
+        };
+        let align = device.limits().min_uniform_buffer_offset_alignment;
+        assert_eq!(PALETTE_STRIDE % u64::from(align), 0);
+        assert_eq!(PALETTE_STRIDE, 4096);
     }
 
     /// Куб со стороной 1 и центром в начале координат.
     fn cube(assets: &mut Assets) -> Handle<Mesh> {
+        skinned_cube(assets, [0; 4], [0.0; 4])
+    }
+
+    /// `cube`, все вершины которого смешивают суставы `joints` с весами `weights`.
+    fn skinned_cube(assets: &mut Assets, joints: [u16; 4], weights: [f32; 4]) -> Handle<Mesh> {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
         for n in [
@@ -490,7 +658,8 @@ mod tests {
                     pos: (0.5 * (n + a * u + b * v)).into(),
                     normal: n.into(),
                     uv: [0.5, 0.5],
-                    ..Default::default()
+                    joints,
+                    weights,
                 });
             }
             indices.extend([0, 1, 2, 0, 2, 3].map(|i| base + i));
@@ -531,6 +700,18 @@ mod tests {
         assets: &mut Assets,
         gfx: &Gfx,
     ) -> Vec<u8> {
+        let models = ExpandedModels::new(&gfx.scene.as_ref().unwrap().models, assets);
+        render_models(device, queue, assets, gfx, &models)
+    }
+
+    /// `render` с готовыми моделями кадра.
+    fn render_models(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        assets: &mut Assets,
+        gfx: &Gfx,
+        models: &ExpandedModels,
+    ) -> Vec<u8> {
         let format = wgpu::TextureFormat::Rgba8UnormSrgb;
         let mut textures = GpuTextures::new(device, queue);
         textures.upload(assets);
@@ -546,7 +727,15 @@ mod tests {
         };
         offscreen(device, queue, |encoder, view| {
             let scene = gfx.scene.as_ref().unwrap();
-            meshes.draw(encoder, view, &depth, &textures, scene, gfx.clear_color);
+            meshes.draw(
+                encoder,
+                view,
+                &depth,
+                &textures,
+                scene,
+                models,
+                gfx.clear_color,
+            );
             sprites.draw(encoder, view, &textures, viewport, gfx, false);
         })
     }
@@ -724,5 +913,121 @@ mod tests {
         // Расстояние 4 от камеры, а не 3 от начала координат: туман ровно наполовину.
         let half = TEX.map(|c| linear_to_srgb(0.5 * srgb_to_linear(c) + 0.25));
         assert_pixel(&fogged(2.0, 6.0), "halfway", CENTER, half);
+    }
+
+    fn skinned(mesh: Handle<Mesh>, texture: Handle<Texture>, palette: usize) -> SkinnedDraw {
+        SkinnedDraw {
+            mesh,
+            texture,
+            transform: Mat4::from_translation(vec3(0.0, 0.0, -3.0)),
+            palette,
+        }
+    }
+
+    fn lit_scene() -> Gfx {
+        gfx(Scene {
+            ambient: Color::WHITE,
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn skinned_vertex_blends_joint_matrices() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let mut assets = Assets::default();
+        let cube = skinned_cube(&mut assets, [1, 2, 0, 0], [0.5, 0.5, 0.0, 0.0]);
+        let red = load_png(&mut assets, "skin-blend", 1, 1, &[255, 0, 0, 255]);
+        let models = ExpandedModels {
+            skinned: vec![skinned(cube, red, 0)],
+            palettes: vec![vec![
+                Mat4::from_translation(vec3(-100.0, 0.0, 0.0)),
+                Mat4::from_translation(vec3(2.0, 0.0, 0.0)),
+                Mat4::IDENTITY,
+            ]],
+            ..Default::default()
+        };
+        let img = render_models(&device, &queue, &mut assets, &lit_scene(), &models);
+        // Полусумма сдвигов 2 и 0 — куб на x = 1: правее центра на 18 пикселей.
+        assert_pixel(&img, "moved by blend", (50, 32), [255, 0, 0]);
+        assert_pixel(&img, "left in place", CENTER, BLUE);
+    }
+
+    #[test]
+    fn each_skinned_instance_uses_its_palette() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let mut assets = Assets::default();
+        let cube = skinned_cube(&mut assets, [0; 4], [1.0, 0.0, 0.0, 0.0]);
+        let red = load_png(&mut assets, "skin-two-red", 1, 1, &[255, 0, 0, 255]);
+        let green = load_png(&mut assets, "skin-two-green", 1, 1, &[0, 255, 0, 255]);
+        let models = ExpandedModels {
+            skinned: vec![skinned(cube, red, 0), skinned(cube, green, 1)],
+            palettes: vec![
+                vec![Mat4::from_translation(vec3(-1.0, 0.0, 0.0))],
+                vec![Mat4::from_translation(vec3(1.0, 0.0, 0.0))],
+            ],
+            ..Default::default()
+        };
+        let img = render_models(&device, &queue, &mut assets, &lit_scene(), &models);
+        assert_pixel(&img, "first palette", (14, 32), [255, 0, 0]);
+        assert_pixel(&img, "second palette", (50, 32), [0, 255, 0]);
+        assert_pixel(&img, "between", CENTER, BLUE);
+    }
+
+    #[test]
+    fn max_joints_drawn_one_more_skipped() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        #[expect(clippy::cast_possible_truncation, reason = "63")]
+        let last = (MAX_JOINTS - 1) as u16;
+        let mut assets = Assets::default();
+        let cube = skinned_cube(&mut assets, [last, 0, 0, 0], [1.0, 0.0, 0.0, 0.0]);
+        let red = load_png(&mut assets, "skin-max", 1, 1, &[255, 0, 0, 255]);
+        let with_joints = |n| {
+            let mut palette = vec![Mat4::ZERO; n];
+            palette[MAX_JOINTS - 1] = Mat4::IDENTITY;
+            ExpandedModels {
+                skinned: vec![skinned(cube, red, 0)],
+                palettes: vec![palette],
+                ..Default::default()
+            }
+        };
+        let full = with_joints(MAX_JOINTS);
+        let img = render_models(&device, &queue, &mut assets, &lit_scene(), &full);
+        assert_pixel(&img, "64 joints", CENTER, [255, 0, 0]);
+        let over = with_joints(MAX_JOINTS + 1);
+        let img = render_models(&device, &queue, &mut assets, &lit_scene(), &over);
+        assert_pixel(&img, "65 joints", CENTER, BLUE);
+    }
+
+    #[test]
+    fn model_parts_are_drawn() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        for (file, z) in [("gate.glb", -3.0), ("character-orc.glb", -2.0)] {
+            let mut assets = Assets::default();
+            let model = assets.load_model(crate::model::tests::testdata(file));
+            let mut gfx = gfx(Scene {
+                ambient: Color::WHITE,
+                camera: Camera3D {
+                    pos: vec3(0.0, 0.4, 0.0),
+                    ..Default::default()
+                },
+                models: vec![crate::ModelDraw {
+                    model,
+                    transform: Mat4::from_translation(vec3(0.0, 0.0, z)),
+                    pose: None,
+                }],
+                ..Default::default()
+            });
+            gfx.clear_color = Color::BLACK;
+            let img = render(&device, &queue, &mut assets, &gfx);
+            assert_ne!(crate::gpu_test::pixel(&img, 32, 32), [0, 0, 0], "{file}");
+        }
     }
 }

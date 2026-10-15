@@ -18,6 +18,7 @@ struct SceneUniform {
 @group(0) @binding(0) var<uniform> scene: SceneUniform;
 @group(1) @binding(0) var tex: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
+@group(2) @binding(0) var<uniform> palette: array<mat4x4<f32>, 64>;
 
 struct VertexIn {
     @location(0) pos: vec3<f32>,
@@ -35,6 +36,11 @@ struct InstanceIn {
     @location(9) n2: vec3<f32>,
 }
 
+struct SkinIn {
+    @location(10) joints: vec4<u32>,
+    @location(11) weights: vec4<f32>,
+}
+
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) world: vec3<f32>,
@@ -42,16 +48,30 @@ struct VsOut {
     @location(2) uv: vec2<f32>,
 }
 
-@vertex
-fn vs_static(v: VertexIn, inst: InstanceIn) -> VsOut {
+fn vs_out(pos: vec4<f32>, normal: vec3<f32>, uv: vec2<f32>, inst: InstanceIn) -> VsOut {
     let model = mat4x4(inst.m0, inst.m1, inst.m2, inst.m3);
-    let world = model * vec4(v.pos, 1.0);
+    let world = model * pos;
     var out: VsOut;
     out.clip = scene.view_proj * world;
     out.world = world.xyz;
-    out.normal = mat3x3(inst.n0, inst.n1, inst.n2) * v.normal;
-    out.uv = v.uv;
+    out.normal = mat3x3(inst.n0, inst.n1, inst.n2) * normal;
+    out.uv = uv;
     return out;
+}
+
+@vertex
+fn vs_static(v: VertexIn, inst: InstanceIn) -> VsOut {
+    return vs_out(vec4(v.pos, 1.0), v.normal, v.uv, inst);
+}
+
+@vertex
+fn vs_skinned(v: VertexIn, s: SkinIn, inst: InstanceIn) -> VsOut {
+    let skin = palette[s.joints.x] * s.weights.x
+        + palette[s.joints.y] * s.weights.y
+        + palette[s.joints.z] * s.weights.z
+        + palette[s.joints.w] * s.weights.w;
+    let normal = mat3x3(skin[0].xyz, skin[1].xyz, skin[2].xyz) * v.normal;
+    return vs_out(skin * vec4(v.pos, 1.0), normal, v.uv, inst);
 }
 
 @fragment

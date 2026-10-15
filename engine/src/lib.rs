@@ -64,8 +64,8 @@ pub use physics::{
 };
 pub use renderer::{RenderError, Renderer};
 pub use scene::{
-    ExpandedModels, Fog, MAX_LIGHTS, MeshBatch, MeshDraw, MeshInstance, ModelDraw, PointLight,
-    Scene, SkinnedDraw, batch_meshes,
+    ExpandedModels, Fog, MAX_JOINTS, MAX_LIGHTS, MeshBatch, MeshDraw, MeshInstance, ModelDraw,
+    PointLight, Scene, SkinnedDraw, batch_meshes,
 };
 pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;

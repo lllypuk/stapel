@@ -9,6 +9,8 @@ use crate::{Assets, Camera3D, Color, Handle, Texture};
 
 /// Сколько точечных источников доходит до шейдера; остальные отбрасываются.
 pub const MAX_LIGHTS: usize = 16;
+/// Сколько суставов в палитре доходит до шейдера; скин длиннее не рисуется.
+pub const MAX_JOINTS: usize = 64;
 
 /// 3D-кадр: рисуется до спрайтов на всю поверхность.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -151,15 +153,21 @@ pub struct MeshInstance {
     pub normal: [[f32; 3]; 3],
 }
 
-impl From<&MeshDraw> for MeshInstance {
-    fn from(d: &MeshDraw) -> Self {
+impl From<Mat4> for MeshInstance {
+    fn from(transform: Mat4) -> Self {
         Self {
-            model: d.transform.to_cols_array_2d(),
-            normal: Mat3::from_mat4(d.transform)
+            model: transform.to_cols_array_2d(),
+            normal: Mat3::from_mat4(transform)
                 .inverse()
                 .transpose()
                 .to_cols_array_2d(),
         }
+    }
+}
+
+impl From<&MeshDraw> for MeshInstance {
+    fn from(d: &MeshDraw) -> Self {
+        Self::from(d.transform)
     }
 }
 
@@ -175,8 +183,10 @@ pub struct MeshBatch {
 }
 
 /// Сортирует по `(mesh, texture)` и режет на батчи; порядок внутри 3D решает глубина.
-pub fn batch_meshes(draws: &[MeshDraw]) -> (Vec<MeshInstance>, Vec<MeshBatch>) {
-    let mut order: Vec<&MeshDraw> = draws.iter().collect();
+pub fn batch_meshes<'a>(
+    draws: impl IntoIterator<Item = &'a MeshDraw>,
+) -> (Vec<MeshInstance>, Vec<MeshBatch>) {
+    let mut order: Vec<&MeshDraw> = draws.into_iter().collect();
     order.sort_by_key(|d| (d.mesh, d.texture));
 
     let mut instances = Vec::with_capacity(order.len());
