@@ -76,4 +76,4 @@
 - [x] `make check`, `make cov` (порог не ниже 98), `make mutants` — без выживших вне исключений
 
 ### Task 7: [Final] Update documentation
-- [ ] перенести план в `docs/plans/completed/`
+- [x] перенести план в `docs/plans/completed/`
