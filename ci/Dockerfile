@@ -1,9 +1,9 @@
-# Образ CI: toolchain из rust-toolchain.toml, инструменты make check/cov/mutants, lavapipe.
+# Образ CI: toolchain из rust-toolchain.toml, инструменты make check/cov/mutants, lavapipe, alsa для cpal.
 # Тег — CI_IMAGE в .gitlab-ci.yml; поднимается вместе с правкой этого файла.
 FROM rust:1.99.0-trixie
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers \
+    && apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers libasound2-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 COPY rust-toolchain.toml /tmp/toolchain/

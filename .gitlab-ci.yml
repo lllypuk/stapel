@@ -1,6 +1,6 @@
 # Образ — ci/Dockerfile, собирается и пушится вручную; тег поднимается вместе с его правкой.
 variables:
-  CI_IMAGE_TAG: "1"
+  CI_IMAGE_TAG: "2"
   CI_IMAGE: $CI_REGISTRY_IMAGE/ci:$CI_IMAGE_TAG
   # Без них офскрин-тест пропустился бы или ушёл на GL, и упали бы покрытие и мутанты.
   REQUIRE_GPU: "1"

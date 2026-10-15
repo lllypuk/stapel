@@ -1,8 +1,10 @@
 pub(crate) mod decode;
+pub(crate) mod device;
 mod mixer;
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use rtrb::{Producer, RingBuffer};
 
@@ -26,7 +28,6 @@ pub struct Audio {
 
 impl Audio {
     /// Игровая сторона и микшер аудиопотока над общей очередью.
-    #[cfg_attr(not(test), expect(dead_code, reason = "открывает устройство, Task 7"))]
     pub(crate) fn open() -> (Self, Mixer) {
         let (producer, consumer) = RingBuffer::new(QUEUE);
         let counters = Arc::new(Counters::default());
@@ -50,6 +51,17 @@ impl Audio {
         self.send(Command::Music { frames, volume });
     }
 
+    /// Счётчики аудиопотока; максимум колбэка сбрасывается. У немого — `None`.
+    pub(crate) fn report(&self) -> Option<AudioReport> {
+        self.queue.as_ref()?;
+        let c = &self.counters;
+        Some(AudioReport {
+            callback_max: Duration::from_nanos(c.callback_max.swap(0, Ordering::Relaxed)),
+            budget: Duration::from_nanos(c.budget.load(Ordering::Relaxed)),
+            dropped: c.dropped.load(Ordering::Relaxed),
+        })
+    }
+
     fn send(&mut self, command: Command) {
         if let Some(queue) = &mut self.queue
             && queue.push(command).is_err()
@@ -57,6 +69,14 @@ impl Audio {
             self.counters.dropped.fetch_add(1, Ordering::Relaxed);
         }
     }
+}
+
+/// Диагностика аудиопотока для лога; `dropped` — с запуска.
+#[derive(Debug, PartialEq)]
+pub(crate) struct AudioReport {
+    pub(crate) callback_max: Duration,
+    pub(crate) budget: Duration,
+    pub(crate) dropped: u64,
 }
 
 /// Сэмпл формата устройства.
@@ -82,7 +102,6 @@ impl DeviceSample for i16 {
 }
 
 /// Буфер устройства из `channels` каналов, кусками по `scratch`: моно — среднее L и R, сверх двух — тишина.
-#[cfg_attr(not(test), expect(dead_code, reason = "колбэк устройства, Task 7"))]
 pub(crate) fn fill<S: DeviceSample>(
     mixer: &mut Mixer,
     scratch: &mut [f32],
@@ -139,6 +158,32 @@ mod tests {
         audio.play(&ramp(10), 1.0);
         audio.play_music(&ramp(10), 1.0);
         assert_eq!(audio.counters.dropped.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn muted_audio_has_no_report() {
+        assert_eq!(Audio::default().report(), None);
+    }
+
+    #[test]
+    fn report_takes_callback_max_and_keeps_budget_and_dropped() {
+        let (audio, _mixer) = Audio::open();
+        let c = &audio.counters;
+        c.record_callback(Duration::from_millis(3), 480, 48_000);
+        c.record_callback(Duration::from_millis(1), 960, 48_000);
+        c.dropped.fetch_add(2, Ordering::Relaxed);
+        assert_eq!(
+            audio.report(),
+            Some(AudioReport {
+                callback_max: Duration::from_millis(3),
+                budget: Duration::from_millis(20),
+                dropped: 2,
+            })
+        );
+        let next = audio.report().unwrap();
+        assert_eq!(next.callback_max, Duration::ZERO);
+        assert_eq!(next.budget, Duration::from_millis(20));
+        assert_eq!(next.dropped, 2);
     }
 
     #[test]

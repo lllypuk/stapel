@@ -27,9 +27,9 @@ check:
 	typos
 	$(MAKE) lint doc deps test
 
-# app.rs и renderer.rs — склейка с окном, чистая логика поверхности — в surface.rs; порог только вверх.
+# app.rs, renderer.rs и audio/device.rs — склейка с окном и звуковой картой, чистая логика поверхности — в surface.rs; порог только вверх.
 cov:
-	cargo llvm-cov --workspace --ignore-filename-regex 'engine/src/(app|renderer)\.rs' --fail-under-lines 98
+	cargo llvm-cov --workspace --ignore-filename-regex 'engine/src/(app|renderer|audio/device)\.rs' --fail-under-lines 98
 
 # Исключения и причины — .cargo/mutants.toml.
 mutants:

@@ -8,6 +8,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
+use crate::audio::device;
 use crate::{Config, Context, FixedClock, FrameStats, Game, RateCounter, Renderer, step_frame};
 
 /// Ниже 4 FPS симуляция замедляется, а не догоняет лавиной тиков.
@@ -20,6 +21,8 @@ pub(crate) struct App<G> {
 }
 
 struct Running<G> {
+    // Раньше `ctx`: поля дропаются по порядку, колбэк должен встать до освобождения `Assets`.
+    _stream: Option<cpal::Stream>,
     window: Arc<Window>,
     renderer: Renderer,
     game: G,
@@ -52,9 +55,15 @@ impl<G: Game> ApplicationHandler for App<G> {
         let renderer = Renderer::new(window.clone(), self.config.vsync, self.config.pixel_perfect);
         let clock = FixedClock::new(self.config.tick_hz, MAX_FRAME);
         let mut ctx = Context::new(clock.step());
+        let stream = device::open().map(|(stream, audio, rate)| {
+            ctx.audio = audio;
+            ctx.assets.set_sample_rate(rate);
+            stream
+        });
         let game = G::init(&mut ctx);
         window.request_redraw();
         self.running = Some(Running {
+            _stream: stream,
             window,
             renderer,
             game,
@@ -136,6 +145,14 @@ impl<G: Game> Running<G> {
                 f.min_sprites,
                 f.max_sprites
             );
+            if let Some(a) = self.ctx.audio.report() {
+                log::info!(
+                    "audio cb {:.1}/{:.1}ms dropped {}",
+                    a.callback_max.as_secs_f64() * 1e3,
+                    a.budget.as_secs_f64() * 1e3,
+                    a.dropped
+                );
+            }
         }
         // Цикл стоит в `Wait`, и следующий кадр просим только отсюда: на Wayland с vsync winit
         // отдаст его по сигналу композитора, а свёрнутому окну композитор кадров не даёт.

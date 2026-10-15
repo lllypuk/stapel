@@ -217,10 +217,6 @@ impl Assets {
     }
 
     /// Частота, в которую ресемплируются звуки; после загрузки кэш хранил бы звук чужой частоты.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "зовёт app с устройством, Task 7")
-    )]
     pub(crate) fn set_sample_rate(&mut self, rate: u32) {
         debug_assert!(self.sounds.is_empty(), "set_sample_rate after load_sound");
         self.sample_rate = rate;

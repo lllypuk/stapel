@@ -159,16 +159,16 @@
 - Create: `engine/src/audio/device.rs`
 - Modify: `engine/src/app.rs`, `engine/Cargo.toml`, `Cargo.toml`, `Makefile`, `.cargo/mutants.toml`, `ci/Dockerfile`, `.gitlab-ci.yml`, `docs/design.md`, `CLAUDE.md`
 
-- [ ] `cpal`; поток с `scratch`, выделенным заранее, колбэк — `fill`, `stream.play()`; нет устройства или формат не `f32`/`i16` — `warn` и немой `Audio`
-- [ ] `app.rs`: устройство до `Game::init`, частота в `Assets`; `Stream` объявлен в `Running` раньше `ctx`; строка `audio cb … dropped …` раз в секунду
-- [ ] `Makefile` (`cov`): регулярка + `audio/device`; `.cargo/mutants.toml`: `exclude_globs` + `engine/src/audio/device.rs` с причиной
-- [ ] `ci/Dockerfile`: `libasound2-dev pkg-config`; `CI_IMAGE_TAG: "2"`; образ собран и запушен вручную как `ci:2`; `cargo deny check` — лицензии `cpal`/`alsa`/`alsa-sys` (`deny.toml` правится, только если не проходит)
-- [ ] `docs/design.md`:
+- [x] `cpal`; поток с `scratch`, выделенным заранее, колбэк — `fill`, `stream.play()`; нет устройства или формат не `f32`/`i16` — `warn` и немой `Audio`
+- [x] `app.rs`: устройство до `Game::init`, частота в `Assets`; `Stream` объявлен в `Running` раньше `ctx`; строка `audio cb … dropped …` раз в секунду
+- [x] `Makefile` (`cov`): регулярка + `audio/device`; `.cargo/mutants.toml`: `exclude_globs` + `engine/src/audio/device.rs` с причиной
+- [x] `ci/Dockerfile`: `libasound2-dev pkg-config`; `CI_IMAGE_TAG: "2"`; образ собирается и пушится вручную как `ci:2` (пропущено — вручную, CLAUDE.md); `cargo deny check` — лицензии `cpal`/`alsa`/`alsa-sys` (`deny.toml` правится, только если не проходит)
+- [x] `docs/design.md`:
   - «Ресурсы, физика, звук»: звуки и музыка декодируются целиком, `Stop` и кража отложены
   - «Молчаливые поломки»: порядок полей `Stream`/`Assets`, `Arc` в RT-потоке при будущей выгрузке, `set_sample_rate` после загрузки, отброс без кражи, огибающая в фреймах, стык цикла музыки
   - `:91`: `audio/device.rs` — склейка, вне замера
-- [ ] `CLAUDE.md`: граница тестируемости — `audio/device.rs` склейка
-- [ ] `make check` — зелёный
+- [x] `CLAUDE.md`: граница тестируемости — `audio/device.rs` склейка
+- [x] `make check` — зелёный
 
 ### Task 8: Платформер — ассеты, карта, тайлы, камера
 

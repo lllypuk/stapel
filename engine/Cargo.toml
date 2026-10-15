@@ -17,6 +17,7 @@ fontdue.workspace = true
 hound.workspace = true
 lewton.workspace = true
 rtrb.workspace = true
+cpal.workspace = true
 
 [lints]
 workspace = true

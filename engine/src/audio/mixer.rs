@@ -1,6 +1,7 @@
 use std::iter;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use rtrb::Consumer;
 
@@ -25,6 +26,23 @@ pub(crate) enum Command {
 pub(crate) struct Counters {
     /// Команды, отброшенные из-за полной очереди или занятых голосов.
     pub(crate) dropped: AtomicU64,
+    /// Самый долгий колбэк устройства с прошлого отчёта, нс.
+    pub(crate) callback_max: AtomicU64,
+    /// Длительность звука в последнем буфере устройства, нс.
+    pub(crate) budget: AtomicU64,
+}
+
+impl Counters {
+    /// Колбэк устройства занял `took` на буфер из `frames` фреймов в частоте `rate`.
+    pub(crate) fn record_callback(&self, took: Duration, frames: usize, rate: u32) {
+        let budget = Duration::from_secs_f64(frames as f64 / f64::from(rate));
+        self.callback_max.fetch_max(nanos(took), Ordering::Relaxed);
+        self.budget.store(nanos(budget), Ordering::Relaxed);
+    }
+}
+
+fn nanos(d: Duration) -> u64 {
+    u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
 }
 
 struct Voice {
