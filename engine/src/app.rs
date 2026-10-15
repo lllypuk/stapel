@@ -101,7 +101,7 @@ impl<G: Game> ApplicationHandler for App<G> {
             return;
         };
         let _ = r.egui_state.on_window_event(&r.window, &event);
-        if !ui::to_input(&event, r.egui.egui_wants_pointer_input()) {
+        if !ui::to_input(&event, ui::wants_pointer(&r.egui, r.ctx.input.cursor())) {
             return;
         }
         match event {

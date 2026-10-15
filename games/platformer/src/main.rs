@@ -1151,6 +1151,7 @@ impl Game for Platformer {
         }
         egui::Window::new("Редактор")
             .resizable(false)
+            .vscroll(true)
             .show(ui, |ui| {
                 panel::show(ui, &self.editor, &self.levels, &self.path, &mut self.queue);
             });
