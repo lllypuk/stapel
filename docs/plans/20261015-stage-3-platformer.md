@@ -218,10 +218,11 @@
 - Modify: `games/platformer/src/main.rs`
 - Create: `games/platformer/assets/{jump,coin,stomp,hurt,win}.wav`, `games/platformer/assets/music.ogg`
 
-- [ ] звуки сконвертированы из OGG Kenney, команда — в `CREDITS.md`
-- [ ] тесты: `sound(Sfx)` — хэндл нужного звука для каждого события; HUD — монеты, смерти, время; `LEVEL CLEAR` с итогами; Enter после победы — уровень заново
-- [ ] музыка из `init`; звуки по событиям тика
-- [ ] тесты — зелёные
+- [x] звуки сконвертированы из OGG Kenney, команда — в `CREDITS.md`
+- [x] тесты: `sound(Sfx)` — хэндл нужного звука для каждого события; HUD — монеты, смерти, время; `LEVEL CLEAR` с итогами; Enter после победы — уровень заново
+- [x] музыка из `init`; звуки по событиям тика
+- [x] тесты — зелёные
+- ➕ музыка — CC0 Juhani Junkala (OpenGameArt): у Kenney лупов нет; перекодирована в 48 кГц, а `decode::load` при равных частотах не ресемплирует: минус ~0,4 с на каждый `init` в тестах (debug); декод lewton — ещё ~0,6 с
 
 ### Task 13: Критерий «не застревает и не проваливается»
 

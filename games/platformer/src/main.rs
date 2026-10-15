@@ -1,9 +1,9 @@
 use std::{fmt, iter};
 
 use engine::{
-    Aabb, Actor, Axis, Camera2D, Color, Commands, Config, Contact, Context, Entity, Game, Gfx,
-    Handle, IVec2, Input, KeyCode, Rect, Solid, SparseSet, Sprite, Texture, Tilemap, Vec2, World,
-    grounded, ivec2, move_actor, move_solid, vec2,
+    Aabb, Actor, Assets, Axis, Camera2D, Color, Commands, Config, Contact, Context, Entity, Font,
+    FontData, Game, Gfx, Handle, IVec2, Input, KeyCode, Rect, Solid, Sound, SparseSet, Sprite,
+    Texture, Tilemap, Vec2, World, grounded, ivec2, move_actor, move_solid, vec2,
 };
 
 const TICK_HZ: u32 = 60;
@@ -65,6 +65,18 @@ const JUMP_BUFFER: u32 = 6;
 /// Тиков на кадр анимации бега.
 const RUN_FRAME: u32 = 8;
 const LEVEL1: &str = include_str!("../assets/level1.txt");
+const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
+const FONT_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/fonts/JetBrainsMono-Regular.ttf"
+);
+/// При `HUD_SCALE` и окне 1280×720 (масштаб 4) тексель атласа — пиксель экрана.
+const HUD_PX: f32 = 32.0;
+const HUD_SCALE: f32 = 0.25;
+const HUD_MARGIN: f32 = 4.0;
+const HUD_LAYER: i32 = 6;
+const SFX_VOLUME: f32 = 0.8;
+const MUSIC_VOLUME: f32 = 0.5;
 
 /// Ошибка разбора карты; `line` — с единицы, первая строка — верх.
 #[derive(Debug, PartialEq)]
@@ -94,7 +106,7 @@ struct PlatformSpawn {
 }
 
 /// Уровень из ASCII-карты; клетки — от левой нижней, Y вверх.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Level {
     size: IVec2,
     /// По строкам снизу вверх.
@@ -265,6 +277,60 @@ enum Sfx {
     Stomp,
     Hurt,
     Win,
+}
+
+/// Звуки событий.
+#[derive(Clone, Copy)]
+struct Sounds {
+    jump: Handle<Sound>,
+    coin: Handle<Sound>,
+    stomp: Handle<Sound>,
+    hurt: Handle<Sound>,
+    win: Handle<Sound>,
+}
+
+impl Sounds {
+    fn load(assets: &mut Assets) -> Self {
+        let mut wav = |name: &str| assets.load_sound(format!("{ASSETS}{name}.wav"));
+        Self {
+            jump: wav("jump"),
+            coin: wav("coin"),
+            stomp: wav("stomp"),
+            hurt: wav("hurt"),
+            win: wav("win"),
+        }
+    }
+
+    fn sound(&self, sfx: Sfx) -> Handle<Sound> {
+        match sfx {
+            Sfx::Jump => self.jump,
+            Sfx::Coin => self.coin,
+            Sfx::Stomp => self.stomp,
+            Sfx::Hurt => self.hurt,
+            Sfx::Win => self.win,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Hud {
+    font: Handle<Font>,
+    big: Handle<Font>,
+    ink: Color,
+}
+
+/// Ширина строки без переносов; символ вне атласа считается как `'?'`.
+fn text_width(font: &FontData, text: &str, scale: f32) -> f32 {
+    text.chars()
+        .filter_map(|c| font.glyph(c).or_else(|| font.glyph('?')))
+        .map(|g| g.advance * scale)
+        .sum()
+}
+
+/// Время уровня `m:ss` по тикам.
+fn clock(ticks: u32) -> String {
+    let s = ticks / TICK_HZ;
+    format!("{}:{:02}", s / 60, s % 60)
 }
 
 /// Что стоит за сенсором уровня.
@@ -590,12 +656,17 @@ struct Platformer {
     camera: Follow,
     coins: u32,
     deaths: u32,
-    /// Выход достигнут; мир стоит.
+    /// Тики уровня до выхода.
+    ticks: u32,
+    /// Выход достигнут; мир стоит до Enter.
     cleared: bool,
     /// События тика; звучат в `update`.
     sfx: Vec<Sfx>,
     tiles: Handle<Texture>,
     chars: Handle<Texture>,
+    /// До `init` — `None`.
+    hud: Option<Hud>,
+    sounds: Option<Sounds>,
 }
 
 impl Platformer {
@@ -630,19 +701,37 @@ impl Platformer {
             camera,
             coins: 0,
             deaths: 0,
+            ticks: 0,
             cleared: false,
             sfx: Vec::new(),
             tiles: Handle::WHITE,
             chars: Handle::WHITE,
+            hud: None,
+            sounds: None,
         }
+    }
+
+    /// Уровень заново; ассеты остаются.
+    fn restart(&mut self) {
+        *self = Self {
+            tiles: self.tiles,
+            chars: self.chars,
+            hud: self.hud,
+            sounds: self.sounds,
+            ..Self::new(self.level.clone())
+        };
     }
 
     fn tick(&mut self, input: &Input) {
         self.sfx.clear();
         self.save_prev();
         if self.cleared {
+            if input.just_pressed(KeyCode::Enter) {
+                self.restart();
+            }
             return;
         }
+        self.ticks += 1;
         let mut hits = Vec::new();
         let (solids, squished) = self.step_bodies(&mut hits);
         let (boxes, kinds) = sensors(
@@ -810,6 +899,39 @@ impl Platformer {
         }
     }
 
+    /// Счёт в левом верхнем углу вида, после выхода — итоги по центру.
+    fn draw_hud(&self, gfx: &mut Gfx, assets: &Assets, center: Vec2) {
+        let Some(hud) = self.hud else {
+            return;
+        };
+        let mut text = |font, s: &str, pos| {
+            gfx.draw_text(assets, font, s, center + pos, HUD_SCALE, hud.ink, HUD_LAYER);
+        };
+        let total = self.level.coins.len();
+        let coins = format!("COINS {}/{total}", self.coins);
+        let deaths = format!("DEATHS {}", self.deaths);
+        let time = format!("TIME {}", clock(self.ticks));
+        let half = VIEW.as_vec2() / 2.0;
+        if !self.cleared {
+            let top = half.y - HUD_MARGIN - HUD_PX * HUD_SCALE;
+            let status = format!("{coins}\n{deaths}\n{time}");
+            text(hud.font, &status, vec2(HUD_MARGIN - half.x, top));
+            return;
+        }
+        let line = assets.font(hud.font).line_height * HUD_SCALE;
+        let lines = [
+            (hud.big, "LEVEL CLEAR", 2.0 * line),
+            (hud.font, &time, 0.0),
+            (hud.font, &coins, -line),
+            (hud.font, &deaths, -2.0 * line),
+            (hud.font, "PRESS ENTER", -4.0 * line),
+        ];
+        for (font, s, y) in lines {
+            let width = text_width(assets.font(font), s, HUD_SCALE);
+            text(font, s, vec2(-width / 2.0, y));
+        }
+    }
+
     /// Твёрдые клетки, задевающие вид с целым центром `center`; верхняя — трава.
     fn draw_tiles(&self, gfx: &mut Gfx, center: IVec2) {
         let lo = (center - VIEW / 2).div_euclid(IVec2::splat(TILE));
@@ -844,11 +966,25 @@ impl Game for Platformer {
             env!("CARGO_MANIFEST_DIR"),
             "/assets/tilemap-characters_packed.png"
         ));
+        game.hud = Some(Hud {
+            font: ctx.assets.load_font(FONT_PATH, HUD_PX),
+            big: ctx.assets.load_font(FONT_PATH, 2.0 * HUD_PX),
+            ink: Color::from_srgb8(30, 40, 60),
+        });
+        game.sounds = Some(Sounds::load(&mut ctx.assets));
+        let music = ctx.assets.load_sound(format!("{ASSETS}music.ogg"));
+        ctx.audio.play_music(ctx.assets.sound(music), MUSIC_VOLUME);
         game
     }
 
     fn update(&mut self, ctx: &mut Context) {
         self.tick(&ctx.input);
+        if let Some(sounds) = self.sounds {
+            for &sfx in &self.sfx {
+                ctx.audio
+                    .play(ctx.assets.sound(sounds.sound(sfx)), SFX_VOLUME);
+            }
+        }
     }
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
@@ -868,6 +1004,7 @@ impl Game for Platformer {
             ctx.gfx.draw_sprite(e.sprite(self.chars, alpha));
         }
         ctx.gfx.draw_sprite(self.player.sprite(self.chars, alpha));
+        self.draw_hud(&mut ctx.gfx, &ctx.assets, center);
     }
 }
 
@@ -2098,5 +2235,137 @@ mod tests {
         let items = ctx.gfx.sprites.iter().filter(|s| s.layer == ITEM_LAYER);
         assert!(items.clone().count() > 0);
         assert!(items.clone().all(|s| s.texture == g.tiles));
+    }
+
+    #[test]
+    fn each_sfx_has_its_own_sound() {
+        let (g, mut ctx) = started();
+        let sounds = g.sounds.unwrap();
+        let cases = [
+            (Sfx::Jump, "jump"),
+            (Sfx::Coin, "coin"),
+            (Sfx::Stomp, "stomp"),
+            (Sfx::Hurt, "hurt"),
+            (Sfx::Win, "win"),
+        ];
+        for (sfx, name) in cases {
+            let file = ctx.assets.load_sound(format!("{ASSETS}{name}.wav"));
+            assert_eq!(sounds.sound(sfx), file, "{sfx:?}");
+        }
+    }
+
+    #[test]
+    fn clock_shows_whole_minutes_and_seconds() {
+        assert_eq!(clock(0), "0:00");
+        assert_eq!(clock(TICK_HZ - 1), "0:00");
+        assert_eq!(clock(61 * TICK_HZ), "1:01");
+        assert_eq!(clock(609 * TICK_HZ), "10:09");
+    }
+
+    #[test]
+    fn time_runs_until_exit() {
+        let mut g = room(&["......", "P..X..", "######"]);
+        sounds(&mut g, D, 40);
+        let t = g.ticks;
+        assert!(g.cleared && (1..40).contains(&t), "{t}");
+        g.tick(&Input::default());
+        assert_eq!(g.ticks, t);
+    }
+
+    fn hud(gfx: &Gfx) -> Vec<Sprite> {
+        (gfx.sprites.iter())
+            .filter(|s| s.layer == HUD_LAYER)
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn hud_pins_coins_deaths_and_time_to_view_corner() {
+        let (mut g, mut ctx) = started();
+        (g.coins, g.deaths, g.ticks) = (2, 1, 61 * TICK_HZ + 59);
+        let pos = ivec2(500, 90);
+        g.camera = Follow { pos, prev: pos };
+        g.draw(&mut ctx, 0.0);
+        let Hud { font, ink, .. } = g.hud.unwrap();
+        let n = g.level.coins.len();
+        let status = format!("COINS 2/{n}\nDEATHS 1\nTIME 1:01");
+        let font = ctx.assets.font(font);
+        let at = vec2(344.0, 168.0);
+        let want: Vec<Sprite> =
+            engine::text::layout(font, &status, at, HUD_SCALE, ink, HUD_LAYER).collect();
+        assert_ne!(want, []);
+        assert_eq!(hud(&ctx.gfx), want);
+    }
+
+    #[test]
+    fn level_clear_centers_totals_and_hint() {
+        let (mut g, mut ctx) = started();
+        (g.coins, g.deaths, g.ticks, g.cleared) = (3, 4, 5 * TICK_HZ, true);
+        let pos = ivec2(500, 90);
+        g.camera = Follow { pos, prev: pos };
+        g.draw(&mut ctx, 0.0);
+        let Hud { font, big, ink } = g.hud.unwrap();
+        let line = ctx.assets.font(font).line_height * HUD_SCALE;
+        let ratio = ctx.assets.font(big).line_height * HUD_SCALE / line;
+        assert!((1.9..2.1).contains(&ratio), "{ratio}");
+        let n = g.level.coins.len();
+        let coins = format!("COINS 3/{n}");
+        let lines = [
+            (big, "LEVEL CLEAR", 2.0 * line),
+            (font, "TIME 0:05", 0.0),
+            (font, &coins, -line),
+            (font, "DEATHS 4", -2.0 * line),
+            (font, "PRESS ENTER", -4.0 * line),
+        ];
+        let want: Vec<Sprite> = lines
+            .into_iter()
+            .flat_map(|(f, s, y)| {
+                let f = ctx.assets.font(f);
+                let at = vec2(500.0 - text_width(f, s, HUD_SCALE) / 2.0, 90.0 + y);
+                engine::text::layout(f, s, at, HUD_SCALE, ink, HUD_LAYER)
+            })
+            .collect();
+        assert_eq!(hud(&ctx.gfx), want);
+    }
+
+    #[test]
+    fn hud_needs_init() {
+        let mut g = flat();
+        let mut ctx = Context::default();
+        g.draw(&mut ctx, 0.0);
+        assert_eq!(hud(&ctx.gfx), []);
+    }
+
+    #[test]
+    fn text_width_sums_advances() {
+        let mut assets = Assets::default();
+        let handle = assets.load_font(FONT_PATH, HUD_PX);
+        let font = assets.font(handle);
+        let one = text_width(font, "0", HUD_SCALE);
+        assert_eq!(one, font.glyph('0').unwrap().advance * HUD_SCALE);
+        assert!((text_width(font, "0\u{e9}0", HUD_SCALE) - 3.0 * one).abs() < 1e-4);
+    }
+
+    #[test]
+    fn enter_after_exit_restarts_level_and_keeps_assets() {
+        let (art, _) = started();
+        let mut g = room(&["o.....", "P.oX..", "######"]);
+        (g.tiles, g.chars, g.hud, g.sounds) = (art.tiles, art.chars, art.hud, art.sounds);
+        sounds(&mut g, D, 40);
+        g.deaths = 2;
+        assert!(g.cleared && g.coins == 1);
+        g.tick(&input(&[KeyCode::Space]));
+        assert!(g.cleared);
+        g.tick(&input(&[KeyCode::Enter]));
+        assert!(!g.cleared);
+        assert_eq!((g.coins, g.deaths, g.ticks), (0, 0, 0));
+        assert_eq!(g.player.body.aabb, Player::spawn(g.level.player).body.aabb);
+        assert_eq!(coins(&g).len(), 2);
+        assert_eq!((g.tiles, g.chars), (art.tiles, art.chars));
+        assert_eq!(g.hud.unwrap().big, art.hud.unwrap().big);
+        let jump = |g: &Platformer| g.sounds.unwrap().sound(Sfx::Jump);
+        assert_eq!(jump(&g), jump(&art));
+        g.tick(&input(D));
+        assert_eq!(g.ticks, 1);
     }
 }

@@ -23,6 +23,9 @@ pub(crate) fn load(path: &Path, rate: u32) -> Result<Vec<f32>, String> {
         2 => samples,
         n => return Err(format!("{n} channels, expected 1 or 2")),
     };
+    if from == rate {
+        return Ok(stereo);
+    }
     Ok(resample(&stereo, from, rate))
 }
 
@@ -136,6 +139,7 @@ mod tests {
         assert!(frames.iter().all(|[l, r]| l.to_bits() == r.to_bits()));
         let peak = out.iter().fold(0.0_f32, |m, s| m.max(s.abs()));
         assert!((0.1..0.15).contains(&peak), "{peak}");
+        assert_eq!(load(path, 88_200).unwrap().len(), 2 * out.len());
     }
 
     #[test]
