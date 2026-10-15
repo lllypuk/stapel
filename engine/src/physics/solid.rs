@@ -156,13 +156,13 @@ mod tests {
     fn rider_travels_along_x_and_y_keeping_its_remainder() {
         let mut solids = [platform(20, 20, 20, 4)];
         let mut actors = [Actor {
-            remainder: vec2(0.3, -0.2),
+            remainder: vec2(0.5, 0.5),
             ..body(25, 24)
         }];
         shift(&mut solids, vec2(3.0, 2.0), &mut actors, &[]);
         assert_eq!(solids[0].aabb.min, ivec2(23, 22));
         assert_eq!(actors[0].aabb.min, ivec2(28, 26));
-        assert_eq!(actors[0].remainder, vec2(0.3, -0.2));
+        assert_eq!(actors[0].remainder, vec2(0.5, 0.5));
     }
 
     #[test]
@@ -195,9 +195,16 @@ mod tests {
     #[test]
     fn side_push_moves_by_overlap_depth() {
         let mut solids = [platform(10, 10, 10, 10)];
-        let mut actors = [body(22, 10), body(0, 10)];
+        let mut actors = [
+            Actor {
+                remainder: vec2(0.5, 0.0),
+                ..body(22, 10)
+            },
+            body(0, 10),
+        ];
         let out = shift(&mut solids, vec2(5.0, 0.0), &mut actors, &[]);
         assert_eq!(actors[0].aabb.min, ivec2(25, 10));
+        assert_eq!(actors[0].remainder, vec2(0.5, 0.0));
         assert_eq!(actors[1].aabb.min, ivec2(0, 10));
         assert_eq!(out.squished, Vec::<usize>::new());
 

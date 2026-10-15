@@ -26,10 +26,10 @@
 **Files:**
 - Modify: `engine/src/physics/solid.rs`, `docs/design.md`
 
-- [ ] `rider_travels_along_x_and_y_keeping_its_remainder`: `remainder = vec2(0.5, 0.5)`; `side_push_moves_by_overlap_depth`: толкаемому остаток `+0.5` по оси толчка (`+X`) — знак совпадает со сдвигом, иначе округление не даёт лишнего пикселя
-- [ ] мутация `solid.rs:78`: `move_exact` → `move_actor` с `shift.as_vec2()` — оба теста падают
-- [ ] пометка пункта «Push и carry» — имена тестов
-- [ ] тесты — зелёные
+- [x] `rider_travels_along_x_and_y_keeping_its_remainder`: `remainder = vec2(0.5, 0.5)`; `side_push_moves_by_overlap_depth`: толкаемому остаток `+0.5` по оси толчка (`+X`) — знак совпадает со сдвигом, иначе округление не даёт лишнего пикселя
+- [x] мутация `solid.rs:78`: `move_exact` → `move_actor` с `shift.as_vec2()` — оба теста падают
+- [x] пометка пункта «Push и carry» — имена тестов
+- [x] тесты — зелёные
 
 ### Task 2: Контакт — на пиксельном пути, не по заметённому прямоугольнику
 
