@@ -2368,4 +2368,191 @@ mod tests {
         g.tick(&input(D));
         assert_eq!(g.ticks, 1);
     }
+
+    /// Игрок пересекает твёрдый тайл или платформу.
+    fn stuck(g: &Platformer) -> bool {
+        let a = g.player.body.aabb;
+        g.map.overlaps_solid(&a) || platforms(g).iter().any(|p| p.overlaps(&a))
+    }
+
+    #[test]
+    fn rider_stays_on_platform_faster_than_fall() {
+        let mut rows = vec![".."; 12];
+        rows[0] = "!P";
+        rows[10] = "H.";
+        rows[11] = "#.";
+        let mut g = room(&rows);
+        for (_, p) in g.world.storage_mut::<Platform>().iter_mut() {
+            p.dir *= 6;
+        }
+        g.player.body.aabb.min = ivec2(3, 2 * TILE);
+        let mut ys = Vec::new();
+        for _ in 0..200 {
+            g.tick(&Input::default());
+            assert!(!stuck(&g), "{:?}", g.player.body.aabb);
+            let p = platforms(&g)[0];
+            assert_eq!(g.player.body.aabb.min - p.min, ivec2(3, TILE));
+            ys.push(p.min.y);
+        }
+        assert_eq!(
+            (ys.iter().min(), ys.iter().max()),
+            (Some(&TILE), Some(&180))
+        );
+    }
+
+    #[test]
+    fn rider_on_one_pixel_of_platform_edge_rides_both_ways() {
+        for dx in [1 - PLAYER_SIZE.x, TILE - 1] {
+            let mut g = ferry();
+            g.player.body.aabb.min = ivec2(TILE + dx, TILE);
+            for _ in 0..200 {
+                g.tick(&Input::default());
+                assert!(!stuck(&g), "{:?}", g.player.body.aabb);
+                let p = platforms(&g)[0];
+                assert_eq!(g.player.body.aabb.min - p.min, ivec2(dx, TILE));
+            }
+        }
+    }
+
+    #[test]
+    fn platform_carry_into_wall_stops_rider_alive() {
+        let mut g = room(&[
+            "P........",
+            ".........",
+            "......#..",
+            "!=......!",
+            "#########",
+        ]);
+        g.player.body.aabb.min = ivec2(TILE + 3, 2 * TILE);
+        let mut walled = false;
+        for _ in 0..300 {
+            g.tick(&Input::default());
+            assert!(!stuck(&g), "{:?}", g.player.body.aabb);
+            let top = g.player.body.aabb.min.y == 2 * TILE;
+            walled |= top && g.player.body.aabb.max().x == 6 * TILE;
+        }
+        assert!(walled);
+        assert_eq!(g.deaths, 0);
+    }
+
+    #[test]
+    fn jump_into_ceiling_corner_never_overlaps() {
+        let mut bumps = 0;
+        for x in 60..=110 {
+            let mut g = room(&[
+                "......####",
+                "..........",
+                "..........",
+                "P.........",
+                "##########",
+            ]);
+            g.player.body.aabb.min = ivec2(x, TILE);
+            g.tick(&input(&[KeyCode::KeyD, KeyCode::Space]));
+            for _ in 0..40 {
+                g.tick(&input(D));
+                assert!(!stuck(&g), "x {x}: {:?}", g.player.body.aabb);
+                if g.player.body.aabb.max().y == 4 * TILE {
+                    bumps += 1;
+                }
+            }
+        }
+        assert!(bumps > 0);
+    }
+
+    #[test]
+    fn run_over_tile_seams_keeps_speed_and_slides_down_wall() {
+        let mut g = strip();
+        g.player.body.aabb.min = ivec2(0, 2 * TILE);
+        for _ in 0..40 {
+            g.tick(&input(D));
+        }
+        for _ in 0..150 {
+            g.tick(&input(D));
+            assert_eq!(g.player.vel.x, RUN_MAX);
+            assert_eq!(g.player.body.aabb.min.y, 2 * TILE);
+        }
+        for _ in 0..100 {
+            g.tick(&input(D));
+        }
+        g.tick(&input(&[KeyCode::KeyD, KeyCode::Space]));
+        for _ in 0..60 {
+            g.tick(&input(D));
+            assert!(!stuck(&g), "{:?}", g.player.body.aabb);
+            assert_eq!(g.player.body.aabb.max().x, 20 * TILE);
+        }
+        assert_eq!(g.player.body.aabb.min.y, 2 * TILE);
+    }
+
+    #[test]
+    fn spike_catches_fall_at_max_speed() {
+        let mut rows = vec!["."; 13];
+        rows[0] = "P";
+        rows[10] = "^";
+        rows[12] = "#";
+        let mut g = room(&rows);
+        let mut vel = 0.0;
+        while g.deaths == 0 {
+            assert!(g.ticks < 100, "{:?}", g.player.body.aabb);
+            vel = g.player.vel.y;
+            g.tick(&Input::default());
+        }
+        assert_eq!(vel, -FALL_MAX);
+    }
+
+    /// Xorshift64 для случайного прогона.
+    struct Xorshift(u64);
+
+    impl Xorshift {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+    }
+
+    #[test]
+    fn random_play_on_level1_never_overlaps_solids() {
+        // Клавиша, шансы 1/n нажать и 1/n отпустить за тик: D чаще A — прогон уходит вглубь уровня.
+        const KEYS: [(KeyCode, u64, u64); 4] = [
+            (KeyCode::KeyA, 16, 4),
+            (KeyCode::KeyD, 4, 16),
+            (KeyCode::Space, 6, 6),
+            (KeyCode::Enter, 32, 2),
+        ];
+        // Старты: начало, за шипами после первой ямы, на скале у лифта; со старта сиды не уходят дальше первой ямы.
+        let runs = [
+            (1, ivec2(3, 2)),
+            (0x9e37_79b9_7f4a_7c15, ivec2(42, 2)),
+            (0xdead_beef, ivec2(60, 7)),
+        ];
+        for (seed, start) in runs {
+            let mut rng = Xorshift(seed);
+            let mut level = parse(LEVEL1);
+            level.player = start;
+            let mut g = Platformer::new(level);
+            let mut keys = Input::default();
+            for t in 0..10_000 {
+                let r = rng.next();
+                for (i, &(k, press, release)) in KEYS.iter().enumerate() {
+                    let roll = (r >> (16 * i)) & 0xffff;
+                    let (odds, state) = if keys.is_down(k) {
+                        (release, Released)
+                    } else {
+                        (press, Pressed)
+                    };
+                    if roll.is_multiple_of(odds) {
+                        keys.on_key(k, state, false);
+                    }
+                }
+                g.tick(&keys);
+                keys.end_tick();
+                assert!(
+                    !stuck(&g),
+                    "seed {seed}, tick {t}: {:?}",
+                    g.player.body.aabb
+                );
+            }
+        }
+    }
 }
