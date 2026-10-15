@@ -4,6 +4,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::audio::{Sound, decode};
 use crate::frame::{linear_to_srgb, srgb_to_linear};
@@ -99,11 +100,35 @@ pub struct PendingTexture {
     pub rgba: Vec<u8>,
 }
 
+/// Версия файла для перезагрузки; правка с тем же `mtime` и длиной не заметна.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Stamp {
+    mtime: SystemTime,
+    len: u64,
+}
+
+impl Stamp {
+    /// `None` — файла нет или он не читается.
+    pub(crate) fn of(path: &Path) -> Option<Self> {
+        let meta = std::fs::metadata(path).ok()?;
+        Some(Self {
+            mtime: meta.modified().ok()?,
+            len: meta.len(),
+        })
+    }
+}
+
+/// Хэндл файла и версия, с которой он загружен последним.
+struct Watched<T> {
+    handle: Handle<T>,
+    stamp: Option<Stamp>,
+}
+
 /// Реестр текстур, шрифтов и звуков; новые текстуры ждут заливки на GPU до `take_pending`.
 pub struct Assets {
     next_index: u32,
     pending: Vec<PendingTexture>,
-    paths: HashMap<PathBuf, Handle<Texture>>,
+    paths: HashMap<PathBuf, Watched<Texture>>,
     fonts: Vec<FontData>,
     font_keys: HashMap<(PathBuf, u32), Handle<Font>>,
     sounds: Vec<Sound>,
@@ -132,25 +157,41 @@ impl Assets {
     /// Повторный путь отдаёт прежний хэндл; ошибка чтения или декодирования — шахматку и `warn`.
     pub fn load_texture(&mut self, path: impl AsRef<Path>) -> Handle<Texture> {
         let path = path.as_ref();
-        if let Some(&h) = self.paths.get(path) {
-            return h;
+        if let Some(w) = self.paths.get(path) {
+            return w.handle;
         }
-        let handle = match image::open(path) {
-            Ok(img) => {
-                let img = img.into_rgba8();
-                let (w, h) = img.dimensions();
-                let mut rgba = img.into_raw();
-                premultiply(&mut rgba);
-                self.push(TextureKind::Color, w, h, rgba)
-            }
-            Err(e) => {
-                log::warn!("texture {}: {e}", path.display());
-                let (w, h, rgba) = checkerboard();
-                self.push(TextureKind::Color, w, h, rgba)
-            }
-        };
-        self.paths.insert(path.to_path_buf(), handle);
+        // Версия — до чтения: правка во время декода увидится следующим опросом.
+        let stamp = Stamp::of(path);
+        let (w, h, rgba) = decode_png(path).unwrap_or_else(|e| {
+            log::warn!("texture {}: {e}", path.display());
+            checkerboard()
+        });
+        let handle = self.push(TextureKind::Color, w, h, rgba);
+        self.paths
+            .insert(path.to_path_buf(), Watched { handle, stamp });
         handle
+    }
+
+    /// Перечитывает изменившиеся файлы текстур в pending под прежними хэндлами.
+    /// Версия запоминается и при ошибке: битый файл даёт один `warn` и оставляет прежнюю текстуру.
+    pub fn reload_changed(&mut self) {
+        for (path, w) in &mut self.paths {
+            let stamp = Stamp::of(path);
+            if stamp == w.stamp {
+                continue;
+            }
+            w.stamp = stamp;
+            match decode_png(path) {
+                Ok((width, height, rgba)) => self.pending.push(PendingTexture {
+                    handle: w.handle,
+                    kind: TextureKind::Color,
+                    width,
+                    height,
+                    rgba,
+                }),
+                Err(e) => log::warn!("texture {}: {e}", path.display()),
+            }
+        }
     }
 
     /// Кэш по `(path, px)`: метрики зависят от размера. Ошибка — шрифт-заглушка без атласа и `warn`.
@@ -234,7 +275,7 @@ impl Assets {
         self.push(TextureKind::Coverage, width, height, rgba)
     }
 
-    /// Забирает всё, что накопилось с прошлого вызова.
+    /// Забирает всё, что накопилось с прошлого вызова, в порядке поступления: замена слота идёт после его создания.
     pub fn take_pending(&mut self) -> Vec<PendingTexture> {
         std::mem::take(&mut self.pending)
     }
@@ -267,6 +308,14 @@ pub fn premultiply(rgba: &mut [u8]) {
             *c = linear_to_srgb(srgb_to_linear(*c) * a);
         }
     }
+}
+
+fn decode_png(path: &Path) -> image::ImageResult<(u32, u32, Vec<u8>)> {
+    let img = image::open(path)?.into_rgba8();
+    let (w, h) = img.dimensions();
+    let mut rgba = img.into_raw();
+    premultiply(&mut rgba);
+    Ok((w, h, rgba))
 }
 
 fn checkerboard() -> (u32, u32, Vec<u8>) {
@@ -363,6 +412,110 @@ mod tests {
         assets.load_texture(&path);
         std::fs::remove_file(&path).unwrap();
         assert_checkerboard(&assets.take_pending()[1]);
+    }
+
+    fn write_px(path: &Path, rgba: [u8; 4]) {
+        image::save_buffer(path, &rgba, 1, 1, image::ExtendedColorType::Rgba8).unwrap();
+    }
+
+    /// Новая версия файла без паузы: mtime на Linux грубый.
+    fn set_mtime(path: &Path, secs: u64) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
+    }
+
+    #[test]
+    fn changed_texture_is_pending_under_same_handle() {
+        let path = temp_path("reload.png");
+        write_px(&path, [255, 0, 0, 255]);
+        let mut assets = Assets::default();
+        let h = assets.load_texture(&path);
+        assets.take_pending();
+        write_px(&path, [0, 255, 0, 255]);
+        set_mtime(&path, 1000);
+        assets.reload_changed();
+        let pending = assets.take_pending();
+        assets.reload_changed();
+        let again = assets.take_pending();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            pending,
+            [PendingTexture {
+                handle: h,
+                kind: TextureKind::Color,
+                width: 1,
+                height: 1,
+                rgba: vec![0, 255, 0, 255],
+            }]
+        );
+        assert_eq!(again, []);
+    }
+
+    #[test]
+    fn unchanged_texture_is_not_reloaded() {
+        let path = temp_path("unchanged.png");
+        write_px(&path, [255, 0, 0, 255]);
+        let mut assets = Assets::default();
+        assets.load_texture(&path);
+        assets.take_pending();
+        assets.reload_changed();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(assets.take_pending(), []);
+    }
+
+    #[test]
+    fn broken_reload_keeps_old_texture_and_remembers_version() {
+        let path = temp_path("broken-reload.png");
+        write_px(&path, [255, 0, 0, 255]);
+        let mut assets = Assets::default();
+        assets.load_texture(&path);
+        assets.take_pending();
+        std::fs::write(&path, b"\x89PNG\r\n\x1a\nnot a png").unwrap();
+        set_mtime(&path, 1000);
+        assets.reload_changed();
+        let stamp = Stamp::of(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(assets.take_pending(), []);
+        // Запомненная версия — повторный опрос не декодирует и не пишет `warn` снова.
+        assert!(stamp.is_some());
+        assert_eq!(assets.paths[&path].stamp, stamp);
+    }
+
+    #[test]
+    fn stub_is_replaced_when_file_appears() {
+        let path = temp_path("appears.png");
+        let mut assets = Assets::default();
+        let h = assets.load_texture(&path);
+        assets.take_pending();
+        assets.reload_changed();
+        assert_eq!(assets.take_pending(), []);
+        write_px(&path, [0, 0, 255, 255]);
+        assets.reload_changed();
+        std::fs::remove_file(&path).unwrap();
+        let t = assets.take_pending().pop().unwrap();
+        assert_eq!((t.handle, t.rgba), (h, vec![0, 0, 255, 255]));
+    }
+
+    #[test]
+    fn stamp_tracks_mtime_and_len() {
+        let path = temp_path("stamp.png");
+        std::fs::write(&path, b"ab").unwrap();
+        set_mtime(&path, 1000);
+        let a = Stamp::of(&path);
+        set_mtime(&path, 2000);
+        let b = Stamp::of(&path);
+        std::fs::write(&path, b"abc").unwrap();
+        set_mtime(&path, 2000);
+        let c = Stamp::of(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert!(a.is_some());
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_eq!(Stamp::of(&path), None);
     }
 
     #[test]

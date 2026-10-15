@@ -106,15 +106,15 @@ impl SpritePipeline {
         }
     }
 
-    /// Заливает на GPU текстуры, загруженные с прошлого вызова.
+    /// Заливает на GPU текстуры, загруженные с прошлого вызова; хэндл уже залитой — замена.
     ///
     /// # Panics
     /// Если текстуры пришли не из того же `Assets`, что прошлые.
     pub fn upload(&mut self, assets: &mut Assets) {
         for t in assets.take_pending() {
-            assert_eq!(
-                t.handle.index as usize,
-                self.textures.len(),
+            let index = t.handle.index as usize;
+            assert!(
+                index <= self.textures.len(),
                 "texture handles must come from one Assets in order"
             );
             let (format, sampler) = match t.kind {
@@ -147,21 +147,25 @@ impl SpritePipeline {
                 size,
             );
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            self.textures
-                .push(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: None,
-                    layout: &self.texture_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        },
-                    ],
-                }));
+            let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &self.texture_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            });
+            if index == self.textures.len() {
+                self.textures.push(group);
+            } else {
+                self.textures[index] = group;
+            }
         }
     }
 
@@ -568,6 +572,49 @@ mod tests {
                 linear_to_srgb(bg.b),
             ],
         );
+    }
+
+    #[test]
+    fn reloaded_texture_replaces_its_slot() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+
+        // Файл живёт до перезагрузки: `load_png` удалил бы его сразу.
+        let path = std::env::temp_dir().join(format!(
+            "engine-sprite-pipeline-{}-reload.png",
+            std::process::id()
+        ));
+        let save = |rgba: &[u8]| {
+            image::save_buffer(&path, rgba, 1, 1, image::ExtendedColorType::Rgba8).unwrap();
+        };
+        save(&[255, 0, 0, 255]);
+        let mut assets = Assets::default();
+        let h = assets.load_texture(&path);
+        save(&[0, 255, 0, 255]);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assets.reload_changed();
+        std::fs::remove_file(&path).unwrap();
+
+        let mut gfx = Gfx {
+            clear_color: Color::BLACK,
+            camera: Camera2D {
+                center: Vec2::splat(SIZE as f32 / 2.0),
+                size: Vec2::splat(SIZE as f32),
+            },
+            sprites: Vec::new(),
+        };
+        gfx.draw_sprite(sprite(h, vec2(32.0, 32.0), 16.0, Color::WHITE, 0));
+
+        // Одна пачка `[0, 1, 1]`: слот 1 создаётся и тут же заменяется.
+        let img = render(&device, &queue, &mut assets, &gfx);
+
+        assert_pixel(&img, "reloaded", (32, 32), [0, 255, 0]);
     }
 
     #[test]

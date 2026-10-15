@@ -17,6 +17,9 @@ use crate::{
 /// Ниже 4 FPS симуляция замедляется, а не догоняет лавиной тиков.
 pub(crate) const MAX_FRAME: Duration = Duration::from_millis(250);
 
+/// Как часто `Assets` проверяет файлы на диске.
+const RELOAD_PERIOD: Duration = Duration::from_millis(500);
+
 /// Склейка событий `winit` с `step_frame` и `Renderer`.
 pub(crate) struct App<G> {
     config: Config,
@@ -34,6 +37,7 @@ struct Running<G> {
     ctx: Context,
     clock: FixedClock,
     last_frame: Instant,
+    last_reload: Instant,
     frames: FrameStats,
     tps: RateCounter,
 }
@@ -86,6 +90,7 @@ impl<G: Game> ApplicationHandler for App<G> {
             ctx,
             clock,
             last_frame: Instant::now(),
+            last_reload: Instant::now(),
             frames: FrameStats::new(),
             tps: RateCounter::new(),
         });
@@ -145,6 +150,10 @@ impl<G: Game> Running<G> {
 
         if dt > MAX_FRAME {
             self.tps.reset();
+        }
+        if now - self.last_reload >= RELOAD_PERIOD {
+            self.last_reload = now;
+            self.ctx.assets.reload_changed();
         }
         self.egui
             .begin_pass(self.egui_state.take_egui_input(&self.window));
