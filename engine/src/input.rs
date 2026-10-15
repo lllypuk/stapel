@@ -50,6 +50,7 @@ pub struct Input {
     keys: Buttons<KeyCode>,
     mouse: Buttons<MouseButton>,
     cursor: Option<Vec2>,
+    mouse_delta: Vec2,
 }
 
 impl Input {
@@ -70,10 +71,16 @@ impl Input {
         self.cursor = pos;
     }
 
+    /// Сырой сдвиг мыши в единицах устройства, Y вниз; копится до `end_tick`.
+    pub fn on_mouse_motion(&mut self, delta: Vec2) {
+        self.mouse_delta += delta;
+    }
+
     /// Окно не получит отпускания клавиш и кнопок, отпущенных вне его.
     pub fn focus_lost(&mut self) {
         self.keys.down.clear();
         self.mouse.down.clear();
+        self.mouse_delta = Vec2::ZERO;
     }
 
     /// Клавиша удерживается.
@@ -106,10 +113,16 @@ impl Input {
         self.cursor
     }
 
-    /// Сбрасывает нажатия и отпускания тика.
+    /// Сдвиг мыши с прошлого тика; в `draw` — ещё не потреблённый `update`.
+    pub fn mouse_delta(&self) -> Vec2 {
+        self.mouse_delta
+    }
+
+    /// Сбрасывает нажатия, отпускания и сдвиг мыши тика.
     pub fn end_tick(&mut self) {
         self.keys.end_tick();
         self.mouse.end_tick();
+        self.mouse_delta = Vec2::ZERO;
     }
 }
 
@@ -208,5 +221,23 @@ mod tests {
         i.end_tick();
         i.focus_lost();
         assert!(!i.is_down(K));
+    }
+
+    #[test]
+    fn mouse_delta_sums_until_end_tick() {
+        let mut i = Input::default();
+        i.on_mouse_motion(Vec2::new(1.0, 2.0));
+        i.on_mouse_motion(Vec2::new(3.0, -5.0));
+        assert_eq!(i.mouse_delta(), Vec2::new(4.0, -3.0));
+        i.end_tick();
+        assert_eq!(i.mouse_delta(), Vec2::ZERO);
+    }
+
+    #[test]
+    fn focus_lost_clears_mouse_delta() {
+        let mut i = Input::default();
+        i.on_mouse_motion(Vec2::new(1.0, 2.0));
+        i.focus_lost();
+        assert_eq!(i.mouse_delta(), Vec2::ZERO);
     }
 }

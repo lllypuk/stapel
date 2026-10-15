@@ -153,6 +153,12 @@ pub struct Context {
     pub audio: Audio,
     /// Последний показанный кадр; `None` до первого показа и после resize.
     pub shown: Option<Shown>,
+    /// Окно в фокусе.
+    pub focused: bool,
+    /// Игра просит захватить курсор; app сбрасывает при отказе системы и потере фокуса.
+    pub cursor_grab: bool,
+    /// Курсор захвачен и спрятан; ставит app.
+    pub grabbed: bool,
 }
 
 impl Context {
@@ -171,6 +177,23 @@ impl Context {
     pub fn cursor_world(&self) -> Option<Vec2> {
         let shown = self.shown?;
         screen_to_world(shown.viewport, &shown.camera, self.input.cursor()?)
+    }
+
+    /// Без захвата сдвиг — движение курсора по другим окнам и панелям, не обзор.
+    pub(crate) fn on_mouse_motion(&mut self, delta: Vec2) {
+        if self.focused && self.grabbed {
+            self.input.on_mouse_motion(delta);
+        }
+    }
+
+    /// Потерянный фокус снимает и захват: Wayland держит его и за пределами окна.
+    pub(crate) fn on_focus(&mut self, focused: bool) {
+        self.focused = focused;
+        if !focused {
+            self.input.focus_lost();
+            self.cursor_grab = false;
+            self.grabbed = false;
+        }
     }
 }
 
@@ -219,6 +242,8 @@ mod tests {
         updates: u32,
         draws: u32,
         pressed_in: Vec<u32>,
+        deltas: Vec<Vec2>,
+        draw_delta: Vec2,
     }
 
     impl Game for Fake {
@@ -231,10 +256,12 @@ mod tests {
             if ctx.input.just_pressed(K) {
                 self.pressed_in.push(self.updates);
             }
+            self.deltas.push(ctx.input.mouse_delta());
         }
 
-        fn draw(&mut self, _: &mut Context, _: f32) {
+        fn draw(&mut self, ctx: &mut Context, _: f32) {
             self.draws += 1;
+            self.draw_delta = ctx.input.mouse_delta();
         }
     }
 
@@ -382,5 +409,62 @@ mod tests {
         ctx.input.on_cursor(Some(Vec2::new(100.0, 50.0)));
         ctx.shown = None;
         assert_eq!(ctx.cursor_world(), None);
+    }
+
+    const D: Vec2 = Vec2::new(3.0, -2.0);
+
+    fn grabbed_ctx() -> Context {
+        Context {
+            focused: true,
+            cursor_grab: true,
+            grabbed: true,
+            ..Context::default()
+        }
+    }
+
+    #[test]
+    fn mouse_delta_goes_to_first_tick_or_stays_for_draw() {
+        let (mut g, mut ctx, mut clock, step) = setup();
+        ctx.input.on_mouse_motion(D);
+        step_frame(&mut g, &mut ctx, &mut clock, step / 2);
+        assert_eq!((g.deltas.len(), g.draw_delta), (0, D));
+        step_frame(&mut g, &mut ctx, &mut clock, step * 2);
+        assert_eq!((g.deltas, g.draw_delta), (vec![D, Vec2::ZERO], Vec2::ZERO));
+    }
+
+    #[test]
+    fn mouse_motion_counts_only_when_focused_and_grabbed() {
+        for (focused, grabbed, expected) in [
+            (true, true, D),
+            (false, true, Vec2::ZERO),
+            (true, false, Vec2::ZERO),
+        ] {
+            let mut ctx = Context {
+                focused,
+                grabbed,
+                ..Context::default()
+            };
+            ctx.on_mouse_motion(D);
+            assert_eq!(ctx.input.mouse_delta(), expected, "{focused} {grabbed}");
+        }
+    }
+
+    #[test]
+    fn focus_lost_releases_grab_and_input() {
+        let mut ctx = grabbed_ctx();
+        ctx.input.on_key(K, Pressed, false);
+        ctx.on_mouse_motion(D);
+        ctx.on_focus(false);
+        assert!(!ctx.focused && !ctx.cursor_grab && !ctx.grabbed);
+        assert!(!ctx.input.is_down(K));
+        assert_eq!(ctx.input.mouse_delta(), Vec2::ZERO);
+    }
+
+    #[test]
+    fn focus_gained_keeps_grab_request() {
+        let mut ctx = grabbed_ctx();
+        ctx.input.on_key(K, Pressed, false);
+        ctx.on_focus(true);
+        assert!(ctx.focused && ctx.cursor_grab && ctx.grabbed && ctx.input.is_down(K));
     }
 }

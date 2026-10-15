@@ -3,10 +3,10 @@ use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::PhysicalKey;
-use winit::window::{Window, WindowId};
+use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::audio::device;
 use crate::{
@@ -40,6 +40,7 @@ struct Running<G> {
     last_reload: Instant,
     frames: FrameStats,
     tps: RateCounter,
+    grab_warned: bool,
 }
 
 impl<G> App<G> {
@@ -64,6 +65,7 @@ impl<G: Game> ApplicationHandler for App<G> {
         let renderer = Renderer::new(window.clone(), self.config.vsync, self.config.pixel_perfect);
         let clock = FixedClock::new(self.config.tick_hz, MAX_FRAME);
         let mut ctx = Context::new(clock.step());
+        ctx.focused = window.has_focus();
         let stream = device::open().map(|(stream, audio, rate)| {
             ctx.audio = audio;
             ctx.assets.set_sample_rate(rate);
@@ -93,6 +95,7 @@ impl<G: Game> ApplicationHandler for App<G> {
             last_reload: Instant::now(),
             frames: FrameStats::new(),
             tps: RateCounter::new(),
+            grab_warned: false,
         });
     }
 
@@ -124,7 +127,12 @@ impl<G: Game> ApplicationHandler for App<G> {
                 r.ctx.input.on_cursor(Some(Vec2::new(p.x, p.y)));
             }
             WindowEvent::CursorLeft { .. } => r.ctx.input.on_cursor(None),
-            WindowEvent::Focused(false) => r.ctx.input.focus_lost(),
+            WindowEvent::Focused(focused) => {
+                if !focused && r.ctx.grabbed {
+                    release_cursor(&r.window);
+                }
+                r.ctx.on_focus(focused);
+            }
             WindowEvent::Resized(size) => {
                 r.renderer.resize(size);
                 // Старый вьюпорт перевёл бы курсор в мир по кадру другого размера.
@@ -138,6 +146,18 @@ impl<G: Game> ApplicationHandler for App<G> {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => r.frame(event_loop),
             _ => {}
+        }
+    }
+
+    fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
+        if let (Some(r), DeviceEvent::MouseMotion { delta: (x, y) }) =
+            (self.running.as_mut(), event)
+        {
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "сдвиг за событие — единицы-сотни, f32 хватает"
+            )]
+            r.ctx.on_mouse_motion(Vec2::new(x as f32, y as f32));
         }
     }
 }
@@ -161,6 +181,7 @@ impl<G: Game> Running<G> {
         for _ in 0..ticks {
             self.tps.record(now);
         }
+        self.sync_grab();
         self.game.ui(&self.egui);
         ui::release_focus(&self.egui);
         let out = self.egui.end_pass();
@@ -216,10 +237,48 @@ impl<G: Game> Running<G> {
         self.resume_redraw();
     }
 
+    /// Приводит захват окна к `ctx.cursor_grab`; `Locked` на X11 нет — тогда `Confined`.
+    fn sync_grab(&mut self) {
+        let want = self.ctx.cursor_grab && self.ctx.focused;
+        if want == self.ctx.grabbed {
+            return;
+        }
+        if !want {
+            release_cursor(&self.window);
+            self.ctx.grabbed = false;
+            return;
+        }
+        let grab = self
+            .window
+            .set_cursor_grab(CursorGrabMode::Locked)
+            .or_else(|_| self.window.set_cursor_grab(CursorGrabMode::Confined));
+        match grab {
+            Ok(()) => {
+                self.window.set_cursor_visible(false);
+                self.ctx.grabbed = true;
+            }
+            Err(e) => {
+                self.ctx.cursor_grab = false;
+                if !self.grab_warned {
+                    self.grab_warned = true;
+                    log::warn!("cursor grab: {e}");
+                }
+            }
+        }
+    }
+
     /// Цепочка кадров рвётся, пока поверхность недоступна; `Resized` и `Occluded` её возобновляют.
     fn resume_redraw(&self) {
         if self.renderer.is_available() {
             self.window.request_redraw();
         }
     }
+}
+
+/// Захват на Wayland не снимается сам ни при потере фокуса, ни при сворачивании.
+fn release_cursor(window: &Window) {
+    if let Err(e) = window.set_cursor_grab(CursorGrabMode::None) {
+        log::warn!("cursor release: {e}");
+    }
+    window.set_cursor_visible(true);
 }
