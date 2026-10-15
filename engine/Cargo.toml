@@ -19,5 +19,8 @@ lewton.workspace = true
 rtrb.workspace = true
 cpal.workspace = true
 
+[dev-dependencies]
+allocation-counter.workspace = true
+
 [lints]
 workspace = true

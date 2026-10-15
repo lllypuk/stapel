@@ -58,11 +58,11 @@
 **Files:**
 - Modify: `Cargo.toml`, `Cargo.lock`, `engine/Cargo.toml`, `engine/src/audio/mod.rs`, `docs/design.md`
 
-- [ ] `allocation-counter = "0.8.1"` в `[workspace.dependencies]`, в `engine` — `[dev-dependencies]` с `workspace = true`; `cargo deny check`, `cargo machete` — зелёные
-- [ ] тест в `audio/mod.rs`: `Audio::open`, звуки, `scratch` и выход создаются до `measure`; под `measure` — `play`, `play_music`, повторный `play_music` (замена), `fill` дольше эффекта (завершение), 33-й эффект (отброс), `Counters::record_callback`; звуки держит тест; результат — `AllocationInfo::default()` (ловит и освобождения)
-- [ ] мутация: в `Mixer::render` `let _: Vec<f32> = out.iter().copied().collect();` — тест падает
-- [ ] пометка пункта «нет аллокаций» — имя теста; блокировки и I/O — ревью; одной фразой: почему `allocation-counter`, а не `assert_no_alloc` или свой аллокатор
-- [ ] тесты — зелёные
+- [x] `allocation-counter = "0.8.1"` в `[workspace.dependencies]`, в `engine` — `[dev-dependencies]` с `workspace = true`; `cargo deny check`, `cargo machete` — зелёные
+- [x] тест в `audio/mod.rs`: `Audio::open`, звуки, `scratch` и выход создаются до `measure`; под `measure` — `play`, `play_music`, повторный `play_music` (замена), `fill` дольше эффекта (завершение), 33-й эффект (отброс), `Counters::record_callback`; звуки держит тест; результат — `AllocationInfo::default()` (ловит и освобождения)
+- [x] мутация: в `Mixer::render` `let _: Vec<f32> = out.iter().copied().collect();` — тест падает
+- [x] пометка пункта «нет аллокаций» — имя теста; блокировки и I/O — ревью; одной фразой: почему `allocation-counter`, а не `assert_no_alloc` или свой аллокатор
+- [x] тесты — зелёные
 
 ### Task 5: Пассажиры — снимок как выбор
 

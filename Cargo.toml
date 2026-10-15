@@ -20,6 +20,7 @@ hound = "3.5.1"
 lewton = "0.10.2"
 rtrb = "0.3.5"
 cpal = "0.16.0"
+allocation-counter = "0.8.1"
 
 # Полный декод музыки в debug без оптимизаций занимает секунды.
 [profile.dev.package.lewton]

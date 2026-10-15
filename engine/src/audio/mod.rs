@@ -229,6 +229,32 @@ mod tests {
     }
 
     #[test]
+    fn callback_neither_allocates_nor_frees() {
+        let (mut audio, mut mixer) = Audio::open();
+        let short = ramp(100);
+        let long = ramp(4096);
+        let music = ramp(10);
+        let next_music = ramp(20);
+        let mut scratch = [0.0; 256];
+        let mut out = [0.0_f32; 1024];
+        let info = allocation_counter::measure(|| {
+            audio.play(&short, 1.0);
+            audio.play_music(&music, 1.0);
+            audio.play_music(&next_music, 1.0);
+            fill(&mut mixer, &mut scratch, &mut out, 2);
+            for _ in 0..33 {
+                audio.play(&long, 1.0);
+            }
+            fill(&mut mixer, &mut scratch, &mut out, 2);
+            audio
+                .counters
+                .record_callback(Duration::from_millis(1), 512, 48_000);
+        });
+        assert_eq!(audio.counters.dropped.load(Ordering::Relaxed), 1);
+        assert_eq!(info, allocation_counter::AllocationInfo::default());
+    }
+
+    #[test]
     fn fill_converts_to_i16() {
         let mut mixer = steady(1.0, -0.5);
         let mut out = [7_i16; 4];
