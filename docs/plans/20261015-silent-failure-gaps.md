@@ -73,7 +73,7 @@
 - [x] ни один пункт раздела не помечен **пробел**
 
 ### Task 6: Verify acceptance criteria
-- [ ] `make check`, `make cov` (порог не ниже 98), `make mutants` — без выживших вне исключений
+- [x] `make check`, `make cov` (порог не ниже 98), `make mutants` — без выживших вне исключений
 
 ### Task 7: [Final] Update documentation
 - [ ] перенести план в `docs/plans/completed/`
