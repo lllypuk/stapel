@@ -125,10 +125,11 @@ impl Watcher {
     }
 }
 
-/// Пустой временный каталог теста с файлами `files`.
+/// Пустой каталог теста с файлами `files` в `target/` копии дерева: копии `cargo mutants -j` его не делят.
 #[cfg(test)]
 pub(crate) fn temp_dir(name: &str, files: &[(&str, &str)]) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("platformer-{}-{name}", std::process::id()));
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("../../target/test-dirs/platformer-{name}"));
     if dir.exists() {
         fs::remove_dir_all(&dir).unwrap();
     }

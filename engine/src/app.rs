@@ -162,12 +162,7 @@ impl<G: Game> Running<G> {
             self.tps.record(now);
         }
         self.game.ui(&self.egui);
-        // Клавиатура идёт и в игру: сфокусированная кнопка нажималась бы её Space и Enter.
-        self.egui.memory_mut(|m| {
-            if let Some(id) = m.focused() {
-                m.surrender_focus(id);
-            }
-        });
+        ui::release_focus(&self.egui);
         let out = self.egui.end_pass();
         self.egui_state
             .handle_platform_output(&self.window, out.platform_output);

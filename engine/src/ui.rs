@@ -23,6 +23,15 @@ pub(crate) fn to_input(event: &WindowEvent, wants_pointer: bool) -> bool {
     !(press && wants_pointer)
 }
 
+/// Снимает фокус egui: клавиатура идёт и в игру, сфокусированная кнопка нажималась бы её Space и Enter.
+pub(crate) fn release_focus(ctx: &egui::Context) {
+    ctx.memory_mut(|m| {
+        if let Some(id) = m.focused() {
+            m.surrender_focus(id);
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use winit::dpi::PhysicalPosition;
@@ -66,5 +75,15 @@ mod tests {
         for e in &events {
             assert!(to_input(e, true), "{e:?}");
         }
+    }
+
+    #[test]
+    fn release_focus_leaves_keyboard_to_game() {
+        let ctx = egui::Context::default();
+        ctx.memory_mut(|m| m.request_focus(egui::Id::new("button")));
+        assert!(ctx.egui_wants_keyboard_input());
+        release_focus(&ctx);
+        assert!(!ctx.egui_wants_keyboard_input());
+        release_focus(&ctx);
     }
 }

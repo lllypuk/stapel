@@ -68,8 +68,16 @@ impl Renderer {
         });
         config.present_mode = pick_present_mode(vsync, &caps.present_modes);
         // egui смешивает в гамме: в `*Srgb` вид он рисует с искажёнными полутонами и warn на старте.
-        let ui_format = config.format.remove_srgb_suffix();
-        config.view_formats = vec![ui_format];
+        // Второй вид поверхности без `SURFACE_VIEW_FORMATS` (у wgpu — только Vulkan) валит configure.
+        let views = adapter.get_downlevel_capabilities().flags;
+        let ui_format = if views.contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS) {
+            config.format.remove_srgb_suffix()
+        } else {
+            config.format
+        };
+        if ui_format != config.format {
+            config.view_formats = vec![ui_format];
+        }
         log::info!("surface: {:?}, {:?}", config.format, config.present_mode);
         let sprites = SpritePipeline::new(&device, &queue, config.format);
         let ui =

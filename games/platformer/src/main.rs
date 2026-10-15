@@ -699,8 +699,13 @@ impl Platformer {
         }
     }
 
-    /// Следующий по имени уровень каталога; не прочитался — текущий заново.
+    /// Следующий по имени уровень каталога; не прочитался — текущий заново; сетка не сохранена — редактор с отказом.
     fn next_level(&mut self) {
+        if self.editor.dirty() {
+            self.enter_editor();
+            self.editor.file_error = Some(UNSAVED.into());
+            return;
+        }
         let next = levels::list(&self.levels_dir).and_then(|list| {
             let path = levels::next(&list, &self.path)
                 .ok_or_else(|| format!("{}: нет уровней", self.levels_dir.display()))?;
@@ -756,10 +761,10 @@ impl Platformer {
         Ok(path)
     }
 
-    /// Изменённый на диске уровень: в игре — заново, в чистом редакторе — сетка, в грязном — флаг.
+    /// Изменённый на диске уровень: сетка не сохранена — флаг, иначе в игре — заново, в редакторе — сетка.
     fn reload_changed(&mut self) {
         match self.watch.tick(&self.path) {
-            Ok(Some(_)) if self.editing && self.editor.dirty() => {
+            Ok(Some(_)) if self.editor.dirty() => {
                 self.editor.changed_on_disk = true;
             }
             Ok(Some(text)) if self.editing => self.edit_text(&text),
@@ -1035,7 +1040,7 @@ impl Platformer {
 
     /// Первый уровень каталога; уровни лежат в репозитории, поэтому без них — паника с путём.
     fn open(levels_dir: PathBuf) -> Self {
-        let levels = levels::list(&levels_dir).unwrap_or_default();
+        let levels = levels::list(&levels_dir).unwrap_or_else(|e| panic!("{e}"));
         let path = levels
             .first()
             .cloned()
@@ -2987,6 +2992,44 @@ mod tests {
         send(&mut g, &mut ctx, &[EditorCmd::New]);
         assert_eq!(g.path, created);
         assert!(g.editor.file_error.clone().unwrap().contains("gone"));
+    }
+
+    /// Игра несохранённой сетки редактора: добавлен столбец, F1.
+    fn playing_dirty(name: &str) -> (Platformer, Context) {
+        let (mut g, mut ctx) = editing_in(name);
+        send(
+            &mut g,
+            &mut ctx,
+            &[EditorCmd::Resize(editor::Resize::AddColumn)],
+        );
+        press(&mut g, &mut ctx, F1);
+        assert!(!g.editing && g.editor.dirty());
+        (g, ctx)
+    }
+
+    #[test]
+    fn next_level_after_dirty_playtest_returns_to_editor() {
+        let (mut g, mut ctx) = playing_dirty("next-dirty");
+        let mine = g.editor.grid.to_text();
+        fs::write(g.levels_dir.join("level02.txt"), CLEAR).unwrap();
+        g.cleared = true;
+        press(&mut g, &mut ctx, &[KeyCode::Enter]);
+        assert!(g.editing);
+        assert_eq!(g.path.file_name().unwrap(), "level01.txt");
+        assert_eq!(g.editor.grid.to_text(), mine);
+        assert_eq!(g.editor.file_error.as_deref(), Some(UNSAVED));
+    }
+
+    #[test]
+    fn external_change_during_dirty_playtest_keeps_grid_and_flags() {
+        let (mut g, mut ctx) = playing_dirty("play-conflict");
+        let mine = g.editor.grid.to_text();
+        let level = g.level.clone();
+        fs::write(&g.path, CLEAR).unwrap();
+        watch_once(&mut g, &mut ctx);
+        assert!(!g.editing && g.editor.changed_on_disk);
+        assert_eq!(g.editor.grid.to_text(), mine);
+        assert_eq!(g.level, level);
     }
 
     #[test]
