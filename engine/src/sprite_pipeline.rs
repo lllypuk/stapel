@@ -1,27 +1,27 @@
-use crate::{Assets, Gfx, Instance, TextureKind, Viewport, batch};
+use crate::{Gfx, GpuTextures, Instance, Viewport, batch};
 
 /// Начальный размер буфера инстансов в байтах.
 const INITIAL_CAPACITY: u64 = 1024;
 
-/// GPU-путь спрайтов: текстуры, буфер инстансов и проход с очисткой.
+/// GPU-путь спрайтов: буфер инстансов и проход с очисткой.
 pub struct SpritePipeline {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
-    texture_layout: wgpu::BindGroupLayout,
-    nearest: wgpu::Sampler,
-    linear: wgpu::Sampler,
     camera_buf: wgpu::Buffer,
     camera_group: wgpu::BindGroup,
-    /// Индекс — `Handle<Texture>::index`.
-    textures: Vec<wgpu::BindGroup>,
     instances: wgpu::Buffer,
     capacity: u64,
 }
 
 impl SpritePipeline {
-    /// Пайплайн для рендера в цель формата `format`.
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+    /// Пайплайн для рендера в цель формата `format` с текстурами из `textures`.
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        textures: &GpuTextures,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::include_wgsl!("sprite.wgsl"));
 
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -37,30 +37,9 @@ impl SpritePipeline {
                 count: None,
             }],
         });
-        let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("sprite texture"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sprite"),
-            bind_group_layouts: &[Some(&camera_layout), Some(&texture_layout)],
+            bind_group_layouts: &[Some(&camera_layout), Some(textures.layout())],
             immediate_size: 0,
         });
 
@@ -80,92 +59,14 @@ impl SpritePipeline {
                 resource: camera_buf.as_entire_binding(),
             }],
         });
-        let sampler = |label, filter| {
-            device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some(label),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                mag_filter: filter,
-                min_filter: filter,
-                ..Default::default()
-            })
-        };
-
         Self {
             device: device.clone(),
             queue: queue.clone(),
             pipeline,
-            texture_layout,
-            nearest: sampler("sprite nearest", wgpu::FilterMode::Nearest),
-            linear: sampler("sprite linear", wgpu::FilterMode::Linear),
             camera_buf,
             camera_group,
-            textures: Vec::new(),
             instances: instance_buffer(device, INITIAL_CAPACITY),
             capacity: INITIAL_CAPACITY,
-        }
-    }
-
-    /// Заливает на GPU текстуры, загруженные с прошлого вызова; хэндл уже залитой — замена.
-    ///
-    /// # Panics
-    /// Если текстуры пришли не из того же `Assets`, что прошлые.
-    pub fn upload(&mut self, assets: &mut Assets) {
-        for t in assets.take_pending() {
-            let index = t.handle.index as usize;
-            assert!(
-                index <= self.textures.len(),
-                "texture handles must come from one Assets in order"
-            );
-            let (format, sampler) = match t.kind {
-                TextureKind::Color => (wgpu::TextureFormat::Rgba8UnormSrgb, &self.nearest),
-                TextureKind::Coverage => (wgpu::TextureFormat::Rgba8Unorm, &self.linear),
-            };
-            let size = wgpu::Extent3d {
-                width: t.width,
-                height: t.height,
-                depth_or_array_layers: 1,
-            };
-            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: None,
-                size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-            self.queue.write_texture(
-                texture.as_image_copy(),
-                &t.rgba,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * t.width),
-                    rows_per_image: Some(t.height),
-                },
-                size,
-            );
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &self.texture_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                ],
-            });
-            if index == self.textures.len() {
-                self.textures.push(group);
-            } else {
-                self.textures[index] = group;
-            }
         }
     }
 
@@ -175,6 +76,7 @@ impl SpritePipeline {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
+        textures: &GpuTextures,
         viewport: Viewport,
         gfx: &Gfx,
     ) {
@@ -220,7 +122,7 @@ impl SpritePipeline {
         pass.set_bind_group(0, &self.camera_group, &[]);
         pass.set_vertex_buffer(0, self.instances.slice(..));
         for b in batches {
-            pass.set_bind_group(1, &self.textures[b.texture.index as usize], &[]);
+            pass.set_bind_group(1, textures.group(b.texture), &[]);
             pass.draw(0..6, b.range);
         }
     }
@@ -288,11 +190,9 @@ fn grow_capacity(current: u64, needed: u64) -> Option<u64> {
 mod tests {
     use super::*;
     use crate::frame::linear_to_srgb;
+    use crate::gpu_test::{SIZE, assert_pixel, gpu, offscreen};
     use crate::text::{self, FontData, Glyph};
-    use crate::{Camera2D, Color, Handle, Rect, Sprite, Texture, Vec2, vec2};
-
-    const SIZE: u32 = 64;
-    const TOL: u8 = 2;
+    use crate::{Assets, Camera2D, Color, Handle, Rect, Sprite, Texture, Vec2, vec2};
 
     #[test]
     fn grow_capacity_only_when_short() {
@@ -302,29 +202,6 @@ mod tests {
         assert_eq!(grow_capacity(0, 1), Some(4));
         assert_eq!(grow_capacity(0, 3), Some(4));
         assert_eq!(grow_capacity(4, 5), Some(8));
-    }
-
-    fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-        let adapter = match pollster::block_on(
-            instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
-        ) {
-            Ok(a) => a,
-            Err(e) => {
-                assert!(
-                    std::env::var("REQUIRE_GPU").as_deref() != Ok("1"),
-                    "REQUIRE_GPU=1, but no GPU adapter: {e}"
-                );
-                eprintln!("SKIPPED: no GPU adapter: {e}");
-                return None;
-            }
-        };
-        eprintln!("adapter: {:?}", adapter.get_info());
-        Some(
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-                .expect("request device"),
-        )
     }
 
     fn load_png(assets: &mut Assets, name: &str, w: u32, h: u32, rgba: &[u8]) -> Handle<Texture> {
@@ -355,79 +232,23 @@ mod tests {
         assets: &mut Assets,
         gfx: &Gfx,
     ) -> Vec<u8> {
-        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-        let mut pipeline = SpritePipeline::new(device, queue, format);
-        pipeline.upload(assets);
-
-        let extent = wgpu::Extent3d {
-            width: SIZE,
-            height: SIZE,
-            depth_or_array_layers: 1,
-        };
-        let target = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("target"),
-            size: extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        // 64 × 4 = 256 байт — уже кратно `COPY_BYTES_PER_ROW_ALIGNMENT`.
-        let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: u64::from(4 * SIZE * SIZE),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut textures = GpuTextures::new(device, queue);
+        textures.upload(assets);
+        let mut pipeline = SpritePipeline::new(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            &textures,
+        );
         let viewport = Viewport {
             x: 0.0,
             y: 0.0,
             w: SIZE as f32,
             h: SIZE as f32,
         };
-        pipeline.draw(&mut encoder, &view, viewport, gfx);
-        encoder.copy_texture_to_buffer(
-            target.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * SIZE),
-                    rows_per_image: Some(SIZE),
-                },
-            },
-            extent,
-        );
-        queue.submit([encoder.finish()]);
-
-        readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("map readback"));
-        device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .expect("poll");
-        readback
-            .get_mapped_range(..)
-            .expect("mapped range")
-            .to_vec()
-    }
-
-    /// Пиксель, накрывающий мировую точку `(x + 0.5, y + 0.5)`; мир — пиксели с Y вверх.
-    fn pixel(img: &[u8], x: u32, y: u32) -> [u8; 3] {
-        let i = (4 * ((SIZE - 1 - y) * SIZE + x)) as usize;
-        [img[i], img[i + 1], img[i + 2]]
-    }
-
-    fn assert_pixel(img: &[u8], what: &str, (x, y): (u32, u32), expected: [u8; 3]) {
-        let got = pixel(img, x, y);
-        let close = got.iter().zip(expected).all(|(&g, e)| g.abs_diff(e) <= TOL);
-        assert!(
-            close,
-            "{what} at ({x}, {y}): got {got:?}, expected {expected:?}"
-        );
+        offscreen(device, queue, |encoder, view| {
+            pipeline.draw(encoder, view, &textures, viewport, gfx);
+        })
     }
 
     #[test]
@@ -572,49 +393,6 @@ mod tests {
                 linear_to_srgb(bg.b),
             ],
         );
-    }
-
-    #[test]
-    fn reloaded_texture_replaces_its_slot() {
-        let Some((device, queue)) = gpu() else {
-            return;
-        };
-
-        // Файл живёт до перезагрузки: `load_png` удалил бы его сразу.
-        let path = std::env::temp_dir().join(format!(
-            "engine-sprite-pipeline-{}-reload.png",
-            std::process::id()
-        ));
-        let save = |rgba: &[u8]| {
-            image::save_buffer(&path, rgba, 1, 1, image::ExtendedColorType::Rgba8).unwrap();
-        };
-        save(&[255, 0, 0, 255]);
-        let mut assets = Assets::default();
-        let h = assets.load_texture(&path);
-        save(&[0, 255, 0, 255]);
-        std::fs::File::options()
-            .write(true)
-            .open(&path)
-            .unwrap()
-            .set_modified(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap();
-        assets.reload_changed();
-        std::fs::remove_file(&path).unwrap();
-
-        let mut gfx = Gfx {
-            clear_color: Color::BLACK,
-            camera: Camera2D {
-                center: Vec2::splat(SIZE as f32 / 2.0),
-                size: Vec2::splat(SIZE as f32),
-            },
-            sprites: Vec::new(),
-        };
-        gfx.draw_sprite(sprite(h, vec2(32.0, 32.0), 16.0, Color::WHITE, 0));
-
-        // Одна пачка `[0, 1, 1]`: слот 1 создаётся и тут же заменяется.
-        let img = render(&device, &queue, &mut assets, &gfx);
-
-        assert_pixel(&img, "reloaded", (32, 32), [0, 255, 0]);
     }
 
     #[test]

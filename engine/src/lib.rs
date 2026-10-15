@@ -14,6 +14,10 @@ pub mod clock;
 pub mod ecs;
 /// Контекст кадра, трейт `Game` и шаг кадра.
 pub mod frame;
+#[cfg(test)]
+mod gpu_test;
+/// Текстуры на GPU, общие для конвейеров.
+pub mod gpu_textures;
 /// Клавиатура и мышь по тикам.
 pub mod input;
 /// Целочисленные коллизии и движение тел: AABB, тайловая карта, Actor.
@@ -40,6 +44,7 @@ pub use ecs::{Commands, Entity, SparseSet, World};
 pub use egui;
 pub use frame::{Color, Context, Game, Gfx, Shown, Time, step_frame};
 pub use glam::{IVec2, Vec2, ivec2, vec2};
+pub use gpu_textures::GpuTextures;
 pub use input::Input;
 pub use physics::{
     Aabb, Actor, Axis, Contact, Hits, Solid, Tilemap, grounded, move_actor, move_solid,

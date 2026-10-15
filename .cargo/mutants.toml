@@ -7,5 +7,5 @@ exclude_re = [
     " in main$",
     "replace run -> ",
     # | и ^ на непересекающихся битовых флагах wgpu дают одно и то же.
-    "replace \\| with \\^ in (SpritePipeline::upload|instance_buffer)$",
+    "replace \\| with \\^ in (GpuTextures::upload|instance_buffer)$",
 ]

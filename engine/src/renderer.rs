@@ -5,7 +5,7 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::surface::{Action, action, pick_format, pick_present_mode, split, surface_size};
-use crate::{Assets, Gfx, SpritePipeline, UiFrame, Viewport, viewport};
+use crate::{Assets, Gfx, GpuTextures, SpritePipeline, UiFrame, Viewport, viewport};
 
 /// Поверхность окна и GPU-устройство; кадр рисует `SpritePipeline` во вписанный вьюпорт, egui — поверх.
 pub struct Renderer {
@@ -15,6 +15,7 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    textures: GpuTextures,
     sprites: SpritePipeline,
     ui: egui_wgpu::Renderer,
     ui_format: wgpu::TextureFormat,
@@ -79,7 +80,8 @@ impl Renderer {
             config.view_formats = vec![ui_format];
         }
         log::info!("surface: {:?}, {:?}", config.format, config.present_mode);
-        let sprites = SpritePipeline::new(&device, &queue, config.format);
+        let textures = GpuTextures::new(&device, &queue);
+        let sprites = SpritePipeline::new(&device, &queue, config.format, &textures);
         let ui =
             egui_wgpu::Renderer::new(&device, ui_format, egui_wgpu::RendererOptions::default());
 
@@ -90,6 +92,7 @@ impl Renderer {
             device,
             queue,
             config,
+            textures,
             sprites,
             ui,
             ui_format,
@@ -139,7 +142,7 @@ impl Renderer {
     ) -> Result<Option<Viewport>, RenderError> {
         // До проверки поверхности: иначе текстуры, загруженные при свёрнутом окне, ждали бы его показа,
         // а атлас шрифта egui присылает один раз и потерялся бы.
-        self.sprites.upload(assets);
+        self.textures.upload(assets);
         for (id, deltas) in &ui.textures.set {
             for delta in deltas {
                 self.ui
@@ -198,7 +201,8 @@ impl Renderer {
             &gfx.camera,
             self.pixel_perfect,
         );
-        self.sprites.draw(&mut encoder, &view, viewport, gfx);
+        self.sprites
+            .draw(&mut encoder, &view, &self.textures, viewport, gfx);
         let mut buffers = Vec::new();
         if !ui.jobs.is_empty() {
             let screen = egui_wgpu::ScreenDescriptor {
