@@ -25,6 +25,18 @@ pub(crate) fn next<'a>(levels: &'a [PathBuf], current: &Path) -> Option<&'a Path
     levels.get(i).or(levels.first()).map(PathBuf::as_path)
 }
 
+/// Атомарно: временный файл рядом и `rename`; при ошибке временный удаляется.
+pub(crate) fn write(path: &Path, text: &str) -> Result<(), String> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    fs::write(&tmp, text)
+        .and_then(|()| fs::rename(&tmp, path))
+        .map_err(|e| {
+            fs::remove_file(&tmp).ok();
+            format!("{}: {e}", path.display())
+        })
+}
+
 /// Через сколько тиков `Watcher::tick` перечитывает файл.
 pub(crate) const WATCH_TICKS: u32 = 30;
 
@@ -46,10 +58,6 @@ impl Watcher {
     }
 
     /// Свой текст в файле — не изменение.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "зовёт сохранение редактора, Task 10")
-    )]
     pub(crate) fn saved(&mut self, text: String) {
         self.base = text;
     }
@@ -114,6 +122,27 @@ mod tests {
             [dir.join("level01.txt"), dir.join("level02.txt")]
         );
         assert!(list(&dir.join("missing")).is_err());
+    }
+
+    #[test]
+    fn write_replaces_file_without_leftovers() {
+        let dir = temp_dir("write", &[("a.txt", "P\n")]);
+        let path = dir.join("a.txt");
+        write(&path, "P#\n").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "P#\n");
+        assert_eq!(list(&dir).unwrap(), [path]);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn failed_write_reports_path_and_leaves_no_temp() {
+        let dir = temp_dir("write-fail", &[]);
+        let gone = dir.join("gone/a.txt");
+        assert!(write(&gone, "P\n").unwrap_err().contains("gone/a.txt"));
+        let taken = dir.join("a.txt");
+        fs::create_dir(&taken).unwrap();
+        assert!(write(&taken, "P\n").unwrap_err().contains("a.txt"));
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
     }
 
     #[test]

@@ -155,6 +155,10 @@ pub(crate) struct Editor {
     stroke: Option<Stroke>,
     /// Почему сетку нельзя играть.
     pub(crate) error: Option<String>,
+    /// Файл изменился на диске при `dirty`; держится до загрузки с диска или сохранения.
+    pub(crate) changed_on_disk: bool,
+    /// Последняя ошибка записи или чтения файла уровня.
+    pub(crate) file_error: Option<String>,
 }
 
 impl Default for Editor {
@@ -173,7 +177,34 @@ impl Editor {
             brush: '#',
             stroke: None,
             error: None,
+            changed_on_disk: false,
+            file_error: None,
         }
+    }
+
+    /// Сетка — `text` с диска; остаётся только кисть.
+    pub(crate) fn replace(&mut self, text: &str) {
+        *self = Self {
+            brush: self.brush,
+            ..Self::new(text)
+        };
+    }
+
+    pub(crate) fn dirty(&self) -> bool {
+        self.history.dirty(&self.grid)
+    }
+
+    /// Сетка записана в файл.
+    pub(crate) fn saved(&mut self) {
+        self.history.saved(&self.grid);
+        self.changed_on_disk = false;
+        self.file_error = None;
+    }
+
+    /// Начатый мазок отменяется целиком.
+    pub(crate) fn undo(&mut self) {
+        self.end_stroke();
+        self.history.undo(&mut self.grid);
     }
 
     /// Мазок по снимку тика: красит `cell` каждый тик, пока кнопка `down`.
@@ -313,6 +344,44 @@ mod tests {
         assert_eq!(e.grid.to_text(), "#.\n");
         e.history.undo(&mut e.grid);
         assert_eq!(e.grid.to_text(), "..\n");
+    }
+
+    #[test]
+    fn undo_ends_stroke_and_reverts_it() {
+        let mut e = Editor::new("..\n");
+        let mut held = clicked(&[MouseButton::Left], &[]);
+        e.paint(&held, Some(ivec2(0, 0)));
+        held.end_tick();
+        e.undo();
+        assert_eq!(e.grid.to_text(), "..\n");
+        e.paint(&held, Some(ivec2(1, 0)));
+        assert_eq!(e.grid.to_text(), "..\n");
+    }
+
+    #[test]
+    fn saved_clears_dirty_and_file_flags() {
+        let mut e = Editor::new("..\n");
+        e.grid.set(ivec2(0, 0), '#');
+        (e.changed_on_disk, e.file_error) = (true, Some("err".into()));
+        assert!(e.dirty());
+        e.saved();
+        assert!(!e.dirty() && !e.changed_on_disk && e.file_error.is_none());
+    }
+
+    #[test]
+    fn replace_keeps_only_brush() {
+        let mut e = Editor::new("..\n");
+        e.brush = 'o';
+        e.paint(&clicked(&[MouseButton::Left], &[]), Some(ivec2(0, 0)));
+        e.error = Some("err".into());
+        (e.changed_on_disk, e.file_error) = (true, Some("err".into()));
+        e.replace("#\n");
+        assert_eq!(e.grid.to_text(), "#\n");
+        assert_eq!(e.brush, 'o');
+        assert!(!e.dirty() && !e.changed_on_disk);
+        assert!(e.error.is_none() && e.file_error.is_none() && e.stroke.is_none());
+        e.undo();
+        assert_eq!(e.grid.to_text(), "#\n");
     }
 
     #[test]

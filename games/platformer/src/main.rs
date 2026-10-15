@@ -654,7 +654,44 @@ impl Platformer {
 
     fn edit_broken(&mut self, e: &LevelError) {
         self.enter_editor();
-        self.editor.error = Some(format!("{}: {e}", self.path.display()));
+        self.editor.error = Some(self.level_error(e));
+    }
+
+    fn level_error(&self, e: &LevelError) -> String {
+        format!("{}: {e}", self.path.display())
+    }
+
+    /// Сетка редактора — `text` с диска, с ошибкой разбора.
+    fn edit_text(&mut self, text: &str) {
+        self.editor.replace(text);
+        self.editor.error = Level::parse(text).err().map(|e| self.level_error(&e));
+    }
+
+    /// Ctrl+S: файл уровня — сетка целиком или прежний.
+    fn save(&mut self) {
+        let text = self.editor.grid.to_text();
+        match levels::write(&self.path, &text) {
+            Ok(()) => {
+                self.editor.saved();
+                self.watch.saved(text);
+            }
+            Err(e) => self.editor.file_error = Some(e),
+        }
+    }
+
+    /// Сетка — файл с диска; несохранённые правки теряются.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "зовёт EditorCmd::LoadFromDisk, Task 12")
+    )]
+    fn load_from_disk(&mut self) {
+        match read_text(&self.path) {
+            Ok(text) => {
+                self.edit_text(&text);
+                self.watch.saved(text);
+            }
+            Err(e) => self.editor.file_error = Some(e),
+        }
     }
 
     /// Следующий по имени уровень каталога; не прочитался — текущий заново.
@@ -675,9 +712,13 @@ impl Platformer {
         }
     }
 
-    /// Изменённый на диске уровень — заново.
+    /// Изменённый на диске уровень: в игре — заново, в чистом редакторе — сетка, в грязном — флаг.
     fn reload_changed(&mut self) {
         match self.watch.tick(&self.path) {
+            Ok(Some(_)) if self.editing && self.editor.dirty() => {
+                self.editor.changed_on_disk = true;
+            }
+            Ok(Some(text)) if self.editing => self.edit_text(&text),
             Ok(Some(text)) => self.open_level(self.path.clone(), text),
             Ok(None) => {}
             Err(e) => log::warn!("{e}"),
@@ -702,9 +743,17 @@ impl Platformer {
         }
     }
 
-    /// Тик редактора: скролл в пределах уровня с полем в экран, мазок по клетке под `cursor`.
+    /// Тик редактора: Ctrl+S, Ctrl+Z, скролл в пределах уровня с полем в экран, мазок по клетке под `cursor`.
     fn edit(&mut self, input: &Input, cursor: Option<Vec2>) {
-        let held = |keys: &[KeyCode]| i32::from(keys.iter().any(|&k| input.is_down(k)));
+        let ctrl = input.is_down(KeyCode::ControlLeft) || input.is_down(KeyCode::ControlRight);
+        if ctrl && input.just_pressed(KeyCode::KeyS) {
+            self.save();
+        }
+        if ctrl && input.just_pressed(KeyCode::KeyZ) {
+            self.editor.undo();
+        }
+        // С Ctrl S — сохранение, не скролл вниз.
+        let held = |keys: &[KeyCode]| i32::from(!ctrl && keys.iter().any(|&k| input.is_down(k)));
         let dir = ivec2(held(RIGHT) - held(LEFT), held(UP) - held(DOWN));
         let bounds = self.editor.grid.size() * TILE;
         self.camera.prev = self.camera.pos;
@@ -1000,17 +1049,18 @@ impl Game for Platformer {
             return;
         }
         if self.editing {
-            return self.edit(&ctx.input, ctx.cursor_world());
-        }
-        self.tick(&ctx.input);
-        if let Some(sounds) = self.sounds {
-            for &sfx in &self.sfx {
-                ctx.audio
-                    .play(ctx.assets.sound(sounds.sound(sfx)), SFX_VOLUME);
+            self.edit(&ctx.input, ctx.cursor_world());
+        } else {
+            self.tick(&ctx.input);
+            if let Some(sounds) = self.sounds {
+                for &sfx in &self.sfx {
+                    ctx.audio
+                        .play(ctx.assets.sound(sounds.sound(sfx)), SFX_VOLUME);
+                }
             }
-        }
-        if self.advance {
-            self.next_level();
+            if self.advance {
+                self.next_level();
+            }
         }
         self.reload_changed();
     }
@@ -2612,6 +2662,145 @@ mod tests {
         press(&mut g, &mut ctx, F1);
         assert!(!g.editing && g.editor.error.is_none());
         assert_eq!(g.level, parse("Po\n##\n"));
+    }
+
+    const CTRL_S: &[KeyCode] = &[KeyCode::ControlLeft, KeyCode::KeyS];
+
+    /// Редактор уровня `SECOND` из временного каталога.
+    fn editing_in(name: &str) -> (Platformer, Context) {
+        let (mut g, _) = edited(name, SECOND);
+        let mut ctx = shown_1to1();
+        press(&mut g, &mut ctx, F1);
+        (g, ctx)
+    }
+
+    /// `WATCH_TICKS` тиков: наблюдатель перечитывает файл ровно один раз.
+    fn watch_once(g: &mut Platformer, ctx: &mut Context) {
+        for _ in 0..levels::WATCH_TICKS {
+            g.update(ctx);
+        }
+    }
+
+    #[test]
+    fn ctrl_s_writes_grid_and_marks_it_saved() {
+        let (mut g, mut ctx) = editing_in("save");
+        g.editor.grid.add_column();
+        let camera = g.camera.pos;
+        press(&mut g, &mut ctx, &[KeyCode::KeyS]);
+        assert!(g.editor.dirty());
+        assert_ne!(g.camera.pos, camera);
+        let camera = g.camera.pos;
+        press(&mut g, &mut ctx, CTRL_S);
+        assert_eq!(g.camera.pos, camera);
+        let text = g.editor.grid.to_text();
+        assert_eq!(fs::read_to_string(&g.path).unwrap(), text);
+        assert_eq!(fs::read_dir(&g.levels_dir).unwrap().count(), 1);
+        assert!(!g.editor.dirty());
+        assert_eq!(g.watch.poll(&g.path), Ok(None));
+        g.editor.grid.add_row();
+        press(&mut g, &mut ctx, &[KeyCode::ControlRight, KeyCode::KeyS]);
+        assert!(!g.editor.dirty());
+    }
+
+    #[test]
+    fn failed_save_shows_error_and_stays_dirty() {
+        let (mut g, mut ctx) = editing_in("save-fail");
+        g.editor.grid.add_column();
+        let path = g.path.clone();
+        g.path = g.levels_dir.join("gone/level01.txt");
+        press(&mut g, &mut ctx, CTRL_S);
+        let error = g.editor.file_error.clone().unwrap();
+        assert!(error.contains("gone/level01.txt"), "{error}");
+        assert!(g.editor.dirty());
+        g.path = path;
+        press(&mut g, &mut ctx, CTRL_S);
+        assert!(g.editor.file_error.is_none() && !g.editor.dirty());
+    }
+
+    #[test]
+    fn ctrl_z_undoes_stroke_and_z_alone_does_not() {
+        let mut g = editable("P..\n###\n");
+        let mut ctx = shown_1to1();
+        press(&mut g, &mut ctx, F1);
+        ctx.input.on_cursor(Some(vec2(40.0, 160.0)));
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        ctx.input.on_button(MouseButton::Left, Released);
+        g.update(&mut ctx);
+        ctx.input.end_tick();
+        assert_eq!(g.editor.grid.to_text(), "P.#\n###\n");
+        press(&mut g, &mut ctx, &[KeyCode::KeyZ]);
+        assert_eq!(g.editor.grid.to_text(), "P.#\n###\n");
+        press(&mut g, &mut ctx, &[KeyCode::ControlLeft, KeyCode::KeyZ]);
+        assert_eq!(g.editor.grid.to_text(), "P..\n###\n");
+    }
+
+    #[test]
+    fn external_change_reloads_clean_editor() {
+        let (mut g, mut ctx) = editing_in("edit-reload");
+        g.editor.brush = 'o';
+        fs::write(&g.path, "P?\n").unwrap();
+        watch_once(&mut g, &mut ctx);
+        assert!(g.editing);
+        assert_eq!(g.editor.grid.to_text(), "P?\n");
+        assert_eq!(g.editor.brush, 'o');
+        let error = g.editor.error.clone().unwrap();
+        assert!(error.contains("строка 1"), "{error}");
+        assert_eq!(g.level, parse(SECOND));
+        fs::write(&g.path, CLEAR).unwrap();
+        watch_once(&mut g, &mut ctx);
+        assert_eq!(g.editor.grid.to_text(), CLEAR);
+        assert!(g.editing && g.editor.error.is_none());
+    }
+
+    #[test]
+    fn external_change_of_dirty_editor_keeps_grid_and_flags() {
+        let (mut g, mut ctx) = editing_in("edit-conflict");
+        ctx.input.on_cursor(Some(vec2(4.0, 175.0)));
+        ctx.input.on_button(MouseButton::Right, Pressed);
+        ctx.input.on_button(MouseButton::Right, Released);
+        g.update(&mut ctx);
+        ctx.input.end_tick();
+        let mine = g.editor.grid.to_text();
+        assert_ne!(mine, SECOND);
+        fs::write(&g.path, CLEAR).unwrap();
+        watch_once(&mut g, &mut ctx);
+        assert_eq!(g.editor.grid.to_text(), mine);
+        assert!(g.editor.changed_on_disk);
+        press(&mut g, &mut ctx, &[KeyCode::ControlLeft, KeyCode::KeyZ]);
+        watch_once(&mut g, &mut ctx);
+        assert!(g.editor.changed_on_disk && !g.editor.dirty());
+        g.load_from_disk();
+        assert_eq!(g.editor.grid.to_text(), CLEAR);
+        assert!(!g.editor.changed_on_disk && !g.editor.dirty());
+        assert_eq!(g.watch.poll(&g.path), Ok(None));
+    }
+
+    #[test]
+    fn ctrl_s_overwrites_external_change_and_clears_flag() {
+        let (mut g, mut ctx) = editing_in("save-conflict");
+        g.editor.grid.add_column();
+        fs::write(&g.path, CLEAR).unwrap();
+        watch_once(&mut g, &mut ctx);
+        assert!(g.editor.changed_on_disk);
+        press(&mut g, &mut ctx, CTRL_S);
+        assert!(!g.editor.changed_on_disk);
+        assert_eq!(
+            fs::read_to_string(&g.path).unwrap(),
+            g.editor.grid.to_text()
+        );
+        watch_once(&mut g, &mut ctx);
+        assert!(!g.editor.changed_on_disk);
+    }
+
+    #[test]
+    fn failed_load_from_disk_keeps_grid() {
+        let (mut g, _) = editing_in("load-fail");
+        g.editor.grid.add_column();
+        let mine = g.editor.grid.to_text();
+        fs::remove_file(&g.path).unwrap();
+        g.load_from_disk();
+        assert_eq!(g.editor.grid.to_text(), mine);
+        assert!(g.editor.file_error.clone().unwrap().contains("level01.txt"));
     }
 
     /// Игрок пересекает твёрдый тайл или платформу.
