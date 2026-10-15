@@ -1,17 +1,17 @@
 mod map;
+mod player;
 
 use std::f32::consts::FRAC_PI_2;
 use std::fs;
 
 use engine::{
-    Assets, Camera3D, Color, Config, Context, Game, Handle, IVec2, Mat4, Model, ModelDraw, Quat,
-    Scene, Vec3,
+    Assets, Camera3D, Color, Config, Context, Game, Handle, IVec2, KeyCode, Mat4, Model, ModelDraw,
+    MouseButton, Quat, Scene,
 };
 use map::{Dir, Map, cell_center};
+use player::Player;
 
 const TICK_HZ: u32 = 60;
-/// Высота глаза над полом, м.
-const EYE: f32 = 0.7;
 /// Свет без источников, пока факелы не светят.
 const AMBIENT: Color = Color::WHITE;
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
@@ -61,7 +61,7 @@ struct Maze {
     models: Models,
     /// Стены, пол и баннеры: за уровень не меняются.
     statics: Vec<ModelDraw>,
-    camera: Camera3D,
+    player: Player,
 }
 
 impl Maze {
@@ -84,16 +84,12 @@ impl Maze {
                 .iter()
                 .map(|t| at(models.banner, t.cell, t.wall.yaw())),
         );
-        let camera = Camera3D {
-            pos: cell_center(map.player) + Vec3::Y * EYE,
-            yaw: map.facing.yaw(),
-            ..Camera3D::default()
-        };
+        let player = Player::new(map.player.as_vec2() + 0.5, map.facing.yaw());
         Self {
             map,
             models,
             statics,
-            camera,
+            player,
         }
     }
 
@@ -104,7 +100,12 @@ impl Maze {
         if along_z { 0.0 } else { FRAC_PI_2 }
     }
 
-    fn scene(&self) -> Scene {
+    /// Закрытые ворота твёрдые; край карты тоже.
+    fn solid(map: &Map, cell: IVec2) -> bool {
+        !map.floor(cell) || map.gates.contains(&cell)
+    }
+
+    fn scene(&self, camera: Camera3D) -> Scene {
         let m = &self.models;
         let mut models = self.statics.clone();
         let items = [
@@ -123,7 +124,7 @@ impl Maze {
                 .map(|&c| at(m.gate, c, self.gate_yaw(c))),
         );
         Scene {
-            camera: self.camera,
+            camera,
             ambient: AMBIENT,
             models,
             ..Scene::default()
@@ -138,10 +139,24 @@ impl Game for Maze {
         Self::new(map, &mut ctx.assets)
     }
 
-    fn update(&mut self, _ctx: &mut Context) {}
+    fn update(&mut self, ctx: &mut Context) {
+        // Клик, пришедший до потери фокуса, захватил бы курсор в фоновом окне.
+        if ctx.input.mouse_just_pressed(MouseButton::Left) && ctx.focused {
+            ctx.cursor_grab = true;
+        }
+        if ctx.input.just_pressed(KeyCode::Escape) {
+            ctx.cursor_grab = false;
+        }
+        let map = &self.map;
+        self.player
+            .update(&ctx.input, ctx.time.step.as_secs_f32(), |c| {
+                Self::solid(map, c)
+            });
+    }
 
-    fn draw(&mut self, ctx: &mut Context, _alpha: f32) {
-        ctx.gfx.scene = Some(self.scene());
+    fn draw(&mut self, ctx: &mut Context, alpha: f32) {
+        let camera = self.player.camera(alpha, ctx.input.mouse_delta());
+        ctx.gfx.scene = Some(self.scene(camera));
     }
 }
 
@@ -157,12 +172,23 @@ fn main() -> Result<(), engine::EventLoopError> {
 
 #[cfg(test)]
 mod tests {
-    use engine::{ivec2, vec3};
+    use std::time::Duration;
+
+    use engine::{
+        ElementState::{Pressed, Released},
+        FixedClock, MAX_PITCH, Vec2, Vec3, ivec2, step_frame, vec2, vec3,
+    };
+
+    use crate::player::{EYE, RADIUS, SENSITIVITY};
 
     use super::*;
 
+    fn clock() -> FixedClock {
+        FixedClock::new(TICK_HZ, Duration::from_millis(250))
+    }
+
     fn maze(text: &str) -> (Maze, Context) {
-        let mut ctx = Context::default();
+        let mut ctx = Context::new(clock().step());
         let g = Maze::new(Map::parse(text).unwrap(), &mut ctx.assets);
         (g, ctx)
     }
@@ -208,24 +234,30 @@ mod tests {
         let (mut g, mut ctx) = maze(LEVEL01);
         g.draw(&mut ctx, 0.5);
         let scene = ctx.gfx.scene.as_ref().unwrap();
-        assert_eq!(*scene, g.scene());
         let p = cell_center(g.map.player);
-        assert_eq!(scene.camera.pos, vec3(p.x, EYE, p.z));
-        assert_eq!(scene.camera.yaw, g.map.facing.yaw());
+        assert_eq!(
+            *scene,
+            g.scene(Camera3D {
+                pos: vec3(p.x, EYE, p.z),
+                yaw: g.map.facing.yaw(),
+                ..Camera3D::default()
+            })
+        );
         assert_eq!(scene.ambient, AMBIENT);
     }
 
     #[test]
     fn camera_looks_at_open_neighbour() {
         let (g, _) = maze("###\n#P.\n###\n");
-        assert_eq!(g.camera.yaw, Dir::E.yaw());
-        assert!(g.camera.forward().abs_diff_eq(Vec3::X, 1e-6));
+        let camera = g.player.camera(1.0, Vec2::ZERO);
+        assert_eq!(camera.yaw, Dir::E.yaw());
+        assert!(camera.forward().abs_diff_eq(Vec3::X, 1e-6));
     }
 
     #[test]
     fn walls_and_floor_cover_every_cell() {
         let (g, _) = maze("####\n#Po#\n#kE#\n#DX#\n####\n");
-        let scene = g.scene();
+        let scene = g.scene(Camera3D::default());
         let cells = || g.map.cells();
         assert_eq!(
             placed(&scene, g.models.wall),
@@ -240,7 +272,7 @@ mod tests {
     #[test]
     fn items_stand_on_their_cells() {
         let (g, _) = maze("####\n#Po#\n#kE#\n#DX#\n####\n");
-        let scene = g.scene();
+        let scene = g.scene(Camera3D::default());
         let m = &g.models;
         assert_eq!(placed(&scene, m.coin), centers([ivec2(2, 1)]));
         assert_eq!(placed(&scene, m.key), centers([ivec2(1, 2)]));
@@ -254,7 +286,10 @@ mod tests {
     fn gate_spans_corridor() {
         let across = |text| {
             let (g, _) = maze(text);
-            let d = draws(&g.scene(), g.models.gate).next().unwrap().clone();
+            let d = draws(&g.scene(Camera3D::default()), g.models.gate)
+                .next()
+                .unwrap()
+                .clone();
             d.transform.transform_vector3(Vec3::X)
         };
         assert!(across("..#\n.D#\n.P#\n").abs_diff_eq(Vec3::X, 1e-6));
@@ -271,7 +306,7 @@ mod tests {
             (".P.\n#T.\n...\n", Dir::W),
         ] {
             let (g, _) = maze(text);
-            let scene = g.scene();
+            let scene = g.scene(Camera3D::default());
             let banner = draws(&scene, g.models.banner).next().unwrap();
             let o = wall.offset().as_vec2();
             let toward_wall = banner.transform.transform_vector3(-Vec3::Z);
@@ -281,5 +316,130 @@ mod tests {
             );
             assert_eq!(banner.transform.w_axis.truncate(), cell_center(ivec2(1, 1)));
         }
+    }
+
+    fn press(ctx: &mut Context, key: KeyCode) {
+        ctx.input.on_key(key, Pressed, false);
+    }
+
+    fn turned(yaw: f32, dx: f32) -> f32 {
+        yaw - dx * SENSITIVITY
+    }
+
+    #[test]
+    fn mouse_turns_once_in_update_and_draw_adds_unconsumed() {
+        let (mut g, mut ctx) = maze(LEVEL01);
+        let mut clock = clock();
+        let step = clock.step();
+        let yaw = g.player.yaw;
+        let camera = |ctx: &Context| ctx.gfx.scene.as_ref().unwrap().camera;
+
+        ctx.input.on_mouse_motion(vec2(100.0, -40.0));
+        assert_eq!(step_frame(&mut g, &mut ctx, &mut clock, step * 2), 2);
+        assert_eq!(g.player.yaw, turned(yaw, 100.0));
+        assert_eq!(g.player.pitch, 40.0 * SENSITIVITY);
+        assert_eq!(camera(&ctx).yaw, g.player.yaw);
+
+        let before = g.player;
+        ctx.input.on_mouse_motion(vec2(50.0, 0.0));
+        assert_eq!(step_frame(&mut g, &mut ctx, &mut clock, Duration::ZERO), 0);
+        assert_eq!(camera(&ctx).yaw, turned(before.yaw, 50.0));
+        assert_eq!(camera(&ctx).pitch, before.pitch);
+        g.draw(&mut ctx, clock.alpha());
+        assert_eq!(camera(&ctx).yaw, turned(before.yaw, 50.0));
+        assert_eq!(g.player, before);
+
+        assert_eq!(step_frame(&mut g, &mut ctx, &mut clock, step), 1);
+        assert_eq!(g.player.yaw, turned(before.yaw, 50.0));
+        assert_eq!(camera(&ctx).yaw, g.player.yaw);
+    }
+
+    #[test]
+    fn draw_interpolates_position_without_changing_state() {
+        let (mut g, mut ctx) = maze("###\n#P.\n#..\n");
+        press(&mut ctx, KeyCode::KeyW);
+        g.update(&mut ctx);
+        let p = g.player;
+        assert_ne!(p.prev, p.pos);
+        g.draw(&mut ctx, 0.25);
+        let pos = ctx.gfx.scene.as_ref().unwrap().camera.pos;
+        let at = p.prev.lerp(p.pos, 0.25);
+        assert!(pos.abs_diff_eq(vec3(at.x, EYE, at.y), 1e-6), "{pos:?}");
+        assert_eq!(g.player, p);
+    }
+
+    #[test]
+    fn pitch_stays_clamped_in_draw() {
+        let (mut g, mut ctx) = maze(LEVEL01);
+        ctx.input.on_mouse_motion(vec2(0.0, -1e6));
+        g.draw(&mut ctx, 0.0);
+        assert_eq!(ctx.gfx.scene.as_ref().unwrap().camera.pitch, MAX_PITCH);
+    }
+
+    #[test]
+    fn click_grabs_cursor_only_when_focused() {
+        let (mut g, mut ctx) = maze(LEVEL01);
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        g.update(&mut ctx);
+        assert!(!ctx.cursor_grab, "окно без фокуса");
+        ctx.input.on_button(MouseButton::Left, Released);
+        ctx.input.end_tick();
+
+        ctx.focused = true;
+        ctx.input.on_button(MouseButton::Right, Pressed);
+        g.update(&mut ctx);
+        assert!(!ctx.cursor_grab, "не левая кнопка");
+        ctx.input.end_tick();
+
+        g.update(&mut ctx);
+        assert!(!ctx.cursor_grab, "кнопка зажата, но не нажата в этом тике");
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        g.update(&mut ctx);
+        assert!(ctx.cursor_grab);
+    }
+
+    #[test]
+    fn click_before_focus_loss_does_not_grab() {
+        let (mut g, mut ctx) = maze(LEVEL01);
+        ctx.focused = true;
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        ctx.focused = false;
+        ctx.input.focus_lost();
+        g.update(&mut ctx);
+        assert!(!ctx.cursor_grab);
+    }
+
+    #[test]
+    fn escape_releases_grab() {
+        let (mut g, mut ctx) = maze(LEVEL01);
+        ctx.cursor_grab = true;
+        g.update(&mut ctx);
+        assert!(ctx.cursor_grab, "без Esc захват держится");
+        press(&mut ctx, KeyCode::Escape);
+        g.update(&mut ctx);
+        assert!(!ctx.cursor_grab);
+    }
+
+    #[test]
+    fn closed_gate_is_solid() {
+        let (mut g, mut ctx) = maze("#####\n#PD.#\n#####\n");
+        press(&mut ctx, KeyCode::KeyW);
+        for _ in 0..60 {
+            g.update(&mut ctx);
+        }
+        assert!(
+            (g.player.pos.x - (2.0 - RADIUS)).abs() < 1e-5,
+            "{:?}",
+            g.player.pos
+        );
+        let (mut g, mut ctx) = maze("#####\n#P..#\n#####\n");
+        press(&mut ctx, KeyCode::KeyW);
+        for _ in 0..60 {
+            g.update(&mut ctx);
+        }
+        assert!(
+            (g.player.pos.x - (4.0 - RADIUS)).abs() < 1e-5,
+            "без ворот — до стены"
+        );
     }
 }

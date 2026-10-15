@@ -8,4 +8,6 @@ exclude_re = [
     "replace run -> ",
     # | и ^ на непересекающихся битовых флагах wgpu дают одно и то же.
     "replace \\| with \\^ in (GpuTextures::upload|instance_buffer|palette_buffer)$",
+    # Левый край твёрдой клетки ровно под центром — круг уже в стене, из корректного положения недостижимо.
+    "replace > with >= in slide$",
 ]
