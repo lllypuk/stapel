@@ -2375,6 +2375,15 @@ mod tests {
         g.map.overlaps_solid(&a) || platforms(g).iter().any(|p| p.overlaps(&a))
     }
 
+    /// Скорости в пределах: мутант с растущей скоростью иначе зависает в попиксельном шаге.
+    fn speeds_bounded(g: &Platformer) -> bool {
+        (-FALL_MAX..=JUMP).contains(&g.player.vel.y)
+            && g.world
+                .storage::<Enemy>()
+                .iter()
+                .all(|(_, e)| (-FALL_MAX..=0.0).contains(&e.fall))
+    }
+
     #[test]
     fn rider_stays_on_platform_faster_than_fall() {
         let mut rows = vec![".."; 12];
@@ -2451,6 +2460,7 @@ mod tests {
             for _ in 0..40 {
                 g.tick(&input(D));
                 assert!(!stuck(&g), "x {x}: {:?}", g.player.body.aabb);
+                assert!(speeds_bounded(&g), "x {x}: {:?}", g.player.vel);
                 if g.player.body.aabb.max().y == 4 * TILE {
                     bumps += 1;
                 }
@@ -2491,11 +2501,14 @@ mod tests {
         rows[12] = "#";
         let mut g = room(&rows);
         let mut vel = 0.0;
-        while g.deaths == 0 {
-            assert!(g.ticks < 100, "{:?}", g.player.body.aabb);
+        for _ in 0..100 {
+            if g.deaths != 0 {
+                break;
+            }
             vel = g.player.vel.y;
             g.tick(&Input::default());
         }
+        assert_eq!(g.deaths, 1, "{:?}", g.player.body.aabb);
         assert_eq!(vel, -FALL_MAX);
     }
 
@@ -2552,6 +2565,7 @@ mod tests {
                     "seed {seed}, tick {t}: {:?}",
                     g.player.body.aabb
                 );
+                assert!(speeds_bounded(&g), "seed {seed}, tick {t}");
             }
         }
     }

@@ -16,7 +16,7 @@ make asteroids                                                    # любая �
 NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color
 make check                                                        # fmt, typos, clippy, doc, machete, deny, тесты; deny качает advisory-db — нужна сеть
 make cov                                                          # покрытие строк с порогом
-make mutants                                                      # мутанты, ~8 мин; исключения — .cargo/mutants.toml
+make mutants                                                      # мутанты, ~17 мин; исключения — .cargo/mutants.toml
 REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine sprite_pipeline   # офскрин-тест без адаптера падает, а не пропускается; без WGPU_BACKEND найдётся адаптер GL
 ```
 
