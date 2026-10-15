@@ -17,7 +17,7 @@ NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color # без vsync
 
 Платформа — Linux (Wayland, X11), нужен Vulkan. Для сборки нужны `alsa-lib` и `pkg-config` (в Debian — `libasound2-dev pkg-config`): их требует `cpal`.
 
-Уровни платформера — `games/platformer/assets/levels/*.txt`, идут по имени. Редактор (F1): ЛКМ — кисть из палитры, ПКМ — стирание, WASD/стрелки — прокрутка, Ctrl+S — сохранить в тот же файл, Ctrl+Z — отменить; повторный F1 играет правку. Изменённые на диске PNG, WAV и уровни подхватываются без перезапуска.
+Уровни и редактор уровней платформера (F1) — [games/platformer/README.md](games/platformer/README.md).
 
 Ассеты платформера — CC0 (Kenney, Juhani Junkala), источники и команды конвертации — в [games/platformer/assets/CREDITS.md](games/platformer/assets/CREDITS.md).
 
