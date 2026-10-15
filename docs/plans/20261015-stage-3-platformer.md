@@ -120,12 +120,12 @@
 **Files:**
 - Modify: `engine/src/camera.rs`, `engine/src/renderer.rs`, `engine/src/app.rs`, `engine/src/lib.rs`, `games/{pong,asteroids,clear-color}/src/main.rs`, `docs/design.md`, `CLAUDE.md`
 
-- [ ] тесты `letterbox_pixel`: 1280×720 → `k = 4` без полей; 1366×768 → (43, 24), 1280×720; нечётный остаток — целые отступы; окно меньше мира — дробный фолбэк
-- [ ] тесты `viewport`: `pixel_perfect` выбирает `letterbox_pixel`, иначе — `letterbox`
-- [ ] `letterbox_pixel`, `viewport`, `Config::pixel_perfect`, `Renderer::new(window, vsync, pixel_perfect)` (`app.rs:52`); `Renderer::draw` (`renderer.rs:154`) — только вызов `viewport`; существующие игры — `false`
-- [ ] `CLAUDE.md`, «Архитектура»: вьюпорт `viewport` по `Config::pixel_perfect`
-- [ ] `docs/design.md`, «Рендер» и «Молчаливые поломки»: целый масштаб, целые отступы, края спрайтов на целых пикселях; округлённая камера без округлённых спрайтов дрожит
-- [ ] тесты — зелёные
+- [x] тесты `letterbox_pixel`: 1280×720 → `k = 4` без полей; 1366×768 → (43, 24), 1280×720; нечётный остаток — целые отступы; окно меньше мира — дробный фолбэк
+- [x] тесты `viewport`: `pixel_perfect` выбирает `letterbox_pixel`, иначе — `letterbox`
+- [x] `letterbox_pixel`, `viewport`, `Config::pixel_perfect`, `Renderer::new(window, vsync, pixel_perfect)` (`app.rs:52`); `Renderer::draw` (`renderer.rs:154`) — только вызов `viewport`; существующие игры — `false`
+- [x] `CLAUDE.md`, «Архитектура»: вьюпорт `viewport` по `Config::pixel_perfect`
+- [x] `docs/design.md`, «Рендер» и «Молчаливые поломки»: целый масштаб, целые отступы, края спрайтов на целых пикселях; округлённая камера без округлённых спрайтов дрожит
+- [x] тесты — зелёные
 
 ### Task 5: Декод звука и ресемплинг
 

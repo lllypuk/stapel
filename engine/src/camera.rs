@@ -59,6 +59,31 @@ pub fn letterbox(surface: (u32, u32), world_aspect: f32) -> Viewport {
     }
 }
 
+/// Вьюпорт мира `world` с целым масштабом и целыми отступами; окно меньше мира — `letterbox`.
+pub fn letterbox_pixel(surface: (u32, u32), world: Vec2) -> Viewport {
+    let (sw, sh) = (surface.0 as f32, surface.1 as f32);
+    let k = (sw / world.x).min(sh / world.y).floor();
+    if k < 1.0 {
+        return letterbox(surface, world.x / world.y);
+    }
+    let (w, h) = (world.x * k, world.y * k);
+    Viewport {
+        x: ((sw - w) / 2.0).floor(),
+        y: ((sh - h) / 2.0).floor(),
+        w,
+        h,
+    }
+}
+
+/// Вьюпорт камеры: `letterbox_pixel` при `pixel_perfect`, иначе `letterbox`.
+pub fn viewport(surface: (u32, u32), camera: &Camera2D, pixel_perfect: bool) -> Viewport {
+    if pixel_perfect {
+        letterbox_pixel(surface, camera.size)
+    } else {
+        letterbox(surface, camera.aspect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +197,81 @@ mod tests {
         let v = letterbox((1, 1), 640.0 / 360.0);
         assert!(v.w > 0.0 && v.h > 0.0, "{v:?}");
         assert!(v.x >= 0.0 && v.y >= 0.0 && v.x + v.w <= 1.0 && v.y + v.h <= 1.0);
+    }
+
+    const PIXEL_WORLD: Vec2 = vec2(320.0, 180.0);
+
+    fn vp(x: f32, y: f32, w: f32, h: f32) -> Viewport {
+        Viewport { x, y, w, h }
+    }
+
+    #[test]
+    fn pixel_exact_multiple_fills_frame() {
+        assert_eq!(
+            letterbox_pixel((1280, 720), PIXEL_WORLD),
+            vp(0.0, 0.0, 1280.0, 720.0)
+        );
+    }
+
+    #[test]
+    fn pixel_scale_is_floored_and_centered() {
+        assert_eq!(
+            letterbox_pixel((1366, 768), PIXEL_WORLD),
+            vp(43.0, 24.0, 1280.0, 720.0)
+        );
+    }
+
+    #[test]
+    fn pixel_scale_limited_by_narrow_side() {
+        assert_eq!(
+            letterbox_pixel((2000, 400), PIXEL_WORLD),
+            vp(680.0, 20.0, 640.0, 360.0)
+        );
+        assert_eq!(
+            letterbox_pixel((700, 2000), PIXEL_WORLD),
+            vp(30.0, 820.0, 640.0, 360.0)
+        );
+    }
+
+    #[test]
+    fn pixel_odd_remainder_gives_whole_offsets() {
+        assert_eq!(
+            letterbox_pixel((1285, 727), PIXEL_WORLD),
+            vp(2.0, 3.0, 1280.0, 720.0)
+        );
+        assert_eq!(
+            letterbox_pixel((321, 181), PIXEL_WORLD),
+            vp(0.0, 0.0, 320.0, 180.0)
+        );
+    }
+
+    #[test]
+    fn pixel_window_smaller_than_world_falls_back() {
+        let surface = (200, 150);
+        assert_eq!(
+            letterbox_pixel(surface, PIXEL_WORLD),
+            letterbox(surface, 320.0 / 180.0)
+        );
+    }
+
+    #[test]
+    fn viewport_picks_mode() {
+        let cam = Camera2D {
+            center: Vec2::ZERO,
+            size: PIXEL_WORLD,
+        };
+        let surface = (1366, 768);
+        assert_eq!(
+            viewport(surface, &cam, true),
+            letterbox_pixel(surface, PIXEL_WORLD)
+        );
+        assert_eq!(
+            viewport(surface, &cam, false),
+            letterbox(surface, cam.aspect())
+        );
+        assert_ne!(
+            viewport(surface, &cam, true),
+            viewport(surface, &cam, false)
+        );
     }
 }

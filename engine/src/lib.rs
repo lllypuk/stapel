@@ -29,7 +29,7 @@ mod surface;
 pub mod text;
 
 pub use assets::{Assets, Font, Handle, PendingTexture, Texture, TextureKind};
-pub use camera::{Camera2D, Viewport, letterbox};
+pub use camera::{Camera2D, Viewport, letterbox, letterbox_pixel, viewport};
 pub use clock::FixedClock;
 pub use ecs::{Commands, Entity, SparseSet, World};
 pub use frame::{Color, Context, Game, Gfx, Time, step_frame};
@@ -60,6 +60,8 @@ pub struct Config {
     pub tick_hz: u32,
     /// `false` — показ кадров без ожидания vsync.
     pub vsync: bool,
+    /// Целый масштаб мира и целые отступы (`letterbox_pixel`) — для пиксель-арта.
+    pub pixel_perfect: bool,
 }
 
 /// Открывает окно и крутит игру `G` до закрытия.

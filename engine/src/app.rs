@@ -49,7 +49,7 @@ impl<G: Game> ApplicationHandler for App<G> {
             .with_title(self.config.title.clone())
             .with_inner_size(LogicalSize::new(w, h));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
-        let renderer = Renderer::new(window.clone(), self.config.vsync);
+        let renderer = Renderer::new(window.clone(), self.config.vsync, self.config.pixel_perfect);
         let clock = FixedClock::new(self.config.tick_hz, MAX_FRAME);
         let mut ctx = Context::new(clock.step());
         let game = G::init(&mut ctx);

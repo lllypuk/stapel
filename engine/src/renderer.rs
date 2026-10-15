@@ -5,7 +5,7 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::surface::{Action, action, pick_format, pick_present_mode, split, surface_size};
-use crate::{Assets, Gfx, SpritePipeline, letterbox};
+use crate::{Assets, Gfx, SpritePipeline, viewport};
 
 /// Поверхность окна и GPU-устройство; кадр рисует `SpritePipeline` во вписанный вьюпорт.
 pub struct Renderer {
@@ -16,6 +16,7 @@ pub struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     sprites: SpritePipeline,
+    pixel_perfect: bool,
     sized: bool,
     occluded: bool,
 }
@@ -35,7 +36,7 @@ impl std::error::Error for RenderError {}
 impl Renderer {
     /// # Panics
     /// Без поверхности, адаптера, устройства или sRGB-формата поверхности.
-    pub fn new(window: Arc<Window>, vsync: bool) -> Self {
+    pub fn new(window: Arc<Window>, vsync: bool, pixel_perfect: bool) -> Self {
         let instance = wgpu::Instance::new(
             wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(window.clone())),
         );
@@ -75,6 +76,7 @@ impl Renderer {
             queue,
             config,
             sprites,
+            pixel_perfect,
             sized: false,
             occluded: false,
         };
@@ -151,7 +153,11 @@ impl Renderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let viewport = letterbox((self.config.width, self.config.height), gfx.camera.aspect());
+        let viewport = viewport(
+            (self.config.width, self.config.height),
+            &gfx.camera,
+            self.pixel_perfect,
+        );
         self.sprites.draw(&mut encoder, &view, viewport, gfx);
         self.queue.submit([encoder.finish()]);
         // На Wayland это ограничивает `RedrawRequested` частотой монитора, даже без vsync.

@@ -29,6 +29,7 @@ fn main() -> Result<(), engine::EventLoopError> {
         size: (800, 600),
         tick_hz: 60,
         vsync: std::env::var("NO_VSYNC").as_deref() != Ok("1"),
+        pixel_perfect: false,
     })
 }
 
