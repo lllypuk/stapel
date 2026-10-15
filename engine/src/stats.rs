@@ -120,7 +120,7 @@ impl FrameStats {
     }
 
     /// Пауза в рендере: открытое окно отбрасывается, иначе его fps и `worst` включат паузу.
-    /// Интервал длиннее `MAX_FRAME` — тоже пауза: свёрнутое окно на Wayland не даёт `Ok(false)`.
+    /// Интервал длиннее `MAX_FRAME` — тоже пауза: свёрнутое окно на Wayland не даёт `Ok(None)`.
     pub fn reset(&mut self) {
         *self = Self {
             report: self.report.take(),

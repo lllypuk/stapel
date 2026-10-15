@@ -90,11 +90,11 @@
 **Files:**
 - Modify: `engine/src/camera.rs`, `engine/src/frame.rs`, `engine/src/renderer.rs`, `engine/src/app.rs`
 
-- [ ] тесты `screen_to_world`: центр вьюпорта — центр камеры; Y вверх; поля `letterbox` и `letterbox_pixel` — `None`; угол вьюпорта — край камеры
-- [ ] тесты `cursor_world`: без `shown` или курсора — `None`
-- [ ] `screen_to_world`, `Shown`, `Context::cursor_world`; `Renderer::render` отдаёт вьюпорт показанного кадра; app ставит `shown` после `Ok(true)`, `None` после resize
-- [ ] `docs/design.md`: «курсор — по камере показанного кадра, не `gfx.camera`» → тест; порядок в app — ревью
-- [ ] `make check`
+- [x] тесты `screen_to_world`: центр вьюпорта — центр камеры; Y вверх; поля `letterbox` и `letterbox_pixel` — `None`; угол вьюпорта — край камеры
+- [x] тесты `cursor_world`: без `shown` или курсора — `None`
+- [x] `screen_to_world`, `Shown`, `Context::cursor_world`; `Renderer::render` отдаёт вьюпорт показанного кадра; app ставит `shown` после `Ok(true)`, `None` после resize
+- [x] `docs/design.md`: «курсор — по камере показанного кадра, не `gfx.camera`» → тест; порядок в app — ревью
+- [x] `make check`
 
 ### Task 3: egui поверх кадра и `Game::ui`
 

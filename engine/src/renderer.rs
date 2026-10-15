@@ -5,7 +5,7 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::surface::{Action, action, pick_format, pick_present_mode, split, surface_size};
-use crate::{Assets, Gfx, SpritePipeline, viewport};
+use crate::{Assets, Gfx, SpritePipeline, Viewport, viewport};
 
 /// Поверхность окна и GPU-устройство; кадр рисует `SpritePipeline` во вписанный вьюпорт.
 pub struct Renderer {
@@ -107,31 +107,35 @@ impl Renderer {
         }
     }
 
-    /// `Ok(true)`, если кадр показан.
+    /// Вьюпорт показанного кадра; `None` — кадр не показан.
     ///
     /// # Errors
     /// Ошибка валидации поверхности.
     ///
     /// # Panics
     /// Если не пересоздалась потерянная поверхность.
-    pub fn render(&mut self, gfx: &Gfx, assets: &mut Assets) -> Result<bool, RenderError> {
+    pub fn render(
+        &mut self,
+        gfx: &Gfx,
+        assets: &mut Assets,
+    ) -> Result<Option<Viewport>, RenderError> {
         // До проверки поверхности: иначе текстуры, загруженные при свёрнутом окне, ждали бы его показа.
         self.sprites.upload(assets);
         if !self.is_available() {
-            return Ok(false);
+            return Ok(None);
         }
         let (frame, status) = split(self.surface.get_current_texture());
         match (action(&status), frame) {
             (Action::Draw { reconfigure }, Some(frame)) => {
-                self.draw(frame, gfx);
+                let viewport = self.draw(frame, gfx);
                 if reconfigure {
                     self.surface.configure(&self.device, &self.config);
                 }
-                Ok(true)
+                Ok(Some(viewport))
             }
             (Action::Reconfigure, _) => {
                 self.surface.configure(&self.device, &self.config);
-                Ok(false)
+                Ok(None)
             }
             (Action::Recreate, _) => {
                 self.surface = self
@@ -139,14 +143,14 @@ impl Renderer {
                     .create_surface(self.window.clone())
                     .expect("recreate surface");
                 self.surface.configure(&self.device, &self.config);
-                Ok(false)
+                Ok(None)
             }
             (Action::Fail, _) => Err(RenderError),
-            _ => Ok(false),
+            _ => Ok(None),
         }
     }
 
-    fn draw(&mut self, frame: wgpu::SurfaceTexture, gfx: &Gfx) {
+    fn draw(&mut self, frame: wgpu::SurfaceTexture, gfx: &Gfx) -> Viewport {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -168,6 +172,7 @@ impl Renderer {
             self.window.pre_present_notify();
         }
         self.queue.present(frame);
+        viewport
     }
 }
 

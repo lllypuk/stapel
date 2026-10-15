@@ -32,10 +32,10 @@ pub mod text;
 
 pub use assets::{Assets, Font, Handle, PendingTexture, Texture, TextureKind};
 pub use audio::{Audio, Sound};
-pub use camera::{Camera2D, Viewport, letterbox, letterbox_pixel, viewport};
+pub use camera::{Camera2D, Viewport, letterbox, letterbox_pixel, screen_to_world, viewport};
 pub use clock::FixedClock;
 pub use ecs::{Commands, Entity, SparseSet, World};
-pub use frame::{Color, Context, Game, Gfx, Time, step_frame};
+pub use frame::{Color, Context, Game, Gfx, Shown, Time, step_frame};
 pub use glam::{IVec2, Vec2, ivec2, vec2};
 pub use input::Input;
 pub use physics::{

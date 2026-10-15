@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-use crate::{Assets, Audio, Camera2D, FixedClock, Font, Handle, Input, Sprite, Vec2, text};
+use crate::{
+    Assets, Audio, Camera2D, FixedClock, Font, Handle, Input, Sprite, Vec2, Viewport,
+    screen_to_world, text,
+};
 
 /// Линейный RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -124,6 +127,15 @@ pub struct Time {
     pub tps: u32,
 }
 
+/// Камера и вьюпорт последнего показанного кадра.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shown {
+    /// Камера, через которую нарисован кадр.
+    pub camera: Camera2D,
+    /// Куда на поверхности лёг кадр, в физических пикселях.
+    pub viewport: Viewport,
+}
+
 #[derive(Default)]
 /// Всё, что движок даёт игре.
 pub struct Context {
@@ -137,6 +149,8 @@ pub struct Context {
     pub assets: Assets,
     /// Запуск звуков; немой, пока нет устройства.
     pub audio: Audio,
+    /// Последний показанный кадр; `None` до первого показа и после resize.
+    pub shown: Option<Shown>,
 }
 
 impl Context {
@@ -149,6 +163,12 @@ impl Context {
             },
             ..Self::default()
         }
+    }
+
+    /// Курсор в мире по показанному кадру, а не по `gfx.camera`: игра видит то, что на экране.
+    pub fn cursor_world(&self) -> Option<Vec2> {
+        let shown = self.shown?;
+        screen_to_world(shown.viewport, &shown.camera, self.input.cursor()?)
     }
 }
 
@@ -313,5 +333,40 @@ mod tests {
             text::layout(assets.font(font), "ab", pos, 2.0, Color::BLACK, 4).collect();
         assert_eq!(expected.len(), 2);
         assert_eq!(gfx.sprites, expected);
+    }
+
+    fn shown_ctx() -> Context {
+        Context {
+            shown: Some(Shown {
+                camera: Camera2D {
+                    center: Vec2::new(10.0, 20.0),
+                    size: Vec2::new(100.0, 50.0),
+                },
+                viewport: Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 200.0,
+                    h: 100.0,
+                },
+            }),
+            ..Context::default()
+        }
+    }
+
+    #[test]
+    fn cursor_world_uses_shown_camera_not_gfx() {
+        let mut ctx = shown_ctx();
+        ctx.gfx.camera.center = Vec2::new(-500.0, -500.0);
+        ctx.input.on_cursor(Some(Vec2::new(100.0, 50.0)));
+        assert_eq!(ctx.cursor_world(), Some(Vec2::new(10.0, 20.0)));
+    }
+
+    #[test]
+    fn cursor_world_needs_shown_frame_and_cursor() {
+        let mut ctx = shown_ctx();
+        assert_eq!(ctx.cursor_world(), None);
+        ctx.input.on_cursor(Some(Vec2::new(100.0, 50.0)));
+        ctx.shown = None;
+        assert_eq!(ctx.cursor_world(), None);
     }
 }

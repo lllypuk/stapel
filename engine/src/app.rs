@@ -10,7 +10,7 @@ use winit::window::{Window, WindowId};
 
 use crate::audio::device;
 use crate::{
-    Config, Context, FixedClock, FrameStats, Game, RateCounter, Renderer, Vec2, step_frame,
+    Config, Context, FixedClock, FrameStats, Game, RateCounter, Renderer, Shown, Vec2, step_frame,
 };
 
 /// Ниже 4 FPS симуляция замедляется, а не догоняет лавиной тиков.
@@ -104,6 +104,8 @@ impl<G: Game> ApplicationHandler for App<G> {
             WindowEvent::Focused(false) => r.ctx.input.focus_lost(),
             WindowEvent::Resized(size) => {
                 r.renderer.resize(size);
+                // Старый вьюпорт перевёл бы курсор в мир по кадру другого размера.
+                r.ctx.shown = None;
                 r.resume_redraw();
             }
             WindowEvent::Occluded(occluded) => {
@@ -131,10 +133,15 @@ impl<G: Game> Running<G> {
             self.tps.record(now);
         }
         match self.renderer.render(&self.ctx.gfx, &mut self.ctx.assets) {
-            Ok(true) => self
-                .frames
-                .record(Instant::now(), self.ctx.gfx.sprites.len()),
-            Ok(false) => self.frames.reset(),
+            Ok(Some(viewport)) => {
+                self.ctx.shown = Some(Shown {
+                    camera: self.ctx.gfx.camera,
+                    viewport,
+                });
+                self.frames
+                    .record(Instant::now(), self.ctx.gfx.sprites.len());
+            }
+            Ok(None) => self.frames.reset(),
             Err(e) => {
                 log::error!("{e}");
                 event_loop.exit();

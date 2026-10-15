@@ -75,6 +75,15 @@ pub fn letterbox_pixel(surface: (u32, u32), world: Vec2) -> Viewport {
     }
 }
 
+/// Пиксель окна → точка мира через `camera`, показанную в `viewport`; вне вьюпорта — `None`.
+pub fn screen_to_world(viewport: Viewport, camera: &Camera2D, pos: Vec2) -> Option<Vec2> {
+    let t = (pos - Vec2::new(viewport.x, viewport.y)) / Vec2::new(viewport.w, viewport.h);
+    if !(0.0..=1.0).contains(&t.x) || !(0.0..=1.0).contains(&t.y) {
+        return None;
+    }
+    Some(camera.center + Vec2::new(t.x - 0.5, 0.5 - t.y) * camera.size)
+}
+
 /// Вьюпорт камеры: `letterbox_pixel` при `pixel_perfect`, иначе `letterbox`.
 pub fn viewport(surface: (u32, u32), camera: &Camera2D, pixel_perfect: bool) -> Viewport {
     if pixel_perfect {
@@ -273,5 +282,78 @@ mod tests {
             viewport(surface, &cam, true),
             viewport(surface, &cam, false)
         );
+    }
+
+    fn cam_at(center: Vec2) -> Camera2D {
+        Camera2D {
+            center,
+            size: PIXEL_WORLD,
+        }
+    }
+
+    fn world(surface: (u32, u32), pixel: bool, pos: Vec2) -> Option<Vec2> {
+        let cam = cam_at(vec2(100.0, 50.0));
+        screen_to_world(viewport(surface, &cam, pixel), &cam, pos)
+    }
+
+    fn assert_near(got: Option<Vec2>, expected: Vec2) {
+        let got = got.expect("inside viewport");
+        assert!(got.abs_diff_eq(expected, 1e-3), "{got} != {expected}");
+    }
+
+    #[test]
+    fn viewport_center_is_camera_center() {
+        assert_near(
+            world((1366, 768), true, vec2(683.0, 384.0)),
+            vec2(100.0, 50.0),
+        );
+    }
+
+    #[test]
+    fn screen_down_is_world_down() {
+        let above = world((1280, 720), false, vec2(640.0, 100.0)).unwrap();
+        let below = world((1280, 720), false, vec2(640.0, 600.0)).unwrap();
+        assert!(above.y > below.y, "{above} vs {below}");
+    }
+
+    #[test]
+    fn viewport_corners_are_camera_edges() {
+        // pixel: вьюпорт (43, 24, 1280, 720), масштаб 4.
+        assert_near(
+            world((1366, 768), true, vec2(43.0, 24.0)),
+            vec2(-60.0, 140.0),
+        );
+        assert_near(
+            world((1366, 768), true, vec2(1323.0, 744.0)),
+            vec2(260.0, -40.0),
+        );
+        assert_near(
+            world((1366, 768), true, vec2(47.0, 28.0)),
+            vec2(-59.0, 139.0),
+        );
+    }
+
+    #[test]
+    fn letterbox_bars_are_outside_world() {
+        // letterbox: вьюпорт (180, 0, 640, 360).
+        for pos in [vec2(179.0, 100.0), vec2(821.0, 100.0)] {
+            assert_eq!(world((1000, 360), false, pos), None, "{pos}");
+        }
+        assert_near(
+            world((1000, 360), false, vec2(180.0, 0.0)),
+            vec2(-60.0, 140.0),
+        );
+    }
+
+    #[test]
+    fn letterbox_pixel_margins_are_outside_world() {
+        for pos in [
+            vec2(42.0, 100.0),
+            vec2(1324.0, 100.0),
+            vec2(600.0, 23.0),
+            vec2(600.0, 745.0),
+        ] {
+            assert_eq!(world((1366, 768), true, pos), None, "{pos}");
+        }
     }
 }
