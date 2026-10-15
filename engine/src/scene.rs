@@ -1,20 +1,60 @@
 use std::ops::Range;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat3, Mat4};
+use glam::{Mat3, Mat4, Vec3};
 
 use crate::mesh::Mesh;
 use crate::{Camera3D, Color, Handle, Texture};
+
+/// Сколько точечных источников доходит до шейдера; остальные отбрасываются.
+pub const MAX_LIGHTS: usize = 16;
 
 /// 3D-кадр: рисуется до спрайтов на всю поверхность.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Scene {
     /// Камера; aspect — поверхности.
     pub camera: Camera3D,
-    /// Линейный цвет, на который умножается текстура.
+    /// Линейный свет без источников; к нему прибавляются `lights`.
     pub ambient: Color,
+    /// Туман по расстоянию от камеры.
+    pub fog: Fog,
+    /// Точечные источники; рисуются первые `MAX_LIGHTS`.
+    pub lights: Vec<PointLight>,
     /// Меши кадра.
     pub meshes: Vec<MeshDraw>,
+}
+
+/// Точечный источник с затуханием `max(1 - d / range, 0)²` и Ламбертом.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PointLight {
+    /// Позиция в мире.
+    pub pos: Vec3,
+    /// Линейный цвет у самого источника.
+    pub color: Color,
+    /// Расстояние, где свет гаснет до нуля.
+    pub range: f32,
+}
+
+/// Линейный переход к `color` от `start` до `end` по расстоянию от камеры.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fog {
+    /// Цвет полностью затуманенной точки.
+    pub color: Color,
+    /// Ближе — без тумана.
+    pub start: f32,
+    /// Дальше — только туман.
+    pub end: f32,
+}
+
+impl Default for Fog {
+    /// Без тумана.
+    fn default() -> Self {
+        Self {
+            color: Color::BLACK,
+            start: f32::MAX,
+            end: f32::MAX,
+        }
+    }
 }
 
 /// Меш с текстурой в мире.

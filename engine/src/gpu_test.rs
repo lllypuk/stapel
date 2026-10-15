@@ -1,5 +1,7 @@
 //! Офскрин-хелперы GPU-тестов: адаптер, цель рендера, чтение пикселей.
 
+use std::sync::OnceLock;
+
 use crate::{Assets, Handle, Texture};
 
 /// Сторона квадратной цели рендера в пикселях.
@@ -7,8 +9,14 @@ pub(crate) const SIZE: u32 = 64;
 /// Допуск на канал при сравнении пикселей.
 pub(crate) const TOL: u8 = 2;
 
-/// Устройство на адаптере из окружения; `None` — адаптера нет и `REQUIRE_GPU` не стоит.
+/// Устройство на адаптере из окружения, одно на процесс; `None` — адаптера нет и `REQUIRE_GPU` не стоит.
+/// Одно — потому что параллельное создание экземпляров Vulkan роняет загрузчик в SIGSEGV.
 pub(crate) fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
+    static GPU: OnceLock<Option<(wgpu::Device, wgpu::Queue)>> = OnceLock::new();
+    GPU.get_or_init(open_gpu).clone()
+}
+
+fn open_gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter =

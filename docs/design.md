@@ -39,7 +39,8 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 - Проходы кадра: 3D (`Clear` цветом `clear_color` и глубины, на всю поверхность, aspect поверхности) → спрайты с `Load` поверх (HUD — `Camera2D` с letterbox) → egui. Без `gfx.scene` спрайты сами чистят кадр — 2D-игры не меняются.
 - `gfx.scene: Option<Scene>` — immediate-mode, как спрайты: игра заполняет в `draw`, `step_frame` ставит `None` перед `draw`.
 - Меш — `Assets::add_mesh(vertices, indices)` → `Handle<Mesh>`, заливка через pending, как текстуры; индексы u32. `MeshDraw { mesh, texture, transform }` раскрывается на CPU в инстанс (матрица и нормальная матрица), батчи — по `(mesh, texture)`, порядок между ними решает глубина.
-- Отсечения граней нет: материалы Kenney двусторонние. Без света цвет — `ambient × texture`.
+- Отсечения граней нет: материалы Kenney двусторонние.
+- Свет по фрагменту: `ambient` + до `MAX_LIGHTS = 16` `PointLight` — Ламберт × затухание `max(1 - d/range, 0)²`; затем туман `clamp((d - start)/(end - start), 0, 1)` по расстоянию от камеры к `fog.color`. Лишние источники отбрасываются с одним `warn` за жизнь конвейера; `Fog::default()` — без тумана.
 
 ## ECS
 
@@ -108,6 +109,8 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 - `step_frame` ставит `gfx.scene = None` перед `draw`, как чистит спрайты: игра без `scene` в этом кадре показала бы старый 3D-кадр. → тест `frame::previous_scene_vanishes_even_without_ticks`
 - Нормали — через обратную транспонированную к `transform` без переноса, не через саму матрицу: при неравномерном масштабе нормаль иначе перестаёт быть перпендикулярной грани и свет ложится не туда. → тест `scene::normal_matrix_is_inverse_transpose`
 - Sprite pass при `gfx.scene` — с `LoadOp::Load`: `Clear` стёр бы 3D под HUD. → тест `mesh_pipeline::unlit_color_is_ambient_times_texture_and_sprites_stay_on_top`; выбор режима в `renderer.rs` — ревью
+- Затухание — `max(1 - d/range, 0)²`: без `max` за `range` основание отрицательное, квадрат снова растёт, и дальние стены светятся. → офскрин `mesh_pipeline::point_light_lambert_and_falloff`
+- WGSL выравнивает `vec3` в uniform до 16 байт, массив структур — до 16: Rust-структура без этого сдвигает поля, и шейдер читает свет и туман со смещением. → тест `mesh_pipeline::uniform_layout_matches_wgsl` сверяет смещения с разбором `mesh.wgsl` naga
 - Буфер глубины пересоздаётся в `resize` вместе с поверхностью: иначе проход падает на валидации размеров вложений. → запуск: ресайз окна с 3D
 
 ### Физика

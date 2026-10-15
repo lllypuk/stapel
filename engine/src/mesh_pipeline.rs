@@ -3,17 +3,81 @@ use wgpu::util::DeviceExt;
 
 use crate::gpu_textures::DEPTH_FORMAT;
 use crate::sprite_pipeline::{grow_capacity, instance_buffer, wgpu_color};
-use crate::{Assets, Color, GpuTextures, MeshInstance, Scene, Vertex, batch_meshes};
+use crate::{
+    Assets, Color, GpuTextures, MAX_LIGHTS, MeshInstance, PointLight, Scene, Vertex, batch_meshes,
+};
 
 /// Начальный размер буфера инстансов в байтах.
 const INITIAL_CAPACITY: u64 = 1024;
 
+/// Раскладка `Light` из `mesh.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+struct LightUniform {
+    pos: [f32; 3],
+    range: f32,
+    color: [f32; 4],
+}
+
 /// Раскладка `SceneUniform` из `mesh.wgsl`.
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 struct SceneUniform {
     view_proj: [[f32; 4]; 4],
     ambient: [f32; 4],
+    fog_color: [f32; 4],
+    eye: [f32; 3],
+    fog_start: f32,
+    fog_end: f32,
+    light_count: u32,
+    /// WGSL выравнивает массив структур по 16 байт.
+    _pad: [u32; 2],
+    lights: [LightUniform; MAX_LIGHTS],
+}
+
+#[expect(clippy::cast_possible_truncation, reason = "GPU берёт цвет в f32")]
+fn rgba(c: Color) -> [f32; 4] {
+    [c.r as f32, c.g as f32, c.b as f32, c.a as f32]
+}
+
+impl SceneUniform {
+    /// Uniform кадра; из `lights` берутся первые `MAX_LIGHTS`.
+    fn new(scene: &Scene, aspect: f32) -> Self {
+        let mut lights = [LightUniform::zeroed(); MAX_LIGHTS];
+        for (dst, l) in lights.iter_mut().zip(&scene.lights) {
+            *dst = LightUniform::from(l);
+        }
+        #[expect(clippy::cast_possible_truncation, reason = "не больше MAX_LIGHTS")]
+        let light_count = scene.lights.len().min(MAX_LIGHTS) as u32;
+        Self {
+            view_proj: scene.camera.view_proj(aspect).to_cols_array_2d(),
+            ambient: rgba(scene.ambient),
+            fog_color: rgba(scene.fog.color),
+            eye: scene.camera.pos.into(),
+            fog_start: scene.fog.start,
+            fog_end: scene.fog.end,
+            light_count,
+            _pad: [0; 2],
+            lights,
+        }
+    }
+}
+
+impl From<&PointLight> for LightUniform {
+    fn from(l: &PointLight) -> Self {
+        Self {
+            pos: l.pos.into(),
+            range: l.range,
+            color: rgba(l.color),
+        }
+    }
+}
+
+/// `true` при первом переполнении `MAX_LIGHTS` за жизнь `warned`.
+fn first_overflow(warned: &mut bool, lights: usize) -> bool {
+    let first = lights > MAX_LIGHTS && !*warned;
+    *warned |= first;
+    first
 }
 
 struct GpuMesh {
@@ -34,6 +98,7 @@ pub struct MeshPipeline {
     capacity: u64,
     /// Индекс — `Handle<Mesh>::index`.
     meshes: Vec<GpuMesh>,
+    lights_warned: bool,
 }
 
 impl MeshPipeline {
@@ -87,6 +152,7 @@ impl MeshPipeline {
             instances: instance_buffer(device, INITIAL_CAPACITY),
             capacity: INITIAL_CAPACITY,
             meshes: Vec::new(),
+            lights_warned: false,
         }
     }
 
@@ -149,13 +215,14 @@ impl MeshPipeline {
         if !bytes.is_empty() {
             self.queue.write_buffer(&self.instances, 0, bytes);
         }
+        if first_overflow(&mut self.lights_warned, scene.lights.len()) {
+            log::warn!(
+                "{} point lights, only the first {MAX_LIGHTS} are drawn",
+                scene.lights.len()
+            );
+        }
         let aspect = depth.width() as f32 / depth.height() as f32;
-        let a = scene.ambient;
-        #[expect(clippy::cast_possible_truncation, reason = "GPU берёт цвет в f32")]
-        let uniform = SceneUniform {
-            view_proj: scene.camera.view_proj(aspect).to_cols_array_2d(),
-            ambient: [a.r as f32, a.g as f32, a.b as f32, 1.0],
-        };
+        let uniform = SceneUniform::new(scene, aspect);
         self.queue
             .write_buffer(&self.scene_buf, 0, bytemuck::bytes_of(&uniform));
 
@@ -266,12 +333,141 @@ mod tests {
     use crate::gpu_test::{SIZE, assert_pixel, gpu, load_png, offscreen};
     use crate::gpu_textures::depth_texture;
     use crate::{
-        Camera2D, Gfx, Handle, Mesh, MeshDraw, Sprite, SpritePipeline, Texture, Vec2, Vec3,
-        Viewport, vec2, vec3,
+        Camera2D, Camera3D, Fog, Gfx, Handle, Mesh, MeshDraw, Sprite, SpritePipeline, Texture,
+        Vec2, Vec3, Viewport, vec2, vec3,
     };
     use glam::Mat4;
+    use std::mem::offset_of;
+    use wgpu::naga::TypeInner;
 
     const BLUE: [u8; 3] = [0, 0, 255];
+    /// Цвет текстуры в тестах света и тумана.
+    const TEX: [u8; 3] = [200, 100, 50];
+    /// Пиксель центра кадра.
+    const CENTER: (u32, u32) = (32, 32);
+
+    fn gray(v: f64) -> Color {
+        Color {
+            r: v,
+            g: v,
+            b: v,
+            a: 1.0,
+        }
+    }
+
+    fn light(x: f32, z: f32, color: Color, range: f32) -> PointLight {
+        PointLight {
+            pos: vec3(x, 0.0, z),
+            color,
+            range,
+        }
+    }
+
+    /// Смещения полей структуры `name` из `mesh.wgsl` и её размер.
+    fn wgsl_layout(name: &str) -> (Vec<(String, usize)>, usize) {
+        let module = wgpu::naga::front::wgsl::parse_str(include_str!("mesh.wgsl")).unwrap();
+        module
+            .types
+            .iter()
+            .find_map(|(_, t)| match &t.inner {
+                TypeInner::Struct { members, span } if t.name.as_deref() == Some(name) => {
+                    let fields = members
+                        .iter()
+                        .map(|m| (m.name.clone().unwrap(), m.offset as usize))
+                        .collect();
+                    Some((fields, *span as usize))
+                }
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    fn fields(f: &[(&str, usize)]) -> Vec<(String, usize)> {
+        f.iter().map(|&(n, o)| (n.to_owned(), o)).collect()
+    }
+
+    #[test]
+    fn uniform_layout_matches_wgsl() {
+        let light = fields(&[
+            ("pos", offset_of!(LightUniform, pos)),
+            ("range", offset_of!(LightUniform, range)),
+            ("color", offset_of!(LightUniform, color)),
+        ]);
+        assert_eq!(wgsl_layout("Light"), (light, size_of::<LightUniform>()));
+        let scene = fields(&[
+            ("view_proj", offset_of!(SceneUniform, view_proj)),
+            ("ambient", offset_of!(SceneUniform, ambient)),
+            ("fog_color", offset_of!(SceneUniform, fog_color)),
+            ("eye", offset_of!(SceneUniform, eye)),
+            ("fog_start", offset_of!(SceneUniform, fog_start)),
+            ("fog_end", offset_of!(SceneUniform, fog_end)),
+            ("light_count", offset_of!(SceneUniform, light_count)),
+            ("lights", offset_of!(SceneUniform, lights)),
+        ]);
+        assert_eq!(
+            wgsl_layout("SceneUniform"),
+            (scene, size_of::<SceneUniform>())
+        );
+    }
+
+    #[test]
+    fn uniform_takes_first_max_lights() {
+        #[expect(clippy::cast_precision_loss, reason = "17 источников")]
+        let lights: Vec<_> = (0..=MAX_LIGHTS)
+            .map(|i| light(i as f32, 0.0, gray(0.5), 2.0))
+            .collect();
+        let scene = Scene {
+            camera: Camera3D {
+                pos: vec3(1.0, 2.0, 3.0),
+                ..Default::default()
+            },
+            ambient: gray(0.25),
+            fog: Fog {
+                color: gray(0.75),
+                start: 4.0,
+                end: 9.0,
+            },
+            lights: lights.clone(),
+            ..Default::default()
+        };
+        let u = SceneUniform::new(&scene, 1.5);
+
+        assert_eq!(u.light_count as usize, MAX_LIGHTS);
+        let packed: Vec<_> = lights[..MAX_LIGHTS]
+            .iter()
+            .map(LightUniform::from)
+            .collect();
+        assert_eq!(u.lights.as_slice(), packed);
+        assert_eq!(
+            u.lights[1],
+            LightUniform {
+                pos: [1.0, 0.0, 0.0],
+                range: 2.0,
+                color: [0.5, 0.5, 0.5, 1.0],
+            }
+        );
+        assert_eq!(u.view_proj, scene.camera.view_proj(1.5).to_cols_array_2d());
+        assert_eq!(u.ambient, [0.25, 0.25, 0.25, 1.0]);
+        assert_eq!(u.fog_color, [0.75, 0.75, 0.75, 1.0]);
+        assert_eq!(u.eye, [1.0, 2.0, 3.0]);
+        assert_eq!((u.fog_start, u.fog_end), (4.0, 9.0));
+
+        let few = Scene {
+            lights: lights[..3].to_vec(),
+            ..Default::default()
+        };
+        assert_eq!(SceneUniform::new(&few, 1.0).light_count, 3);
+    }
+
+    #[test]
+    fn light_overflow_warns_once() {
+        let mut warned = false;
+        assert!(!first_overflow(&mut warned, MAX_LIGHTS));
+        assert!(!warned);
+        assert!(first_overflow(&mut warned, MAX_LIGHTS + 1));
+        assert!(!first_overflow(&mut warned, MAX_LIGHTS + 1));
+        assert!(warned);
+    }
 
     /// Куб со стороной 1 и центром в начале координат.
     fn cube(assets: &mut Assets) -> Handle<Mesh> {
@@ -425,5 +621,107 @@ mod tests {
         assert_pixel(&img, "ambient × texture", (40, 40), expected);
         assert_pixel(&img, "sprite over 3d", (8, 8), [255, 255, 255]);
         assert_pixel(&img, "3d next to sprite", (16, 8), expected);
+    }
+
+    /// Центр кадра — передняя грань куба на `z = -3`, в 4 м от камеры на `z = 1`.
+    /// `test` — имя временного PNG: у параллельных тестов оно разное.
+    fn render_face(test: &str, ambient: f64, lights: Vec<PointLight>, fog: Fog) -> Vec<u8> {
+        let (device, queue) = gpu().unwrap();
+        let mut assets = Assets::default();
+        let cube = cube(&mut assets);
+        let [r, g, b] = TEX;
+        let tex = load_png(&mut assets, test, 1, 1, &[r, g, b, 255]);
+        let scene = Scene {
+            ambient: gray(ambient),
+            fog,
+            lights,
+            meshes: vec![at(cube, tex, -4.0, 2.0)],
+            camera: Camera3D {
+                pos: vec3(0.0, 0.0, 1.0),
+                ..Default::default()
+            },
+        };
+        render(&device, &queue, &mut assets, &gfx(scene))
+    }
+
+    /// Текстура `TEX`, освещённая линейным множителем `k`.
+    fn lit(k: f64) -> [u8; 3] {
+        TEX.map(|c| linear_to_srgb(srgb_to_linear(c) * k))
+    }
+
+    #[test]
+    fn point_light_lambert_and_falloff() {
+        if gpu().is_none() {
+            return;
+        }
+        // d = 2, range = 4: (1 - 2/4)² = 0.25 поверх ambient 0.2.
+        let toward = render_face(
+            "mesh-falloff",
+            0.2,
+            vec![light(0.0, -1.0, Color::WHITE, 4.0)],
+            Fog::default(),
+        );
+        assert_pixel(&toward, "face toward light", CENTER, lit(0.45));
+        let away = render_face(
+            "mesh-falloff",
+            0.2,
+            vec![light(0.0, -6.0, Color::WHITE, 10.0)],
+            Fog::default(),
+        );
+        assert_pixel(&away, "face away from light", CENTER, lit(0.2));
+        let beyond = render_face(
+            "mesh-falloff",
+            0.2,
+            vec![light(0.0, -1.0, Color::WHITE, 0.5)],
+            Fog::default(),
+        );
+        assert_pixel(&beyond, "beyond range", CENTER, lit(0.2));
+    }
+
+    #[test]
+    fn sixteenth_light_shines_seventeenth_dropped() {
+        if gpu().is_none() {
+            return;
+        }
+        let with_white_at = |i: usize| {
+            let mut lights = vec![light(0.0, -1.0, Color::BLACK, 4.0); i];
+            lights.push(light(0.0, -1.0, Color::WHITE, 4.0));
+            lights
+        };
+        let sixteenth = render_face(
+            "mesh-max-lights",
+            0.2,
+            with_white_at(MAX_LIGHTS - 1),
+            Fog::default(),
+        );
+        assert_pixel(&sixteenth, "16th light", CENTER, lit(0.45));
+        let seventeenth = render_face(
+            "mesh-max-lights",
+            0.2,
+            with_white_at(MAX_LIGHTS),
+            Fog::default(),
+        );
+        assert_pixel(&seventeenth, "17th light", CENTER, lit(0.2));
+    }
+
+    #[test]
+    fn fog_by_distance_from_camera() {
+        if gpu().is_none() {
+            return;
+        }
+        let fogged = |start, end| {
+            let fog = Fog {
+                color: gray(0.5),
+                start,
+                end,
+            };
+            render_face("mesh-fog", 1.0, Vec::new(), fog)
+        };
+        assert_pixel(&fogged(5.0, 10.0), "before start", CENTER, lit(1.0));
+        let fog_rgb = [linear_to_srgb(0.5); 3];
+        assert_pixel(&fogged(1.0, 3.0), "past end", CENTER, fog_rgb);
+        // Расстояние 4 от камеры, а не 3 от начала координат: туман ровно наполовину.
+        let half = TEX.map(|c| linear_to_srgb(0.5 * srgb_to_linear(c) + 0.25));
+        assert_pixel(&fogged(2.0, 6.0), "halfway", CENTER, half);
     }
 }

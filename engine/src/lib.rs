@@ -60,7 +60,9 @@ pub use physics::{
     Aabb, Actor, Axis, Contact, Hits, Solid, Tilemap, grounded, move_actor, move_solid,
 };
 pub use renderer::{RenderError, Renderer};
-pub use scene::{MeshBatch, MeshDraw, MeshInstance, Scene, batch_meshes};
+pub use scene::{
+    Fog, MAX_LIGHTS, MeshBatch, MeshDraw, MeshInstance, PointLight, Scene, batch_meshes,
+};
 pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;
 pub use stats::{FrameReport, FrameStats, RateCounter};
