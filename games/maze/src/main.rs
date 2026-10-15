@@ -333,6 +333,14 @@ impl Maze {
         }
         self.level.orcs = orcs;
         self.level.won = self.map.exits.contains(&pos.floor().as_ivec2());
+        if self.level.won {
+            // `play` больше не позовётся, и `draw` качал бы тела между `prev` и `pos` каждый тик.
+            let l = &mut self.level;
+            l.player.prev = l.player.pos;
+            for o in &mut l.orcs {
+                o.prev = o.pos;
+            }
+        }
     }
 
     fn scene(&self, camera: Camera3D, alpha: f32, assets: &Assets) -> Scene {
@@ -964,13 +972,14 @@ mod tests {
 
     #[test]
     fn exit_wins_and_enter_restarts_level() {
-        let (mut g, mut ctx) = maze("######\n#PoX.#\n######\n");
+        let (mut g, mut ctx) = maze("######\n#PoX.#\n######\n#E...#\n######\n");
         press(&mut ctx, KeyCode::Enter);
         tick(&mut g, &mut ctx);
         assert_eq!(
             g.level,
             Level {
                 ticks: 1,
+                orcs: g.level.orcs.clone(),
                 ..Level::new(&g.map)
             },
             "Enter до победы ничего не делает"
@@ -981,6 +990,8 @@ mod tests {
         until(&mut g, &mut ctx, |g| g.level.won);
         assert_eq!(g.level.player.pos.floor().as_ivec2(), ivec2(3, 1));
         assert_eq!(g.level.coins, []);
+        assert_eq!(g.level.player.prev, g.level.player.pos);
+        assert!(g.level.orcs.iter().all(|o| o.prev == o.pos));
         let won = g.level.clone();
         for _ in 0..10 {
             tick(&mut g, &mut ctx);
