@@ -24,6 +24,8 @@ pub mod input;
 pub mod mesh;
 /// GPU-путь мешей.
 pub mod mesh_pipeline;
+/// Модели glTF: узлы, скины, анимации.
+pub mod model;
 /// Целочисленные коллизии и движение тел: AABB, тайловая карта, Actor.
 pub mod physics;
 /// Поверхность окна и рендер кадра.
@@ -56,6 +58,7 @@ pub use gpu_textures::GpuTextures;
 pub use input::Input;
 pub use mesh::{Mesh, PendingMesh, Vertex};
 pub use mesh_pipeline::MeshPipeline;
+pub use model::{Animation, Channel, Model, Node, Primitive, Skin, Values};
 pub use physics::{
     Aabb, Actor, Axis, Contact, Hits, Solid, Tilemap, grounded, move_actor, move_solid,
 };

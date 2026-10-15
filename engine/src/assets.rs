@@ -9,6 +9,7 @@ use std::time::SystemTime;
 use crate::audio::{Sound, decode};
 use crate::frame::{linear_to_srgb, srgb_to_linear};
 use crate::mesh::{Mesh, PendingMesh, Vertex};
+use crate::model::{self, Model};
 use crate::text::{self, FontData};
 
 /// Индекс ресурса типа `T`; без поколения, пока индексы append-only.
@@ -125,12 +126,14 @@ struct Watched<T> {
     stamp: Option<Stamp>,
 }
 
-/// Реестр текстур, мешей, шрифтов и звуков; новые текстуры и меши ждут заливки на GPU до `take_pending*`.
+/// Реестр текстур, мешей, моделей, шрифтов и звуков; новые текстуры и меши ждут заливки на GPU до `take_pending*`.
 pub struct Assets {
     next_index: u32,
     pending: Vec<PendingTexture>,
     meshes: u32,
     pending_meshes: Vec<PendingMesh>,
+    models: Vec<Model>,
+    model_paths: HashMap<PathBuf, Handle<Model>>,
     paths: HashMap<PathBuf, Watched<Texture>>,
     fonts: Vec<FontData>,
     font_keys: HashMap<(PathBuf, u32), Handle<Font>>,
@@ -148,6 +151,8 @@ impl Default for Assets {
             pending: Vec::new(),
             meshes: 0,
             pending_meshes: Vec::new(),
+            models: Vec::new(),
+            model_paths: HashMap::new(),
             paths: HashMap::new(),
             fonts: Vec::new(),
             font_keys: HashMap::new(),
@@ -322,6 +327,37 @@ impl Assets {
     /// Забирает меши, добавленные с прошлого вызова, в порядке хэндлов.
     pub fn take_pending_meshes(&mut self) -> Vec<PendingMesh> {
         std::mem::take(&mut self.pending_meshes)
+    }
+
+    /// Повторный путь отдаёт прежний хэндл; горячо не перезагружается. Ошибка — пустая модель и `warn`.
+    pub fn load_model(&mut self, path: impl AsRef<Path>) -> Handle<Model> {
+        let path = path.as_ref();
+        if let Some(&h) = self.model_paths.get(path) {
+            return h;
+        }
+        let parsed = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| model::parse(&bytes));
+        let model = match parsed {
+            Ok(p) => p.upload(self, path.parent().unwrap_or(Path::new(""))),
+            Err(e) => {
+                log::warn!("model {}: {e}", path.display());
+                Model::default()
+            }
+        };
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "u32::MAX моделей не поместится в память"
+        )]
+        let handle = Handle::new(self.models.len() as u32);
+        self.models.push(model);
+        self.model_paths.insert(path.to_path_buf(), handle);
+        handle
+    }
+
+    /// Модель по хэндлу.
+    pub fn model(&self, handle: Handle<Model>) -> &Model {
+        &self.models[handle.index as usize]
     }
 
     fn push(

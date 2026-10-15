@@ -25,6 +25,7 @@ egui = { version = "0.36.2", default-features = false }
 egui-winit = { version = "0.36.2", default-features = false, features = ["wayland", "x11"] }
 egui-wgpu = { version = "0.36.2", default-features = false }
 egui_kittest = { version = "0.36.2", default-features = false }
+gltf = { version = "1.4.1", default-features = false, features = ["utils", "names"] }
 
 # Полный декод музыки в debug без оптимизаций занимает секунды.
 [profile.dev.package.lewton]
