@@ -102,12 +102,12 @@
 - Modify: `Cargo.toml`, `engine/Cargo.toml`, `deny.toml`, `engine/src/lib.rs`, `engine/src/frame.rs`, `engine/src/app.rs`, `engine/src/renderer.rs`
 - Create: `engine/src/ui.rs`
 
-- [ ] зависимости с фичами из Technical Details в `[workspace.dependencies]`, `pub use egui`; `cargo deny check` — новые лицензии в `deny.toml` осознанно
-- [ ] тесты `ui::to_input`: нажатие мыши при `wants_pointer` — нет; отпускание — да; клавиши — всегда да
-- [ ] `ui::to_input`; `Game::ui` с пустой реализацией; склейка в `app.rs`, снятие фокуса после `ui`
-- [ ] `Renderer`: не-sRGB `view_formats`, `update_texture` до проверки поверхности, egui-pass с `LoadOp::Load`, `free` после submit или сразу на пропущенном кадре — всё внутри `impl Renderer`
-- [ ] `docs/design.md`: egui — в «Готовое»; поломки «отпускание всегда в `Input`» → тест; «атлас egui теряется на непоказанном кадре» → ревью; «egui-pass с `Clear` стирает игру» → запуск; «сфокусированная кнопка ловит Space/Enter» → запуск
-- [ ] `make check`; запуск pong и platformer — кадр не изменился, warn egui о framebuffer нет
+- [x] зависимости с фичами из Technical Details в `[workspace.dependencies]`, `pub use egui`; `cargo deny check` — новые лицензии в `deny.toml` осознанно (новых нет, `deny.toml` не менялся)
+- [x] тесты `ui::to_input`: нажатие мыши при `wants_pointer` — нет; отпускание — да; клавиши — всегда да (`KeyEvent` вне winit не собрать — прочие события: курсор, уход, фокус)
+- [x] `ui::to_input`; `Game::ui` с пустой реализацией; склейка в `app.rs`, снятие фокуса после `ui`
+- [x] `Renderer::render(gfx, assets, UiFrame)` — `UiFrame` по значению: неочищенный `TexturesDelta` паникует при drop; не-sRGB `view_formats`, `update_texture` до проверки поверхности, egui-pass с `LoadOp::Load`, `free` после submit или сразу на пропущенном кадре — всё внутри `impl Renderer`
+- [x] `docs/design.md`: egui — в «Готовое»; поломки «отпускание всегда в `Input`» → тест; «атлас egui теряется на непоказанном кадре» → ревью; «egui-pass с `Clear` стирает игру» → запуск; «сфокусированная кнопка ловит Space/Enter» → запуск
+- [x] `make check`; запуск pong и platformer — кадр не изменился, warn egui о framebuffer нет
 
 ### Task 4: Горячая перезагрузка текстур
 

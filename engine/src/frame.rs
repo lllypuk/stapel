@@ -180,6 +180,8 @@ pub trait Game {
     fn update(&mut self, ctx: &mut Context);
     /// `alpha` — доля шага после последнего тика, для интерполяции.
     fn draw(&mut self, ctx: &mut Context, alpha: f32);
+    /// Панели egui, раз в кадр после `draw`.
+    fn ui(&mut self, _ui: &egui::Context) {}
 }
 
 /// Возвращает число выполненных тиков.

@@ -5,9 +5,9 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::surface::{Action, action, pick_format, pick_present_mode, split, surface_size};
-use crate::{Assets, Gfx, SpritePipeline, Viewport, viewport};
+use crate::{Assets, Gfx, SpritePipeline, UiFrame, Viewport, viewport};
 
-/// Поверхность окна и GPU-устройство; кадр рисует `SpritePipeline` во вписанный вьюпорт.
+/// Поверхность окна и GPU-устройство; кадр рисует `SpritePipeline` во вписанный вьюпорт, egui — поверх.
 pub struct Renderer {
     window: Arc<Window>,
     instance: wgpu::Instance,
@@ -16,6 +16,8 @@ pub struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     sprites: SpritePipeline,
+    ui: egui_wgpu::Renderer,
+    ui_format: wgpu::TextureFormat,
     pixel_perfect: bool,
     sized: bool,
     occluded: bool,
@@ -65,8 +67,13 @@ impl Renderer {
             )
         });
         config.present_mode = pick_present_mode(vsync, &caps.present_modes);
+        // egui смешивает в гамме: в `*Srgb` вид он рисует с искажёнными полутонами и warn на старте.
+        let ui_format = config.format.remove_srgb_suffix();
+        config.view_formats = vec![ui_format];
         log::info!("surface: {:?}, {:?}", config.format, config.present_mode);
         let sprites = SpritePipeline::new(&device, &queue, config.format);
+        let ui =
+            egui_wgpu::Renderer::new(&device, ui_format, egui_wgpu::RendererOptions::default());
 
         let mut renderer = Self {
             window,
@@ -76,6 +83,8 @@ impl Renderer {
             queue,
             config,
             sprites,
+            ui,
+            ui_format,
             pixel_perfect,
             sized: false,
             occluded: false,
@@ -118,16 +127,35 @@ impl Renderer {
         &mut self,
         gfx: &Gfx,
         assets: &mut Assets,
+        mut ui: UiFrame,
     ) -> Result<Option<Viewport>, RenderError> {
-        // До проверки поверхности: иначе текстуры, загруженные при свёрнутом окне, ждали бы его показа.
+        // До проверки поверхности: иначе текстуры, загруженные при свёрнутом окне, ждали бы его показа,
+        // а атлас шрифта egui присылает один раз и потерялся бы.
         self.sprites.upload(assets);
+        for (id, deltas) in &ui.textures.set {
+            for delta in deltas {
+                self.ui
+                    .update_texture(&self.device, &self.queue, *id, delta);
+            }
+        }
+        let shown = self.present(gfx, &ui);
+        // После submit кадра или сразу, если кадр пропущен.
+        for id in &ui.textures.free {
+            self.ui.free_texture(id);
+        }
+        // Неочищенный `TexturesDelta` паникует при drop в debug.
+        ui.textures.clear();
+        shown
+    }
+
+    fn present(&mut self, gfx: &Gfx, ui: &UiFrame) -> Result<Option<Viewport>, RenderError> {
         if !self.is_available() {
             return Ok(None);
         }
         let (frame, status) = split(self.surface.get_current_texture());
         match (action(&status), frame) {
             (Action::Draw { reconfigure }, Some(frame)) => {
-                let viewport = self.draw(frame, gfx);
+                let viewport = self.draw(frame, gfx, ui);
                 if reconfigure {
                     self.surface.configure(&self.device, &self.config);
                 }
@@ -150,7 +178,7 @@ impl Renderer {
         }
     }
 
-    fn draw(&mut self, frame: wgpu::SurfaceTexture, gfx: &Gfx) -> Viewport {
+    fn draw(&mut self, frame: wgpu::SurfaceTexture, gfx: &Gfx, ui: &UiFrame) -> Viewport {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -163,7 +191,39 @@ impl Renderer {
             self.pixel_perfect,
         );
         self.sprites.draw(&mut encoder, &view, viewport, gfx);
-        self.queue.submit([encoder.finish()]);
+        let mut buffers = Vec::new();
+        if !ui.jobs.is_empty() {
+            let screen = egui_wgpu::ScreenDescriptor {
+                size_in_pixels: [self.config.width, self.config.height],
+                pixels_per_point: ui.pixels_per_point,
+            };
+            buffers =
+                self.ui
+                    .update_buffers(&self.device, &self.queue, &mut encoder, &ui.jobs, &screen);
+            let ui_view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(self.ui_format),
+                ..Default::default()
+            });
+            let mut pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("egui"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &ui_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        // `Clear` стёр бы спрайты под панелью.
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                })
+                .forget_lifetime();
+            self.ui.render(&mut pass, &ui.jobs, &screen);
+        }
+        buffers.push(encoder.finish());
+        self.queue.submit(buffers);
         // На Wayland это ограничивает `RedrawRequested` частотой монитора, даже без vsync.
         if matches!(
             self.config.present_mode,

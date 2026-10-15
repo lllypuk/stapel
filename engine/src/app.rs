@@ -10,7 +10,8 @@ use winit::window::{Window, WindowId};
 
 use crate::audio::device;
 use crate::{
-    Config, Context, FixedClock, FrameStats, Game, RateCounter, Renderer, Shown, Vec2, step_frame,
+    Config, Context, FixedClock, FrameStats, Game, RateCounter, Renderer, Shown, UiFrame, Vec2,
+    step_frame, ui,
 };
 
 /// Ниже 4 FPS симуляция замедляется, а не догоняет лавиной тиков.
@@ -27,6 +28,8 @@ struct Running<G> {
     _stream: Option<cpal::Stream>,
     window: Arc<Window>,
     renderer: Renderer,
+    egui: egui::Context,
+    egui_state: egui_winit::State,
     game: G,
     ctx: Context,
     clock: FixedClock,
@@ -63,11 +66,22 @@ impl<G: Game> ApplicationHandler for App<G> {
             stream
         });
         let game = G::init(&mut ctx);
+        let egui = egui::Context::default();
+        let egui_state = egui_winit::State::new(
+            egui.clone(),
+            egui::ViewportId::ROOT,
+            &window,
+            None,
+            None,
+            None,
+        );
         window.request_redraw();
         self.running = Some(Running {
             _stream: stream,
             window,
             renderer,
+            egui,
+            egui_state,
             game,
             ctx,
             clock,
@@ -81,6 +95,10 @@ impl<G: Game> ApplicationHandler for App<G> {
         let Some(r) = self.running.as_mut() else {
             return;
         };
+        let _ = r.egui_state.on_window_event(&r.window, &event);
+        if !ui::to_input(&event, r.egui.egui_wants_pointer_input()) {
+            return;
+        }
         match event {
             WindowEvent::KeyboardInput {
                 event,
@@ -128,11 +146,31 @@ impl<G: Game> Running<G> {
         if dt > MAX_FRAME {
             self.tps.reset();
         }
+        self.egui
+            .begin_pass(self.egui_state.take_egui_input(&self.window));
         let ticks = step_frame(&mut self.game, &mut self.ctx, &mut self.clock, dt);
         for _ in 0..ticks {
             self.tps.record(now);
         }
-        match self.renderer.render(&self.ctx.gfx, &mut self.ctx.assets) {
+        self.game.ui(&self.egui);
+        // Клавиатура идёт и в игру: сфокусированная кнопка нажималась бы её Space и Enter.
+        self.egui.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
+        let out = self.egui.end_pass();
+        self.egui_state
+            .handle_platform_output(&self.window, out.platform_output);
+        let ui = UiFrame {
+            jobs: self.egui.tessellate(out.shapes, out.pixels_per_point),
+            textures: out.textures_delta,
+            pixels_per_point: out.pixels_per_point,
+        };
+        match self
+            .renderer
+            .render(&self.ctx.gfx, &mut self.ctx.assets, ui)
+        {
             Ok(Some(viewport)) => {
                 self.ctx.shown = Some(Shown {
                     camera: self.ctx.gfx.camera,

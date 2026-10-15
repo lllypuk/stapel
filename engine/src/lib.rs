@@ -29,12 +29,15 @@ pub mod stats;
 mod surface;
 /// Растеризация шрифтов и раскладка строк в спрайты.
 pub mod text;
+/// egui поверх кадра: маршрутизация ввода и вывод кадра.
+pub mod ui;
 
 pub use assets::{Assets, Font, Handle, PendingTexture, Texture, TextureKind};
 pub use audio::{Audio, Sound};
 pub use camera::{Camera2D, Viewport, letterbox, letterbox_pixel, screen_to_world, viewport};
 pub use clock::FixedClock;
 pub use ecs::{Commands, Entity, SparseSet, World};
+pub use egui;
 pub use frame::{Color, Context, Game, Gfx, Shown, Time, step_frame};
 pub use glam::{IVec2, Vec2, ivec2, vec2};
 pub use input::Input;
@@ -46,6 +49,7 @@ pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;
 pub use stats::{FrameReport, FrameStats, RateCounter};
 pub use text::{FontData, Glyph};
+pub use ui::UiFrame;
 pub use winit::event::{ElementState, MouseButton};
 pub use winit::keyboard::KeyCode;
 

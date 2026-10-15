@@ -18,6 +18,9 @@ hound.workspace = true
 lewton.workspace = true
 rtrb.workspace = true
 cpal.workspace = true
+egui.workspace = true
+egui-winit.workspace = true
+egui-wgpu.workspace = true
 
 [dev-dependencies]
 allocation-counter.workspace = true
