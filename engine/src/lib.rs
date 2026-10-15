@@ -4,7 +4,7 @@
 mod app;
 /// Текстуры, шрифты и звуки по хэндлам.
 pub mod assets;
-/// Декодированные звуки.
+/// Звуки, их запуск и микшер.
 pub mod audio;
 /// Ортокамера и вписывание кадра в окно.
 pub mod camera;
@@ -31,7 +31,7 @@ mod surface;
 pub mod text;
 
 pub use assets::{Assets, Font, Handle, PendingTexture, Texture, TextureKind};
-pub use audio::Sound;
+pub use audio::{Audio, Sound};
 pub use camera::{Camera2D, Viewport, letterbox, letterbox_pixel, viewport};
 pub use clock::FixedClock;
 pub use ecs::{Commands, Entity, SparseSet, World};

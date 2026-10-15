@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{Assets, Camera2D, FixedClock, Font, Handle, Input, Sprite, Vec2, text};
+use crate::{Assets, Audio, Camera2D, FixedClock, Font, Handle, Input, Sprite, Vec2, text};
 
 /// Линейный RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -133,8 +133,10 @@ pub struct Context {
     pub time: Time,
     /// Что нарисовать в этом кадре.
     pub gfx: Gfx,
-    /// Текстуры и шрифты.
+    /// Текстуры, шрифты и звуки.
     pub assets: Assets,
+    /// Запуск звуков; немой, пока нет устройства.
+    pub audio: Audio,
 }
 
 impl Context {
