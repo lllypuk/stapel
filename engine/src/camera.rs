@@ -1,5 +1,6 @@
 use glam::camera::rh::proj::directx;
-use glam::{Mat4, Vec2};
+use glam::camera::rh::view::look_to_mat4;
+use glam::{Mat4, Vec2, Vec3};
 
 /// Ортокамера: прямоугольник мира `size` с центром `center`, Y вверх.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -30,6 +31,57 @@ impl Camera2D {
     /// Отношение ширины видимой области к высоте.
     pub fn aspect(&self) -> f32 {
         self.size.x / self.size.y
+    }
+}
+
+/// Предел `|pitch|`: на `π/2` взгляд параллелен «верху» и вид вырождается.
+pub const MAX_PITCH: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
+
+/// Перспективная камера от первого лица, Y вверх; yaw 0 смотрит по −Z, положительный — влево.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Camera3D {
+    /// Позиция глаза.
+    pub pos: Vec3,
+    /// Поворот вокруг +Y, радианы.
+    pub yaw: f32,
+    /// Наклон вверх, радианы; зажимается в `±MAX_PITCH`.
+    pub pitch: f32,
+    /// Вертикальный угол обзора, радианы.
+    pub fov_y: f32,
+    /// Ближняя плоскость отсечения.
+    pub near: f32,
+    /// Дальняя плоскость отсечения.
+    pub far: f32,
+}
+
+impl Default for Camera3D {
+    fn default() -> Self {
+        Self {
+            pos: Vec3::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+            fov_y: 70f32.to_radians(),
+            near: 0.05,
+            far: 100.0,
+        }
+    }
+}
+
+impl Camera3D {
+    /// Единичное направление взгляда.
+    pub fn forward(&self) -> Vec3 {
+        let pitch = self.pitch.clamp(-MAX_PITCH, MAX_PITCH);
+        Vec3::new(
+            -self.yaw.sin() * pitch.cos(),
+            pitch.sin(),
+            -self.yaw.cos() * pitch.cos(),
+        )
+    }
+
+    /// Мир → NDC с глубиной `near` → 0, `far` → 1.
+    pub fn view_proj(&self, aspect: f32) -> Mat4 {
+        directx::perspective(self.fov_y, aspect, self.near, self.far)
+            * look_to_mat4(self.pos, self.forward(), Vec3::Y)
     }
 }
 
@@ -96,7 +148,8 @@ pub fn viewport(surface: (u32, u32), camera: &Camera2D, pixel_perfect: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::{Vec3, vec2};
+    use glam::{vec2, vec3};
+    use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
     const EPS: f32 = 1e-5;
 
@@ -355,5 +408,100 @@ mod tests {
         ] {
             assert_eq!(world((1366, 768), true, pos), None, "{pos}");
         }
+    }
+
+    fn eye() -> Camera3D {
+        Camera3D {
+            pos: vec3(1.0, 0.7, 2.0),
+            yaw: 0.6,
+            pitch: -0.3,
+            ..Camera3D::default()
+        }
+    }
+
+    fn ndc3(cam: &Camera3D, aspect: f32, p: Vec3) -> Vec3 {
+        cam.view_proj(aspect).project_point3(p)
+    }
+
+    #[test]
+    fn near_is_depth_zero_far_is_one() {
+        let cam = eye();
+        let near = ndc3(&cam, 1.5, cam.pos + cam.forward() * cam.near);
+        let far = ndc3(&cam, 1.5, cam.pos + cam.forward() * cam.far);
+        assert!(near.abs_diff_eq(Vec3::ZERO, 1e-4), "{near}");
+        assert!(far.abs_diff_eq(Vec3::Z, 1e-4), "{far}");
+    }
+
+    #[test]
+    fn yaw_zero_looks_down_negative_z() {
+        let cam = Camera3D::default();
+        assert!(cam.forward().abs_diff_eq(Vec3::NEG_Z, EPS));
+        let p = ndc3(&cam, 1.0, vec3(0.0, 0.0, -5.0));
+        assert!(p.truncate().abs_diff_eq(Vec2::ZERO, EPS), "{p}");
+        assert!(p.z > 0.0 && p.z < 1.0, "{p}");
+    }
+
+    #[test]
+    fn forward_follows_yaw_and_pitch() {
+        let at = |yaw, pitch| {
+            Camera3D {
+                yaw,
+                pitch,
+                ..Camera3D::default()
+            }
+            .forward()
+        };
+        let h = FRAC_PI_4.sin();
+        for (yaw, pitch, expected) in [
+            (FRAC_PI_2, 0.0, Vec3::NEG_X),
+            (-FRAC_PI_2, 0.0, Vec3::X),
+            (0.0, FRAC_PI_4, vec3(0.0, h, -h)),
+            (FRAC_PI_2, -FRAC_PI_4, vec3(-h, -h, 0.0)),
+        ] {
+            let got = at(yaw, pitch);
+            assert!(got.abs_diff_eq(expected, EPS), "{yaw} {pitch} → {got}");
+        }
+    }
+
+    #[test]
+    fn pitch_is_clamped() {
+        for (pitch, y) in [(10.0, MAX_PITCH.sin()), (-10.0, -MAX_PITCH.sin())] {
+            let cam = Camera3D {
+                pitch,
+                ..Camera3D::default()
+            };
+            assert!((cam.forward().y - y).abs() < EPS, "{pitch}");
+            assert!(
+                cam.forward().z < 0.0,
+                "взгляд перевалил через вертикаль: {pitch}"
+            );
+            assert!(cam.view_proj(1.0).is_finite(), "{pitch}");
+        }
+    }
+
+    #[test]
+    fn x_is_right_y_is_up() {
+        let cam = Camera3D::default();
+        let right = ndc3(&cam, 1.0, vec3(1.0, 0.0, -5.0));
+        let up = ndc3(&cam, 1.0, vec3(0.0, 1.0, -5.0));
+        assert!(right.x > 0.0 && right.y.abs() < EPS, "{right}");
+        assert!(up.y > 0.0 && up.x.abs() < EPS, "{up}");
+    }
+
+    #[test]
+    fn wider_aspect_narrows_x() {
+        let cam = Camera3D::default();
+        let p = vec3(1.0, 1.0, -5.0);
+        let square = ndc3(&cam, 1.0, p);
+        let wide = ndc3(&cam, 2.0, p);
+        assert!((wide.x - square.x / 2.0).abs() < EPS, "{square} {wide}");
+        assert!((wide.y - square.y).abs() < EPS, "{square} {wide}");
+    }
+
+    #[test]
+    fn eye_position_moves_view() {
+        let cam = eye();
+        let p = ndc3(&cam, 1.5, cam.pos + cam.forward() * 3.0);
+        assert!(p.truncate().abs_diff_eq(Vec2::ZERO, 1e-4), "{p}");
     }
 }

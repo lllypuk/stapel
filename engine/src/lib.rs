@@ -38,12 +38,14 @@ pub mod ui;
 
 pub use assets::{Assets, Font, Handle, PendingTexture, Texture, TextureKind};
 pub use audio::{Audio, Sound};
-pub use camera::{Camera2D, Viewport, letterbox, letterbox_pixel, screen_to_world, viewport};
+pub use camera::{
+    Camera2D, Camera3D, MAX_PITCH, Viewport, letterbox, letterbox_pixel, screen_to_world, viewport,
+};
 pub use clock::FixedClock;
 pub use ecs::{Commands, Entity, SparseSet, World};
 pub use egui;
 pub use frame::{Color, Context, Game, Gfx, Shown, Time, step_frame};
-pub use glam::{IVec2, Vec2, ivec2, vec2};
+pub use glam::{IVec2, Mat4, Quat, Vec2, Vec3, ivec2, vec2, vec3};
 pub use gpu_textures::GpuTextures;
 pub use input::Input;
 pub use physics::{
