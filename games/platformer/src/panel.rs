@@ -98,8 +98,11 @@ pub(crate) fn show(
 
 #[cfg(test)]
 mod tests {
-    use egui_kittest::{Harness, kittest::Queryable};
-    use engine::egui;
+    use egui_kittest::{
+        Harness,
+        kittest::{NodeT, Queryable},
+    };
+    use engine::egui::{self, accesskit::Toggled};
 
     use super::*;
 
@@ -153,6 +156,19 @@ mod tests {
         for (label, cmd) in cases {
             assert_eq!(click(label), [cmd], "{label}");
         }
+    }
+
+    #[test]
+    fn brush_and_current_level_are_selected() {
+        let mut editor = Editor::new("P\n");
+        editor.brush = '^';
+        let mut h = harness(editor);
+        h.run();
+        let toggled = |label| h.get_by_label(label).accesskit_node().toggled();
+        assert_eq!(toggled("^ шипы"), Some(Toggled::True));
+        assert_eq!(toggled("# земля"), Some(Toggled::False));
+        assert_eq!(toggled("level01.txt"), Some(Toggled::True));
+        assert_eq!(toggled("level02.txt"), Some(Toggled::False));
     }
 
     #[test]

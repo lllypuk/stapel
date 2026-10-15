@@ -2558,6 +2558,7 @@ mod tests {
         let mut g = Platformer::open(dir.clone());
         assert_eq!((&g.path, &g.level), (&dir.join("a.txt"), &parse(SECOND)));
         assert_eq!(g.levels_dir, dir);
+        assert_eq!(g.levels, [dir.join("a.txt"), dir.join("b.txt")]);
         assert_eq!(g.watch.poll(&g.path), Ok(None));
     }
 

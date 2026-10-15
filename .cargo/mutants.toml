@@ -1,8 +1,7 @@
-# Склейка с окном, циклом событий и звуковой картой (`fill` под тестами в audio/mod.rs): проверяется запуском игры.
-exclude_globs = ["engine/src/app.rs", "engine/src/audio/device.rs"]
+# Склейка с окном, циклом событий, поверхностью и звуковой картой (`fill` под тестами в audio/mod.rs, логика поверхности — в surface.rs): проверяется запуском игры.
+# renderer.rs — глобом: мутанты «delete field» в cargo-mutants 27.1 не фильтруются exclude_re.
+exclude_globs = ["engine/src/app.rs", "engine/src/renderer.rs", "engine/src/audio/device.rs"]
 exclude_re = [
-    # impl Renderer — склейка с поверхностью; её чистая логика в surface.rs мутируется.
-    "Renderer::",
     # fn main игр и engine::run открывают окно; глоб по main.rs выключил бы логику игр.
     "replace main -> ",
     " in main$",

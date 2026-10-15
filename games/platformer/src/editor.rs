@@ -473,6 +473,14 @@ mod tests {
     }
 
     #[test]
+    fn actor_stands_in_its_cell() {
+        let (_, chars) = atlases();
+        let at = Vec2::splat(TILE as f32);
+        let player = char_sprite(chars, at, TILE, IDLE, 1, PLAYER_LAYER);
+        assert_eq!(cells(".P\n..\n"), [player]);
+    }
+
+    #[test]
     fn unknown_symbol_draws_marker() {
         let marker = Sprite {
             pos: Vec2::splat(9.0),
@@ -790,13 +798,13 @@ mod tests {
         let mut h = History::new(g.clone());
         for _ in 0..=HISTORY_LIMIT {
             let before = g.clone();
-            g.add_column();
+            g.add_row();
             h.commit(before, &g);
         }
         for _ in 0..=HISTORY_LIMIT {
             h.undo(&mut g);
         }
-        assert_eq!(g.size(), ivec2(2, 1));
+        assert_eq!(g.size(), ivec2(1, 2));
     }
 
     #[test]
