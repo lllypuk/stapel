@@ -1,12 +1,14 @@
+mod enemy;
 mod map;
 mod player;
 
 use std::f32::consts::{FRAC_PI_2, TAU};
-use std::fs;
+use std::{fs, mem};
 
+use enemy::Orc;
 use engine::{
     Assets, Camera3D, Color, Config, Context, Game, Handle, IVec2, KeyCode, Mat4, Model, ModelDraw,
-    MouseButton, Pose, Quat, Scene, Vec2,
+    MouseButton, Pose, Quat, Scene, Vec2, vec3,
 };
 use map::{Dir, Map, cell_center};
 use player::{Player, RADIUS};
@@ -73,6 +75,7 @@ struct Level {
     /// Ключи в руках.
     held: usize,
     gates: Vec<Gate>,
+    orcs: Vec<Orc>,
     won: bool,
 }
 
@@ -88,6 +91,7 @@ impl Level {
                 .iter()
                 .map(|&cell| Gate { cell, opened: None })
                 .collect(),
+            orcs: map.orcs.iter().map(|&cell| Orc::new(map, cell)).collect(),
             won: false,
         }
     }
@@ -129,6 +133,8 @@ struct Maze {
     /// Анимация `open` ворот; без неё ворота открываются мгновенно.
     open: Option<usize>,
     open_secs: f32,
+    /// Анимация `walk` орка; без неё орк скользит в покое.
+    walk: Option<usize>,
     level: Level,
     /// Тиков с запуска; рестарт не сбрасывает — от него отсчитаны `Gate::opened`.
     tick: u64,
@@ -157,6 +163,7 @@ impl Maze {
         let animations = &assets.model(models.gate).animations;
         let open = animations.iter().position(|a| a.name == "open");
         let open_secs = open.map_or(0.0, |i| animations[i].duration);
+        let walk = (assets.model(models.orc).animations.iter()).position(|a| a.name == "walk");
         Self {
             level: Level::new(&map),
             map,
@@ -164,6 +171,7 @@ impl Maze {
             statics,
             open,
             open_secs,
+            walk,
             tick: 0,
         }
     }
@@ -184,10 +192,11 @@ impl Maze {
         !self.map.floor(cell) || self.level.gates.iter().any(|g| g.cell == cell && shut(g))
     }
 
-    /// Тик игры до победы: шаг, предметы, ворота, выход.
+    /// Тик игры до победы: шаг, предметы, ворота, орки, выход; касание орка — рестарт.
     fn play(&mut self, ctx: &Context) {
+        let dt = ctx.time.step.as_secs_f32();
         let mut player = self.level.player;
-        player.update(&ctx.input, ctx.time.step.as_secs_f32(), |c| self.solid(c));
+        player.update(&ctx.input, dt, |c| self.solid(c));
         let l = &mut self.level;
         l.player = player;
         let pos = player.pos;
@@ -201,20 +210,25 @@ impl Maze {
                 l.held -= 1;
             }
         }
-        l.won = self.map.exits.contains(&pos.floor().as_ivec2());
+        let mut orcs = mem::take(&mut self.level.orcs);
+        for o in &mut orcs {
+            o.update(dt, |c| self.solid(c));
+        }
+        if orcs.iter().any(|o| o.touches(pos)) {
+            self.level = Level::new(&self.map);
+            return;
+        }
+        self.level.orcs = orcs;
+        self.level.won = self.map.exits.contains(&pos.floor().as_ivec2());
     }
 
-    fn scene(&self, camera: Camera3D, assets: &Assets) -> Scene {
+    fn scene(&self, camera: Camera3D, alpha: f32, assets: &Assets) -> Scene {
         let m = &self.models;
         let l = &self.level;
         let mut models = self.statics.clone();
         let spin = coin_yaw(self.tick);
         models.extend(l.coins.iter().map(|&c| at(m.coin, c, spin)));
-        let items = [
-            (m.key, &l.keys),
-            (m.stairs, &self.map.exits),
-            (m.orc, &self.map.orcs),
-        ];
+        let items = [(m.key, &l.keys), (m.stairs, &self.map.exits)];
         for (model, cells) in items {
             models.extend(cells.iter().map(|&c| at(model, c, 0.0)));
         }
@@ -229,6 +243,23 @@ impl Maze {
             ModelDraw {
                 pose,
                 ..at(m.gate, g.cell, self.gate_yaw(g.cell))
+            }
+        }));
+        let orc = assets.model(m.orc);
+        models.extend(l.orcs.iter().map(|o| {
+            let pose = self.walk.map(|anim| {
+                let mut pose = Pose::default();
+                orc.pose(anim, o.walked_at(alpha) / enemy::SPEED, true, &mut pose);
+                pose
+            });
+            let p = o.at(alpha);
+            ModelDraw {
+                model: m.orc,
+                transform: Mat4::from_rotation_translation(
+                    Quat::from_rotation_y(o.yaw()),
+                    vec3(p.x, 0.0, p.y),
+                ),
+                pose,
             }
         }));
         Scene {
@@ -265,7 +296,7 @@ impl Game for Maze {
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
         let camera = self.level.player.camera(alpha, ctx.input.mouse_delta());
-        ctx.gfx.scene = Some(self.scene(camera, &ctx.assets));
+        ctx.gfx.scene = Some(self.scene(camera, alpha, &ctx.assets));
     }
 }
 
@@ -352,6 +383,7 @@ mod tests {
                     yaw: g.map.facing.yaw(),
                     ..Camera3D::default()
                 },
+                0.5,
                 &ctx.assets
             )
         );
@@ -369,7 +401,7 @@ mod tests {
     #[test]
     fn walls_and_floor_cover_every_cell() {
         let (g, ctx) = maze("####\n#Po#\n#kE#\n#DX#\n####\n");
-        let scene = g.scene(Camera3D::default(), &ctx.assets);
+        let scene = g.scene(Camera3D::default(), 0.0, &ctx.assets);
         let cells = || g.map.cells();
         assert_eq!(
             placed(&scene, g.models.wall),
@@ -384,24 +416,35 @@ mod tests {
     #[test]
     fn items_stand_on_their_cells() {
         let (g, ctx) = maze("####\n#Po#\n#kE#\n#DX#\n####\n");
-        let scene = g.scene(Camera3D::default(), &ctx.assets);
+        let scene = g.scene(Camera3D::default(), 0.0, &ctx.assets);
         let m = &g.models;
         assert_eq!(placed(&scene, m.coin), centers([ivec2(2, 1)]));
         assert_eq!(placed(&scene, m.key), centers([ivec2(1, 2)]));
         assert_eq!(placed(&scene, m.orc), centers([ivec2(2, 2)]));
         assert_eq!(placed(&scene, m.gate), centers([ivec2(1, 3)]));
         assert_eq!(placed(&scene, m.stairs), centers([ivec2(2, 3)]));
-        assert!(scene.models.iter().all(|d| d.pose.is_none()));
+        let posed = |d: &ModelDraw| d.pose.is_some();
+        assert!(
+            scene
+                .models
+                .iter()
+                .filter(|d| d.model != m.orc)
+                .all(|d| !posed(d))
+        );
+        assert!(draws(&scene, m.orc).all(posed));
     }
 
     #[test]
     fn gate_spans_corridor() {
         let across = |text| {
             let (g, ctx) = maze(text);
-            let d = draws(&g.scene(Camera3D::default(), &ctx.assets), g.models.gate)
-                .next()
-                .unwrap()
-                .clone();
+            let d = draws(
+                &g.scene(Camera3D::default(), 0.0, &ctx.assets),
+                g.models.gate,
+            )
+            .next()
+            .unwrap()
+            .clone();
             d.transform.transform_vector3(Vec3::X)
         };
         assert!(across("..#\n.D#\n.P#\n").abs_diff_eq(Vec3::X, 1e-6));
@@ -418,7 +461,7 @@ mod tests {
             (".P.\n#T.\n...\n", Dir::W),
         ] {
             let (g, ctx) = maze(text);
-            let scene = g.scene(Camera3D::default(), &ctx.assets);
+            let scene = g.scene(Camera3D::default(), 0.0, &ctx.assets);
             let banner = draws(&scene, g.models.banner).next().unwrap();
             let o = wall.offset().as_vec2();
             let toward_wall = banner.transform.transform_vector3(-Vec3::Z);
@@ -704,5 +747,67 @@ mod tests {
         let scene = ctx.gfx.scene.as_ref().unwrap();
         assert_eq!(draws(scene, g.models.coin).count(), 0);
         assert_eq!(draws(scene, g.models.key).count(), 0);
+    }
+
+    #[test]
+    fn orc_turns_at_closed_gate() {
+        let (mut g, mut ctx) = maze("########\n#P#E.D.#\n########\n");
+        let mut xs = Vec::new();
+        for _ in 0..3 * TICK_HZ {
+            tick(&mut g, &mut ctx);
+            xs.push(g.level.orcs[0].pos.x);
+        }
+        let max = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let min = xs.iter().copied().fold(f32::INFINITY, f32::min);
+        assert!((max - (5.0 - enemy::RADIUS)).abs() < 1e-5, "{max}");
+        assert!((min - (3.0 + enemy::RADIUS)).abs() < 1e-5, "{min}");
+    }
+
+    #[test]
+    fn orc_drawn_between_ticks_facing_heading_in_walk_pose() {
+        let (mut g, mut ctx) = maze("#####\n#P#E#\n###.#\n###.#\n#####\n");
+        for _ in 0..10 {
+            tick(&mut g, &mut ctx);
+        }
+        let o = g.level.orcs[0];
+        assert_eq!(o.dir, vec2(0.0, 1.0));
+        g.draw(&mut ctx, 0.25);
+        let scene = ctx.gfx.scene.as_ref().unwrap();
+        let d = draws(scene, g.models.orc).next().unwrap();
+        let at = o.prev.lerp(o.pos, 0.25);
+        assert!(
+            d.transform
+                .w_axis
+                .truncate()
+                .abs_diff_eq(vec3(at.x, 0.0, at.y), 1e-6)
+        );
+        let front = d.transform.transform_vector3(Vec3::Z);
+        assert!(front.abs_diff_eq(Vec3::Z, 1e-6), "{front:?}");
+        let model = ctx.assets.model(g.models.orc);
+        let mut want = Pose::default();
+        let secs = (o.walked - 0.75 * o.prev.distance(o.pos)) / enemy::SPEED;
+        model.pose(g.walk.unwrap(), secs, true, &mut want);
+        assert_eq!(d.pose.as_ref(), Some(&want));
+        let mut later = Pose::default();
+        model.pose(g.walk.unwrap(), o.walked / enemy::SPEED, true, &mut later);
+        assert_ne!(want, later, "фаза следует за путём");
+    }
+
+    #[test]
+    fn orc_touch_restarts_level() {
+        let (mut g, mut ctx) = maze("#########\n#Pok..E.#\n#########\n");
+        press(&mut ctx, KeyCode::KeyW);
+        until(&mut g, &mut ctx, |g| g.level.held == 1);
+        assert_eq!(g.level.coins, []);
+        for _ in 0..2 * TICK_HZ {
+            if g.level.held == 0 {
+                break;
+            }
+            tick(&mut g, &mut ctx);
+        }
+        assert_eq!(g.level, Level::new(&g.map));
+        assert_eq!(g.level.coins.len(), 1);
+        assert_eq!(g.level.player.prev, g.level.player.pos);
+        assert!(g.level.orcs.iter().all(|o| o.prev == o.pos));
     }
 }

@@ -40,7 +40,7 @@ pub(crate) enum Dir {
 
 impl Dir {
     /// Порядок выбора взгляда игрока и стены факела.
-    const ALL: [Self; 4] = [Self::N, Self::E, Self::S, Self::W];
+    pub(crate) const ALL: [Self; 4] = [Self::N, Self::E, Self::S, Self::W];
 
     pub(crate) fn offset(self) -> IVec2 {
         match self {

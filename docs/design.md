@@ -153,7 +153,7 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 ### Игры
 
 - Коллизия с движущимся телом — заметанием отрезка относительного движения против AABB, расширенного на полуразмер. Проверка только конечных положений пропускает касание угла: в Pong ракетка за тик сдвигается вниз, мяч вправо, и в обоих концах тика они не пересекаются. → тест `pong::moving_paddle_catches_ball_by_corner`
-- Телепорт (подача из центра) ставит `prev = cur`, иначе интерполяция нарисует пролёт через всё поле. → тест `pong::goal_scores_and_serves_to_loser`, `platformer::respawn_resets_motion_and_camera`
+- Телепорт (подача из центра) ставит `prev = cur`, иначе интерполяция нарисует пролёт через всё поле. → тест `pong::goal_scores_and_serves_to_loser`, `platformer::respawn_resets_motion_and_camera`, `maze::orc_touch_restarts_level`
 - Перенос через край мира сдвигает `prev` на тот же вектор, что и `pos`: иначе кадр между тиками нарисует пролёт через всё поле. → тест `asteroids::wrap_waits_until_fully_out_and_shifts_prev`
 - Изменение уровня на диске — по содержимому против базы (последний загруженный или сохранённый текст), не по mtime: mtime на Linux грубый, правка в тот же квант пропала бы, а своё сохранение выглядело бы внешней правкой. → тест `levels::watcher_reports_each_new_text_once`, `platformer::changed_level_file_restarts_with_new_map`
 - Внешнее изменение уровня при `dirty` — в редакторе и в игре правки по F1 — не заменяет сетку, а ставит флаг до «Загрузить с диска» или Ctrl+S: перечитывание молча стёрло бы несохранённые правки, а без флага Ctrl+S молча затёр бы чужую. → тест `platformer::external_change_of_dirty_editor_keeps_grid_and_flags`, `platformer::external_change_during_dirty_playtest_keeps_grid_and_flags`
