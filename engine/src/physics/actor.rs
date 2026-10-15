@@ -274,6 +274,16 @@ mod tests {
     }
 
     #[test]
+    fn contact_follows_pixel_path_not_swept_box() {
+        let mut a = body(20, 20);
+        assert_eq!(
+            go(&mut a, vec2(5.0, 5.0), &[], &[rect(20, 29, 4, 4)]),
+            Vec::<Contact>::new()
+        );
+        assert_eq!(a.aabb.min, ivec2(25, 25));
+    }
+
+    #[test]
     fn sensor_overlapped_before_step_is_not_repeated() {
         let mut a = body(20, 20);
         assert_eq!(

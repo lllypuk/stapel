@@ -2079,6 +2079,35 @@ mod tests {
     }
 
     #[test]
+    fn crossing_sweeps_with_touching_ends_do_not_kill() {
+        let swept = |prev: IVec2, aabb: Aabb| {
+            let min = prev.min(aabb.min);
+            Aabb {
+                min,
+                size: aabb.size + (prev - aabb.min).abs(),
+            }
+        };
+        let mut g = flat();
+        let mut enemy = Enemy::spawn(ivec2(3, 1));
+        enemy.body.aabb.min.x = g.player.body.aabb.max().x + 1;
+        enemy.dir = 1;
+        let e = g.world.spawn();
+        g.world.insert(e, enemy);
+        g.player.vel.x = RUN_MAX;
+        g.tick(&input(&[KeyCode::ArrowRight]));
+        assert_eq!(g.deaths, 0);
+        let p = g.player.body.aabb;
+        let store = g.world.storage::<Enemy>();
+        let en = store.iter().next().unwrap().1;
+        assert_eq!(
+            (p.min - g.player.prev, en.body.aabb.min - en.prev),
+            (ivec2(2, 0), ivec2(1, 0))
+        );
+        assert!(swept(g.player.prev, p).overlaps(&swept(en.prev, en.body.aabb)));
+        assert_eq!(p.max().x, en.body.aabb.min.x);
+    }
+
+    #[test]
     fn player_inside_enemy_at_tick_start_dies() {
         let mut g = flat();
         let e = g.world.spawn();
