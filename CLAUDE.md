@@ -36,5 +36,6 @@ REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine sprite_pipeline   # оф�
 - Исключение из линта — локальный `#[expect(lint, reason = "...")]`, не `allow`; если линт срабатывает по-разному в тестовой сборке (`unwrap_used`, `print_stderr`, `dead_code`) — `#[cfg_attr(not(test), expect(..))]`, иначе `--all-targets` упадёт на `unfulfilled_lint_expectations`.
 - Порог покрытия в `make cov` — только вверх; снижение — осознанное решение в коммите.
 - Выживший мутант — тест, который его убивает, или исключение в `.cargo/mutants.toml` с причиной.
+- Новая молчаливая поломка — в свой слой раздела `docs/design.md` с пометкой «→ что её ловит»; правка кода, снимающая защиту, правит и пометку.
 - Тег `CI_IMAGE` в `.gitlab-ci.yml` поднимается вместе с правкой `ci/Dockerfile`; образ собирается и пушится вручную.
 - Ревью веток — `revmux`; профиль проекта для него — `.revmux/profile.md`, архив раундов `.revmux/tasks/` в git не попадает.
