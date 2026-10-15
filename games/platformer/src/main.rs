@@ -1,8 +1,9 @@
-use std::fmt;
+use std::{fmt, iter};
 
 use engine::{
     Aabb, Actor, Axis, Camera2D, Color, Config, Context, Game, Gfx, Handle, IVec2, Input, KeyCode,
-    Rect, Sprite, Texture, Tilemap, Vec2, grounded, ivec2, move_actor, vec2,
+    Rect, Solid, Sprite, Texture, Tilemap, Vec2, World, grounded, ivec2, move_actor, move_solid,
+    vec2,
 };
 
 const TICK_HZ: u32 = 60;
@@ -17,13 +18,27 @@ const TILES_ATLAS: Vec2 = vec2(360.0, 162.0);
 const GRASS: IVec2 = ivec2(2, 0);
 const DIRT: IVec2 = ivec2(2, 6);
 const TILE_LAYER: i32 = 1;
+/// Ячейки платформ: одна клетка в ширину — блок, иначе доска с краями.
+const BLOCK: IVec2 = ivec2(7, 2);
+const PLANK_LEFT: IVec2 = ivec2(8, 2);
+const PLANK: IVec2 = ivec2(9, 2);
+const PLANK_RIGHT: IVec2 = ivec2(10, 2);
+const PLATFORM_LAYER: i32 = 2;
 const CHARS_ATLAS: Vec2 = vec2(216.0, 72.0);
 /// Сторона кадра персонажа.
 const CHAR: i32 = 24;
 /// Кадры игрока в атласе персонажей; нарисован лицом влево.
 const IDLE: IVec2 = ivec2(0, 0);
 const WALK: IVec2 = ivec2(1, 0);
-const PLAYER_LAYER: i32 = 3;
+const PLAYER_LAYER: i32 = 4;
+/// Кадры врага.
+const WALKER: IVec2 = ivec2(0, 2);
+const WALKER_STEP: IVec2 = ivec2(1, 2);
+const ENEMY_LAYER: i32 = 3;
+const ENEMY_SIZE: IVec2 = ivec2(14, 12);
+const ENEMY_SPEED: f32 = 0.5;
+/// Пикселей пути на кадр ходьбы врага.
+const ENEMY_FRAME: i32 = 4;
 const PLAYER_SIZE: IVec2 = ivec2(12, 16);
 /// Скорости — в px/тик, ускорения — в px/тик².
 const RUN_MAX: f32 = 1.5;
@@ -170,6 +185,13 @@ fn to_index(cell: IVec2, width: i32) -> usize {
     (cell.y * width + cell.x) as usize
 }
 
+fn cell_aabb(cell: IVec2) -> Aabb {
+    Aabb {
+        min: cell * TILE,
+        size: IVec2::splat(TILE),
+    }
+}
+
 /// Центр клетки в мировых пикселях.
 fn cell_center(cell: IVec2) -> Vec2 {
     (cell * TILE + TILE / 2).as_vec2()
@@ -187,6 +209,30 @@ fn atlas_uv(cell: IVec2, size: i32, atlas: Vec2) -> Rect {
 /// Положение между тиками, округлённое до целого пикселя.
 fn lerp_round(prev: IVec2, cur: IVec2, alpha: f32) -> Vec2 {
     prev.as_vec2().lerp(cur.as_vec2(), alpha).round()
+}
+
+/// Кадр `cell` атласа персонажей низом на низ хитбокса `[min, min + width)`, по центру.
+fn char_sprite(
+    texture: Handle<Texture>,
+    min: Vec2,
+    width: i32,
+    cell: IVec2,
+    facing: i32,
+    layer: i32,
+) -> Sprite {
+    let mut uv = atlas_uv(cell, CHAR, CHARS_ATLAS);
+    // Персонажи в атласе смотрят влево.
+    if facing == 1 {
+        std::mem::swap(&mut uv.min.x, &mut uv.max.x);
+    }
+    Sprite {
+        texture,
+        pos: min + vec2(width as f32 / 2.0, CHAR as f32 / 2.0),
+        size: Vec2::splat(CHAR as f32),
+        uv,
+        layer,
+        ..Default::default()
+    }
 }
 
 /// Звуковое событие тика.
@@ -262,8 +308,8 @@ impl Player {
         }
     }
 
-    fn step(&mut self, map: &Tilemap, c: Controls, sfx: &mut Vec<Sfx>) {
-        self.air = if grounded(map, &[], &self.body.aabb) {
+    fn step(&mut self, map: &Tilemap, solids: &[Aabb], c: Controls, sfx: &mut Vec<Sfx>) {
+        self.air = if grounded(map, solids, &self.body.aabb) {
             0
         } else {
             self.air.saturating_add(1)
@@ -287,7 +333,7 @@ impl Player {
         if c.release {
             self.vel.y = self.vel.y.min(self.vel.y * JUMP_CUT);
         }
-        let hits = move_actor(map, &[], &mut self.body, self.vel, &[], &mut Vec::new());
+        let hits = move_actor(map, solids, &mut self.body, self.vel, &[], &mut Vec::new());
         if hits.x {
             self.vel.x = 0.0;
         }
@@ -313,21 +359,133 @@ impl Player {
         }
     }
 
-    /// Кадр 24×24 низом на низ хитбокса, по центру; края на целых пикселях.
     fn sprite(&self, texture: Handle<Texture>, alpha: f32) -> Sprite {
         let min = lerp_round(self.prev, self.body.aabb.min, alpha);
-        let mut uv = atlas_uv(self.frame(), CHAR, CHARS_ATLAS);
-        if self.facing == 1 {
-            std::mem::swap(&mut uv.min.x, &mut uv.max.x);
-        }
-        Sprite {
+        char_sprite(
             texture,
-            pos: min + vec2(PLAYER_SIZE.x as f32 / 2.0, CHAR as f32 / 2.0),
-            size: Vec2::splat(CHAR as f32),
-            uv,
-            layer: PLAYER_LAYER,
-            ..Default::default()
+            min,
+            PLAYER_SIZE.x,
+            self.frame(),
+            self.facing,
+            PLAYER_LAYER,
+        )
+    }
+}
+
+/// Движущаяся платформа; разворачивается перед `!` и твёрдым.
+struct Platform {
+    body: Solid,
+    prev: IVec2,
+    /// Шаг за тик: 1 px вдоль оси хода.
+    dir: IVec2,
+}
+
+impl Platform {
+    fn spawn(spawn: PlatformSpawn) -> Self {
+        let aabb = Aabb {
+            min: spawn.cells.min * TILE,
+            size: spawn.cells.size * TILE,
+        };
+        Self {
+            body: Solid {
+                aabb,
+                remainder: Vec2::ZERO,
+            },
+            prev: aabb.min,
+            dir: match spawn.axis {
+                Axis::X => IVec2::X,
+                Axis::Y => IVec2::Y,
+            },
         }
+    }
+
+    fn sprites(&self, texture: Handle<Texture>, alpha: f32) -> impl Iterator<Item = Sprite> {
+        let min = lerp_round(self.prev, self.body.aabb.min, alpha);
+        let cells = self.body.aabb.size / TILE;
+        (0..cells.y).flat_map(move |y| {
+            (0..cells.x).map(move |x| {
+                let art = match x {
+                    _ if cells.x == 1 => BLOCK,
+                    0 => PLANK_LEFT,
+                    x if x == cells.x - 1 => PLANK_RIGHT,
+                    _ => PLANK,
+                };
+                Sprite {
+                    texture,
+                    pos: min + cell_center(ivec2(x, y)),
+                    size: Vec2::splat(TILE as f32),
+                    uv: atlas_uv(art, TILE, TILES_ATLAS),
+                    layer: PLATFORM_LAYER,
+                    ..Default::default()
+                }
+            })
+        })
+    }
+}
+
+/// Патрульный враг: разворачивается у стены и перед краем опоры.
+struct Enemy {
+    body: Actor,
+    prev: IVec2,
+    /// `1` — вправо, `-1` — влево.
+    dir: i32,
+    fall: f32,
+}
+
+impl Enemy {
+    /// Стоит на дне клетки `cell`, по центру.
+    fn spawn(cell: IVec2) -> Self {
+        let min = cell * TILE + ivec2((TILE - ENEMY_SIZE.x) / 2, 0);
+        Self {
+            body: Actor {
+                aabb: Aabb {
+                    min,
+                    size: ENEMY_SIZE,
+                },
+                remainder: Vec2::ZERO,
+            },
+            prev: min,
+            dir: -1,
+            fall: 0.0,
+        }
+    }
+
+    fn step(&mut self, map: &Tilemap, solids: &[Aabb]) {
+        self.fall = (self.fall - GRAVITY).max(-FALL_MAX);
+        let aabb = self.body.aabb;
+        let ahead = Aabb {
+            min: ivec2(
+                if self.dir == 1 {
+                    aabb.max().x
+                } else {
+                    aabb.min.x - 1
+                },
+                aabb.min.y - 1,
+            ),
+            size: IVec2::ONE,
+        };
+        let support = map.overlaps_solid(&ahead) || solids.iter().any(|s| s.overlaps(&ahead));
+        if !support && grounded(map, solids, &aabb) {
+            self.dir = -self.dir;
+        }
+        let delta = vec2(self.dir as f32 * ENEMY_SPEED, self.fall);
+        let hits = move_actor(map, solids, &mut self.body, delta, &[], &mut Vec::new());
+        if hits.x {
+            self.dir = -self.dir;
+        }
+        if hits.y {
+            self.fall = 0.0;
+        }
+    }
+
+    fn sprite(&self, texture: Handle<Texture>, alpha: f32) -> Sprite {
+        let min = lerp_round(self.prev, self.body.aabb.min, alpha);
+        let frame = if self.body.aabb.min.x.div_euclid(ENEMY_FRAME) % 2 == 0 {
+            WALKER
+        } else {
+            WALKER_STEP
+        };
+        char_sprite(texture, min, ENEMY_SIZE.x, frame, self.dir, ENEMY_LAYER)
     }
 }
 
@@ -358,6 +516,8 @@ struct Platformer {
     level: Level,
     map: Tilemap,
     player: Player,
+    /// Сущности с `Platform` и `Enemy`.
+    world: World,
     camera: Follow,
     /// События тика; звучат в `update`.
     sfx: Vec<Sfx>,
@@ -369,6 +529,17 @@ impl Platformer {
     fn new(level: Level) -> Self {
         let map = Tilemap::new(TILE, level.size.x, level.size.y, level.solid.clone());
         let player = Player::spawn(level.player);
+        let mut world = World::default();
+        world.register::<Platform>();
+        world.register::<Enemy>();
+        for &p in &level.platforms {
+            let e = world.spawn();
+            world.insert(e, Platform::spawn(p));
+        }
+        for &cell in &level.enemies {
+            let e = world.spawn();
+            world.insert(e, Enemy::spawn(cell));
+        }
         let mut camera = Follow::at(level.bounds() / 2);
         camera.follow(player.center(), level.bounds());
         camera.prev = camera.pos;
@@ -376,6 +547,7 @@ impl Platformer {
             level,
             map,
             player,
+            world,
             camera,
             sfx: Vec::new(),
             tiles: Handle::WHITE,
@@ -387,10 +559,61 @@ impl Platformer {
         self.sfx.clear();
         self.camera.prev = self.camera.pos;
         self.player.prev = self.player.body.aabb.min;
+        let solids = self.step_bodies();
         self.player
-            .step(&self.map, Controls::read(input), &mut self.sfx);
+            .step(&self.map, &solids, Controls::read(input), &mut self.sfx);
         self.camera
             .follow(self.player.center(), self.level.bounds());
+    }
+
+    /// Платформы везут и толкают игрока и врагов, затем ходят враги; отдаёт платформы для шага игрока.
+    fn step_bodies(&mut self) -> Vec<Aabb> {
+        let mut platforms = self.world.storage_mut::<Platform>();
+        let mut enemies = self.world.storage_mut::<Enemy>();
+        for (_, p) in platforms.iter_mut() {
+            p.prev = p.body.aabb.min;
+        }
+        for (_, e) in enemies.iter_mut() {
+            e.prev = e.body.aabb.min;
+        }
+        let mut solids: Vec<Solid> = platforms.iter().map(|(_, p)| p.body).collect();
+        let mut actors: Vec<Actor> = iter::once(self.player.body)
+            .chain(enemies.iter().map(|(_, e)| e.body))
+            .collect();
+        for (i, (_, p)) in platforms.iter_mut().enumerate() {
+            let blocked = |dir: IVec2| {
+                let ahead = Aabb {
+                    min: p.body.aabb.min + dir,
+                    ..p.body.aabb
+                };
+                let stop = |&cell: &IVec2| cell_aabb(cell).overlaps(&ahead);
+                self.map.overlaps_solid(&ahead) || self.level.stops.iter().any(stop)
+            };
+            if blocked(p.dir) {
+                p.dir = -p.dir;
+            }
+            if blocked(p.dir) {
+                continue;
+            }
+            move_solid(
+                &self.map,
+                &mut solids,
+                i,
+                p.dir.as_vec2(),
+                &mut actors,
+                &[],
+                &mut Vec::new(),
+                &mut Vec::new(),
+            );
+            p.body = solids[i];
+        }
+        self.player.body = actors[0];
+        let boxes: Vec<Aabb> = solids.iter().map(|s| s.aabb).collect();
+        for ((_, e), &body) in enemies.iter_mut().zip(&actors[1..]) {
+            e.body = body;
+            e.step(&self.map, &boxes);
+        }
+        boxes
     }
 
     /// Твёрдые клетки, задевающие вид с целым центром `center`; верхняя — трава.
@@ -448,6 +671,14 @@ impl Game for Platformer {
             size: VIEW.as_vec2(),
         };
         self.draw_tiles(&mut ctx.gfx, center.as_ivec2());
+        for (_, p) in self.world.storage::<Platform>().iter() {
+            for s in p.sprites(self.tiles, alpha) {
+                ctx.gfx.draw_sprite(s);
+            }
+        }
+        for (_, e) in self.world.storage::<Enemy>().iter() {
+            ctx.gfx.draw_sprite(e.sprite(self.chars, alpha));
+        }
         ctx.gfx.draw_sprite(self.player.sprite(self.chars, alpha));
     }
 }
@@ -1088,5 +1319,286 @@ mod tests {
         assert_ne!(g.chars, g.tiles);
         let bottom = players[0].pos.y - 12.0;
         assert_eq!(bottom, g.player.body.aabb.min.y as f32);
+    }
+
+    fn platforms(g: &Platformer) -> Vec<Aabb> {
+        let store = g.world.storage::<Platform>();
+        store.iter().map(|(_, p)| p.body.aabb).collect()
+    }
+
+    fn enemies(g: &Platformer) -> Vec<Aabb> {
+        let store = g.world.storage::<Enemy>();
+        store.iter().map(|(_, e)| e.body.aabb).collect()
+    }
+
+    /// Положения первой платформы после каждого из `n` тиков без ввода.
+    fn run(g: &mut Platformer, n: usize) -> Vec<Aabb> {
+        (0..n)
+            .map(|_| {
+                g.tick(&Input::default());
+                platforms(g)[0]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn level_spawns_platforms_and_enemies_in_world() {
+        let g = room(&["E.==.H", "P.####"]);
+        let rect = |x, y, w, h| Aabb {
+            min: ivec2(x, y),
+            size: ivec2(w, h),
+        };
+        assert_eq!(platforms(&g), [rect(36, 18, 36, 18), rect(90, 18, 18, 18)]);
+        assert_eq!(enemies(&g), [rect(2, 18, 14, 12)]);
+        let store = g.world.storage::<Platform>();
+        let dirs: Vec<IVec2> = store.iter().map(|(_, p)| p.dir).collect();
+        assert_eq!(dirs, [IVec2::X, IVec2::Y]);
+    }
+
+    #[test]
+    fn platform_turns_before_stop_and_solid() {
+        let mut g = room(&["P......", "!..=..#"]);
+        let xs: Vec<i32> = run(&mut g, 150).iter().map(|p| p.min.x).collect();
+        assert_eq!(xs[..3], [55, 56, 57]);
+        assert_eq!(xs.iter().max(), Some(&90));
+        assert_eq!(xs.iter().min(), Some(&18));
+        let turn = xs.iter().position(|&x| x == 90).unwrap();
+        assert_eq!(xs[turn + 1], 89);
+    }
+
+    #[test]
+    fn vertical_platform_turns_before_stop_and_solid() {
+        let mut g = room(&["!P", "..", "..", "H.", "#."]);
+        let ys: Vec<i32> = run(&mut g, 100).iter().map(|p| p.min.y).collect();
+        assert_eq!(ys[0], 19);
+        assert_eq!(ys.iter().max(), Some(&54));
+        assert_eq!(ys.iter().min(), Some(&18));
+    }
+
+    /// Платформа `=` клетки `(1, 0)` ходит между `!` по краям, над ней — пусто.
+    fn ferry() -> Platformer {
+        room(&["P........", ".........", "!=......!"])
+    }
+
+    #[test]
+    fn player_rides_platform_both_ways() {
+        let mut g = ferry();
+        g.player.body.aabb.min = ivec2(20, 18);
+        let mut seen = Vec::new();
+        for _ in 0..200 {
+            g.tick(&Input::default());
+            let p = platforms(&g)[0];
+            assert_eq!(g.player.body.aabb.min - p.min, ivec2(2, 18));
+            seen.push(p.min.x);
+        }
+        assert!(seen.contains(&(7 * TILE)) && seen.contains(&(TILE + 1)));
+    }
+
+    #[test]
+    fn player_rides_vertical_platform_both_ways() {
+        let mut g = room(&["!P", "..", "..", "..", "H.", "#."]);
+        g.player.body.aabb.min = ivec2(3, 36);
+        let mut seen = Vec::new();
+        for _ in 0..200 {
+            g.tick(&Input::default());
+            let p = platforms(&g)[0];
+            assert_eq!(g.player.body.aabb.min - p.min, ivec2(3, 18));
+            seen.push(p.min.y);
+        }
+        assert!(seen.contains(&TILE) && seen.contains(&(4 * TILE)));
+    }
+
+    #[test]
+    fn enemy_turns_at_wall() {
+        let mut g = room(&["P.......", "#..E...#", "########"]);
+        let xs: Vec<i32> = run_enemy(&mut g, 500);
+        assert_eq!(xs.iter().min(), Some(&TILE));
+        assert_eq!(xs.iter().max(), Some(&(7 * TILE - ENEMY_SIZE.x)));
+        assert!(enemies(&g).iter().all(|e| e.min.y == 18));
+    }
+
+    fn run_enemy(g: &mut Platformer, n: usize) -> Vec<i32> {
+        (0..n)
+            .map(|_| {
+                g.tick(&Input::default());
+                enemies(g)[0].min.x
+            })
+            .collect()
+    }
+
+    #[test]
+    fn enemy_walks_half_pixel_per_tick_both_ways() {
+        let mut g = room(&["P.......", "...E....", "########"]);
+        let start = enemies(&g)[0].min.x;
+        assert_eq!(
+            run_enemy(&mut g, 4),
+            [start - 1, start - 1, start - 2, start - 2]
+        );
+        g.world
+            .storage_mut::<Enemy>()
+            .iter_mut()
+            .for_each(|(_, e)| e.dir = 1);
+        assert_eq!(run_enemy(&mut g, 4), [start - 1, start - 1, start, start]);
+    }
+
+    #[test]
+    fn enemy_turns_before_tile_edge() {
+        let mut g = room(&["P.......", "...E....", "..####.."]);
+        let xs = run_enemy(&mut g, 500);
+        assert_eq!(xs.iter().min(), Some(&(2 * TILE)));
+        assert_eq!(xs.iter().max(), Some(&(6 * TILE - ENEMY_SIZE.x)));
+        assert_eq!(enemies(&g)[0].min.y, 18);
+    }
+
+    #[test]
+    fn enemy_walks_off_edge_only_in_air() {
+        let mut g = room(&["P.E", "...", "#.."]);
+        let start = enemies(&g)[0].min.x;
+        run_enemy(&mut g, 10);
+        assert!(enemies(&g)[0].min.y < 36);
+        assert!(enemies(&g)[0].min.x < start);
+    }
+
+    #[test]
+    fn enemy_rides_platform_and_turns_before_its_edges() {
+        let mut g = room(&["P.........", "...E......", "!..===...!"]);
+        let mut offsets = Vec::new();
+        for _ in 0..600 {
+            g.tick(&Input::default());
+            let (p, e) = (platforms(&g)[0], enemies(&g)[0]);
+            assert_eq!(e.min.y, 18);
+            offsets.push(e.min.x - p.min.x);
+        }
+        assert_eq!(offsets.iter().min(), Some(&0));
+        assert_eq!(offsets.iter().max(), Some(&(3 * TILE - ENEMY_SIZE.x)));
+    }
+
+    #[test]
+    fn enemy_turns_before_platform_edge_from_tile() {
+        let mut g = room(&["P......", "..E....", "!=##..."]);
+        let xs = run_enemy(&mut g, 300);
+        assert_eq!(platforms(&g)[0].min.x, TILE);
+        assert_eq!(enemies(&g)[0].min.y, 18);
+        assert_eq!(xs.iter().max(), Some(&(4 * TILE - ENEMY_SIZE.x)));
+        assert_eq!(xs.iter().min(), Some(&TILE));
+    }
+
+    #[test]
+    fn tick_saves_prev_of_platforms_and_enemies_before_moving() {
+        let mut g = ferry();
+        g.tick(&Input::default());
+        {
+            let store = g.world.storage::<Platform>();
+            let (_, p) = store.iter().next().unwrap();
+            assert_eq!((p.prev, p.body.aabb.min), (ivec2(18, 0), ivec2(19, 0)));
+        }
+        let mut g = room(&["P.....", "...E..", "######"]);
+        g.tick(&Input::default());
+        let store = g.world.storage::<Enemy>();
+        let (_, e) = store.iter().next().unwrap();
+        assert_eq!(e.prev.x, e.body.aabb.min.x + 1);
+    }
+
+    #[test]
+    fn platform_sprites_cover_cells_with_plank_ends() {
+        let g = room(&["P...H", "===.H"]);
+        let store = g.world.storage::<Platform>();
+        let sprites: Vec<Sprite> = store
+            .iter()
+            .flat_map(|(_, p)| p.sprites(Handle::WHITE, 0.0).collect::<Vec<_>>())
+            .collect();
+        let uv = |cell| atlas_uv(cell, TILE, TILES_ATLAS);
+        let got: Vec<(Vec2, Rect)> = sprites.iter().map(|s| (s.pos, s.uv)).collect();
+        assert_eq!(
+            got,
+            [
+                (vec2(81.0, 9.0), uv(BLOCK)),
+                (vec2(81.0, 27.0), uv(BLOCK)),
+                (vec2(9.0, 9.0), uv(PLANK_LEFT)),
+                (vec2(27.0, 9.0), uv(PLANK)),
+                (vec2(45.0, 9.0), uv(PLANK_RIGHT)),
+            ]
+        );
+        for s in sprites {
+            assert_eq!((s.size, s.layer), (Vec2::splat(18.0), PLATFORM_LAYER));
+        }
+    }
+
+    #[test]
+    fn platform_sprites_interpolate_to_whole_pixels() {
+        let mut g = room(&["P...", "==.."]);
+        g.tick(&Input::default());
+        g.tick(&Input::default());
+        g.tick(&Input::default());
+        let store = g.world.storage::<Platform>();
+        let (_, p) = store.iter().next().unwrap();
+        let first = |alpha| p.sprites(Handle::WHITE, alpha).next().unwrap().pos;
+        assert_eq!(first(0.0), vec2(9.0 + 2.0, 9.0));
+        assert_eq!(first(0.3), vec2(9.0 + 2.0, 9.0));
+        assert_eq!(first(0.6), vec2(9.0 + 3.0, 9.0));
+    }
+
+    #[test]
+    fn enemy_sprite_faces_walk_and_steps_frames() {
+        let mut e = Enemy::spawn(IVec2::ZERO);
+        let uv = atlas_uv(WALKER, CHAR, CHARS_ATLAS);
+        let s = e.sprite(Handle::WHITE, 1.0);
+        assert_eq!(s.uv, uv);
+        assert_eq!(s.pos, vec2(2.0 + 7.0, 12.0));
+        assert_eq!((s.size, s.layer), (Vec2::splat(24.0), ENEMY_LAYER));
+        e.dir = 1;
+        let flipped = e.sprite(Handle::WHITE, 1.0).uv;
+        assert_eq!((flipped.min.x, flipped.max.x), (uv.max.x, uv.min.x));
+        e.dir = -1;
+        let step = atlas_uv(WALKER_STEP, CHAR, CHARS_ATLAS);
+        let at = |e: &mut Enemy, x| {
+            e.body.aabb.min.x = x;
+            e.prev.x = x;
+            e.sprite(Handle::WHITE, 1.0).uv
+        };
+        assert_eq!(at(&mut e, 3), uv);
+        assert_eq!(at(&mut e, 4), step);
+        assert_eq!(at(&mut e, 8), uv);
+        assert_eq!(at(&mut e, -1), step);
+    }
+
+    #[test]
+    fn enemy_sprite_interpolates_to_whole_pixels() {
+        let mut e = Enemy::spawn(IVec2::ZERO);
+        e.prev = IVec2::ZERO;
+        e.body.aabb.min = ivec2(3, -3);
+        assert_eq!(
+            e.sprite(Handle::WHITE, 0.3).pos,
+            vec2(1.0 + 7.0, -1.0 + 12.0)
+        );
+    }
+
+    #[test]
+    fn draw_shows_platforms_and_enemies() {
+        let mut g = room(&["P....", "E.==."]);
+        let mut ctx = Context::default();
+        g.tiles = ctx.assets.load_texture(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/tilemap_packed.png"
+        ));
+        g.chars = ctx.assets.load_texture(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/tilemap-characters_packed.png"
+        ));
+        g.draw(&mut ctx, 1.0);
+        let on = |layer| -> Vec<Sprite> {
+            ctx.gfx
+                .sprites
+                .iter()
+                .filter(|s| s.layer == layer)
+                .copied()
+                .collect()
+        };
+        let plats = on(PLATFORM_LAYER);
+        assert_eq!(plats.len(), 2);
+        assert!(plats.iter().all(|s| s.texture == g.tiles));
+        let foes = on(ENEMY_LAYER);
+        assert_eq!(foes.len(), 1);
+        assert_eq!(foes[0].texture, g.chars);
     }
 }
