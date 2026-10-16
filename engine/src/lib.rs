@@ -66,7 +66,9 @@ pub use model::{
 pub use physics::{
     Aabb, Actor, Axis, Contact, Hits, Solid, Tilemap, grounded, move_actor, move_solid,
 };
-pub use physics3d::{Hit, RigidBody, StaticWorld, Triangle, box_inertia};
+pub use physics3d::{
+    ContactParams, Hit, RigidBody, StaticWorld, Triangle, box_inertia, solve_contacts,
+};
 pub use renderer::{RenderError, Renderer};
 pub use scene::{
     DirectionalLight, ExpandedModels, Fog, MAX_JOINTS, MAX_LIGHTS, MeshBatch, MeshDraw,
