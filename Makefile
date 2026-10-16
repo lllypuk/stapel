@@ -9,8 +9,9 @@ GAMES := $(notdir $(wildcard games/*))
 $(GAMES):
 	RUST_LOG=$${RUST_LOG:-info} cargo run --release -p $@
 
+# Под #[ignore] — долгие тесты, которые мутанты не гоняют.
 test:
-	cargo test --workspace
+	cargo test --workspace -- --include-ignored
 
 lint:
 	cargo clippy --workspace --all-targets -- -D warnings
@@ -29,7 +30,7 @@ check:
 
 # app.rs, renderer.rs и audio/device.rs — склейка с окном и звуковой картой, чистая логика поверхности — в surface.rs; порог только вверх.
 cov:
-	cargo llvm-cov --workspace --ignore-filename-regex 'engine/src/(app|renderer|audio/device)\.rs' --fail-under-lines 98
+	cargo llvm-cov --workspace --ignore-filename-regex 'engine/src/(app|renderer|audio/device)\.rs' --fail-under-lines 98 -- --include-ignored
 
 # Исключения и причины — .cargo/mutants.toml.
 mutants:

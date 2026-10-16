@@ -2238,6 +2238,7 @@ version = "0.1.0"
 dependencies = [
  "egui_kittest",
  "engine",
+ "log",
  "serde",
  "toml",
 ]

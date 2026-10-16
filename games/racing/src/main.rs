@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod autopilot;
 mod camera;
 mod car;
 mod car_config;
@@ -8,10 +10,11 @@ mod track;
 
 use std::collections::HashSet;
 use std::fs;
+use std::path::PathBuf;
 
 use engine::{
     Assets, Camera2D, Color, Config, Context, DirectionalLight, Fog, Font, FontData, Game, Gfx,
-    Handle, IVec2, Input, KeyCode, ModelDraw, Pose, Scene, Vec2, Vec3, egui, vec2, vec3,
+    Handle, IVec2, Input, KeyCode, ModelDraw, Pose, Scene, Vec2, Vec3, Watcher, egui, vec2, vec3,
 };
 
 use crate::camera::Chase;
@@ -23,7 +26,9 @@ use crate::race::{Race, lap_time};
 use crate::track::{Checkpoint, Track, cell_at};
 
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
-const TRACK: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/tracks/oval.toml");
+const TRACKS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/tracks/");
+/// Трасса без `TRACK=<имя>` в окружении.
+const DEFAULT_TRACK: &str = "track01";
 const CARS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cars/");
 const FONT_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -71,6 +76,16 @@ fn load_cars(dir: &str) -> Vec<CarConfig> {
         .collect()
 }
 
+/// Трасса с цепочкой и машиной из `cars`.
+fn load_track(text: &str, cars: &[CarConfig]) -> Result<(Track, Vec<Checkpoint>), String> {
+    let track = Track::parse(text).map_err(|e| e.to_string())?;
+    let checkpoints = track.chain().map_err(|e| e.to_string())?;
+    if !cars.iter().any(|c| c.model == track.car) {
+        return Err(format!("машины {} нет в cars/", track.car));
+    }
+    Ok((track, checkpoints))
+}
+
 fn text_width(font: &FontData, text: &str) -> f32 {
     text.chars()
         .filter_map(|c| font.glyph(c).or_else(|| font.glyph('?')))
@@ -102,6 +117,15 @@ impl Spawn {
             dir: c.normal,
         }
     }
+
+    /// Посреди последней клетки `roadStart`: первый чекпоинт — на его выходе.
+    fn start(checkpoints: &[Checkpoint]) -> Self {
+        let first = &checkpoints[0];
+        Self {
+            pos: first.origin - first.normal * KIT_SCALE / 2.0,
+            dir: first.normal,
+        }
+    }
 }
 
 struct Racing {
@@ -124,24 +148,24 @@ struct Racing {
     font: Handle<Font>,
     /// Ошибка разбора трассы; кириллицы нет в атласе, поэтому — в egui.
     error: Option<String>,
+    path: PathBuf,
+    watch: Watcher,
 }
 
 impl Racing {
+    /// Трасса `text`, прочитанная из `path`; дальше за файлом следит `Watcher`.
+    ///
     /// # Panics
-    /// Если трасса без цепочки или машины трассы нет в `cars`.
-    fn new(track: &Track, cars: Vec<CarConfig>, assets: &mut Assets) -> Self {
+    /// Если `load_track` не принял трассу.
+    fn new(path: PathBuf, text: String, cars: Vec<CarConfig>, assets: &mut Assets) -> Self {
+        let (track, checkpoints) =
+            load_track(&text, &cars).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let models = Models::load(assets);
-        let checkpoints = track.chain().unwrap_or_else(|e| panic!("{e}"));
-        let car_index = (cars.iter().position(|c| c.model == track.car))
-            .unwrap_or_else(|| panic!("машины {} нет в cars/", track.car));
-        let first = &checkpoints[0];
-        let start = Spawn {
-            pos: first.origin - first.normal * KIT_SCALE / 2.0,
-            dir: first.normal,
-        };
+        let car_index = (cars.iter().position(|c| c.model == track.car)).expect("load_track");
+        let start = Spawn::start(&checkpoints);
         let car = Self::make_car(&cars[car_index], &models, assets);
         let mut racing = Self {
-            layout: Layout::new(track, &models, assets),
+            layout: Layout::new(&track, &models, assets),
             models,
             sky: Color::from_srgb8(170, 205, 235),
             chase: Chase::new(car.body.pos, car.body.rot),
@@ -150,16 +174,43 @@ impl Racing {
             car,
             pose: Pose::default(),
             road_cells: track.road_cells(),
-            race: Race::new(track, checkpoints),
+            race: Race::new(&track, checkpoints),
             start,
             respawn: start,
             upside_down: 0,
             off_road: 0,
             font: assets.load_font(FONT_PATH, HUD_PX),
             error: None,
+            path,
+            watch: Watcher::new(text),
         };
         racing.restart();
         racing
+    }
+
+    /// Изменённая на диске трасса — заново с прежними моделями и машиной; битая — прежняя и ошибка.
+    fn reload_changed(&mut self, assets: &Assets) {
+        let text = match self.watch.tick(&self.path) {
+            Ok(Some(text)) => text,
+            Ok(None) => return,
+            Err(e) => {
+                log::warn!("{e}");
+                return;
+            }
+        };
+        let (track, checkpoints) = match load_track(&text, &self.cars) {
+            Ok(t) => t,
+            Err(e) => {
+                self.error = Some(e);
+                return;
+            }
+        };
+        self.error = None;
+        self.layout = Layout::new(&track, &self.models, assets);
+        self.road_cells = track.road_cells();
+        self.start = Spawn::start(&checkpoints);
+        self.race = Race::new(&track, checkpoints);
+        self.restart();
     }
 
     fn make_car(config: &CarConfig, models: &Models, assets: &Assets) -> Car {
@@ -232,6 +283,15 @@ impl Racing {
         }
     }
 
+    /// Тик машины с управлением `controls`: чекпоинты, респаун, камера.
+    fn drive(&mut self, controls: Controls) {
+        self.car.tick(&self.layout.world, controls);
+        self.pass_checkpoint();
+        self.auto_respawn();
+        let tick = SUBSTEPS as f32 * SUBSTEP;
+        self.chase.tick(self.car.body.pos, self.car.body.rot, tick);
+    }
+
     /// Респаун после падения, переворота или съезда с дороги своего уровня.
     fn auto_respawn(&mut self) {
         let body = &self.car.body;
@@ -250,24 +310,21 @@ impl Racing {
 
 impl Game for Racing {
     fn init(ctx: &mut Context) -> Self {
-        let text = fs::read_to_string(TRACK).unwrap_or_else(|e| panic!("{TRACK}: {e}"));
-        let track = Track::parse(&text).unwrap_or_else(|e| panic!("{TRACK}: {e}"));
-        track.chain().unwrap_or_else(|e| panic!("{TRACK}: {e}"));
-        Self::new(&track, load_cars(CARS_DIR), &mut ctx.assets)
+        let name = std::env::var("TRACK").unwrap_or_else(|_| DEFAULT_TRACK.into());
+        let path = PathBuf::from(format!("{TRACKS_DIR}{name}.toml"));
+        let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        Self::new(path, text, load_cars(CARS_DIR), &mut ctx.assets)
     }
 
     fn update(&mut self, ctx: &mut Context) {
+        self.reload_changed(&ctx.assets);
         if ctx.input.just_pressed(KeyCode::Tab) && !self.race.started {
             self.next_car(&ctx.assets);
         }
         if ctx.input.just_pressed(KeyCode::KeyR) {
             self.spawn(self.respawn);
         }
-        self.car.tick(&self.layout.world, controls(&ctx.input));
-        self.pass_checkpoint();
-        self.auto_respawn();
-        let tick = SUBSTEPS as f32 * SUBSTEP;
-        self.chase.tick(self.car.body.pos, self.car.body.rot, tick);
+        self.drive(controls(&ctx.input));
     }
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
@@ -344,11 +401,18 @@ mod tests {
     use engine::{Quat, Sprite, StaticWorld, Triangle, text};
 
     use super::*;
-    use crate::layout::ROAD;
+    use crate::layout::{self, ROAD};
+    use crate::pieces::LEVEL;
+
+    const OVAL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/testdata/oval.toml");
+
+    fn open(path: PathBuf, ctx: &mut Context) -> Racing {
+        let text = fs::read_to_string(&path).expect("трасса");
+        Racing::new(path, text, load_cars(CARS_DIR), &mut ctx.assets)
+    }
 
     fn racing(ctx: &mut Context) -> Racing {
-        let track = Track::parse(include_str!("testdata/oval.toml")).expect("овал");
-        Racing::new(&track, load_cars(CARS_DIR), &mut ctx.assets)
+        open(OVAL.into(), ctx)
     }
 
     fn tick(g: &mut Racing, ctx: &mut Context) {
@@ -682,6 +746,129 @@ mod tests {
             h.ctx
                 .fonts(|f| f.definitions().font_data.contains_key(FONT_PATH))
         );
+    }
+
+    /// Овал в своём каталоге теста: файл можно переписывать.
+    fn temp_oval(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("racing-{}-{name}", std::process::id()));
+        fs::create_dir_all(&dir).expect("каталог");
+        let path = dir.join("track.toml");
+        fs::copy(OVAL, &path).expect("копия");
+        path
+    }
+
+    /// Отъехала от старта и смотрит на файл трассы ещё раз через `WATCH_TICKS`.
+    fn drive_off(g: &mut Racing, ctx: &mut Context) {
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+        ticks(g, ctx, engine::WATCH_TICKS - 1);
+        ctx.input.on_key(KeyCode::KeyW, Released, false);
+        assert!(!placed_at(g, g.start));
+    }
+
+    /// Высота мира под точкой `(x, z)`.
+    fn ground(g: &Racing, x: f32, z: f32) -> Option<f32> {
+        let hit = g
+            .layout
+            .world
+            .raycast(vec3(x, 10.0, z), Vec3::NEG_Y, 20.0, |_| true);
+        hit.map(|h| h.point.y)
+    }
+
+    #[test]
+    fn changed_track_rebuilds_world_with_same_models_and_restarts() {
+        let mut ctx = Context::default();
+        let path = temp_oval("changed");
+        let mut g = open(path.clone(), &mut ctx);
+        let straight = g.models.get("roadStraight");
+        assert!(g.layout.draws.iter().any(|d| d.model == straight));
+        // Внешний угол поворота [0, 0] пуст.
+        assert_eq!(ground(&g, 2.0, 2.0), None);
+        g.error = Some("прежняя".into());
+        g.race.best = Some(100);
+        drive_off(&mut g, &mut ctx);
+        let text = include_str!("testdata/bridge8.toml");
+        fs::write(&path, text).expect("запись");
+        tick(&mut g, &mut ctx);
+
+        let track = Track::parse(text).expect("восьмёрка");
+        let start = Spawn::start(&track.chain().expect("цепочка"));
+        assert_eq!(g.start, start);
+        assert!(placed_at(&g, start));
+        assert_eq!((g.respawn, g.race.next, g.race.best), (start, 0, None));
+        assert_eq!(g.road_cells, track.road_cells());
+        assert_eq!(g.error, None);
+        assert_eq!(g.layout.draws.len(), layout::place(&track).len());
+        assert!(g.layout.draws.iter().any(|d| d.model == straight));
+        let mid = g.models.get("roadStraightBridgeMid");
+        assert!(g.layout.draws.iter().any(|d| d.model == mid));
+        // Под мостом [0, 0] — его настил на уровне 1.
+        let deck = ground(&g, 2.0, 2.0).expect("мост");
+        assert!((deck - LEVEL * KIT_SCALE).abs() < 0.1, "{deck}");
+    }
+
+    #[test]
+    fn broken_track_keeps_old_one_and_shows_error() {
+        let mut ctx = Context::default();
+        let path = temp_oval("broken");
+        let mut g = open(path.clone(), &mut ctx);
+        let draws = g.layout.draws.clone();
+        for (text, error) in [
+            (
+                "car = \"race\"\n[[road]]\npiece = \"x\"\ncell = [0, 0]\n",
+                "строка 3: неизвестная деталь \"x\"",
+            ),
+            ("car = \"truck\"\n", "нужен один roadStart, а их 0"),
+        ] {
+            drive_off(&mut g, &mut ctx);
+            let pos = g.car.body.pos;
+            fs::write(&path, text).expect("запись");
+            tick(&mut g, &mut ctx);
+            assert_eq!(g.error.as_deref(), Some(error));
+            assert_eq!(g.layout.draws, draws);
+            assert!(g.car.body.pos.distance(pos) < 1.0, "рестартовала");
+            assert_eq!(ground(&g, 2.0, 2.0), None);
+            g.restart();
+        }
+        let oval = fs::read_to_string(OVAL).expect("овал");
+        drive_off(&mut g, &mut ctx);
+        fs::write(&path, oval.replace("car = \"race\"", "car = \"truck\"")).expect("запись");
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.error.as_deref(), Some("машины truck нет в cars/"));
+
+        drive_off(&mut g, &mut ctx);
+        fs::write(&path, &oval).expect("запись");
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.error, None);
+        assert!(placed_at(&g, g.start));
+    }
+
+    #[test]
+    fn same_text_or_missing_file_does_not_rebuild() {
+        let mut ctx = Context::default();
+        let path = temp_oval("same");
+        let mut g = open(path.clone(), &mut ctx);
+        drive_off(&mut g, &mut ctx);
+        fs::write(&path, fs::read_to_string(OVAL).expect("овал")).expect("запись");
+        tick(&mut g, &mut ctx);
+        assert!(!placed_at(&g, g.start), "рестартовала");
+
+        drive_off(&mut g, &mut ctx);
+        fs::remove_file(&path).expect("удаление");
+        tick(&mut g, &mut ctx);
+        assert!(!placed_at(&g, g.start), "рестартовала");
+        assert_eq!(g.error, None);
+    }
+
+    #[test]
+    fn init_opens_default_track() {
+        let mut ctx = Context::default();
+        let g = Racing::init(&mut ctx);
+        let path = PathBuf::from(format!("{TRACKS_DIR}{DEFAULT_TRACK}.toml"));
+        let text = fs::read_to_string(&path).expect("трасса");
+        let (track, checkpoints) = load_track(&text, &g.cars).expect("трасса");
+        assert_eq!(g.path, path);
+        assert_eq!(g.start, Spawn::start(&checkpoints));
+        assert_eq!(g.layout.draws.len(), layout::place(&track).len());
     }
 
     #[test]

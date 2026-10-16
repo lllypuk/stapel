@@ -1,0 +1,194 @@
+# Овал 13×5 клеток с трамплином roadRamp в нижнем ряду: машина летит к +X над длинной прямой.
+car = "race"
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [0, 0]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadStart"
+cell = [2, 0]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraight"
+cell = [4, 0]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraightLong"
+cell = [5, 0]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraightLong"
+cell = [7, 0]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraightLong"
+cell = [9, 0]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [12, 0]
+level = 0
+rot = 270
+
+[[road]]
+piece = "roadStraight"
+cell = [12, 2]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [12, 4]
+level = 0
+rot = 180
+
+[[road]]
+piece = "roadStraight"
+cell = [2, 4]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadRamp"
+cell = [3, 4]
+level = 0
+rot = 270
+
+[[road]]
+piece = "roadStraightLong"
+cell = [4, 4]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraightLong"
+cell = [6, 4]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraightLong"
+cell = [8, 4]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraight"
+cell = [10, 4]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [0, 4]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraight"
+cell = [0, 2]
+level = 0
+rot = 0
+
+[[decor]]
+piece = "barrierWall"
+pos = [0.37, 0.0, 5.96]
+yaw = 75.0
+
+[[decor]]
+piece = "barrierWall"
+pos = [2.41, 0.0, 2.41]
+yaw = 45.0
+
+[[decor]]
+piece = "barrierWall"
+pos = [5.96, 0.0, 0.37]
+yaw = 15.0
+
+[[decor]]
+piece = "barrierWall"
+pos = [51.63, 0.0, 5.96]
+yaw = -75.0
+
+[[decor]]
+piece = "barrierWall"
+pos = [49.59, 0.0, 2.41]
+yaw = -45.0
+
+[[decor]]
+piece = "barrierWall"
+pos = [46.04, 0.0, 0.37]
+yaw = -15.0
+
+[[decor]]
+piece = "barrierWall"
+pos = [51.63, 0.0, 14.04]
+yaw = -105.0
+
+[[decor]]
+piece = "barrierWall"
+pos = [49.59, 0.0, 17.59]
+yaw = -135.0
+
+[[decor]]
+piece = "barrierWall"
+pos = [46.04, 0.0, 19.63]
+yaw = -165.0
+
+[[decor]]
+piece = "barrierWall"
+pos = [0.37, 0.0, 14.04]
+yaw = 105.0
+
+[[decor]]
+piece = "barrierWall"
+pos = [2.41, 0.0, 17.59]
+yaw = 135.0
+
+[[decor]]
+piece = "barrierWall"
+pos = [5.96, 0.0, 19.63]
+yaw = 165.0
+
+[[decor]]
+piece = "barrierWall"
+pos = [0.30, 0.0, 10.00]
+yaw = 90.0
+
+[[decor]]
+piece = "barrierWall"
+pos = [51.70, 0.0, 10.00]
+yaw = 90.0
+
+[[decor]]
+piece = "treeLarge"
+pos = [10.00, 0.0, 10.00]
+yaw = 70.0
+
+[[decor]]
+piece = "treeLarge"
+pos = [22.00, 0.0, 10.00]
+yaw = 154.0
+
+[[decor]]
+piece = "treeLarge"
+pos = [34.00, 0.0, 10.00]
+yaw = 238.0
+
+[[decor]]
+piece = "grandStand"
+pos = [30.00, 0.0, 23.50]
+yaw = 0.0

@@ -1,0 +1,149 @@
+# Восьмёрка с мостом: старт в столбце x = 3 едет к −Z, ряд z = 0 проходит под мостом столбца x = 0.
+# Между рампами и поворотами — прямые: торец барьера рампы сразу за поворотом ловит машину.
+car = "race"
+
+[[road]]
+piece = "roadStart"
+cell = [3, 2]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [3, 0]
+level = 0
+rot = 270
+
+[[road]]
+piece = "roadStraight"
+cell = [1, 0]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraight"
+cell = [0, 0]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraight"
+cell = [-1, 0]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [-3, 0]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraight"
+cell = [-3, -2]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadStraight"
+cell = [-3, -3]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadStraight"
+cell = [-3, -4]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [-3, -6]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [0, -6]
+level = 0
+rot = 270
+
+[[road]]
+piece = "roadStraight"
+cell = [0, -4]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadRampLong"
+cell = [0, -2]
+level = 0
+rot = 180
+
+[[road]]
+piece = "roadStraightBridgeStart"
+cell = [0, -1]
+level = 0
+rot = 180
+
+[[road]]
+piece = "roadStraightBridgeMid"
+cell = [0, 0]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadStraightBridgeStart"
+cell = [0, 1]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadRampLong"
+cell = [0, 2]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadStraight"
+cell = [0, 4]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [0, 6]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [3, 6]
+level = 0
+rot = 180
+
+[[road]]
+piece = "roadStraight"
+cell = [3, 4]
+level = 0
+rot = 0
+
+[[decor]]
+piece = "treeLarge"
+pos = [-6.0, 0.0, 10.0]
+yaw = 0.0
+
+[[decor]]
+piece = "treeSmall"
+pos = [6.0, 0.0, -12.0]
+yaw = 30.0
+
+[[decor]]
+piece = "treeLarge"
+pos = [-6.0, 0.0, -14.0]
+yaw = 60.0
+
+[[decor]]
+piece = "grandStand"
+pos = [19.0, 0.0, 8.0]
+yaw = 90.0
