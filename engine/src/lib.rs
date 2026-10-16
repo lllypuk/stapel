@@ -28,6 +28,8 @@ pub mod mesh_pipeline;
 pub mod model;
 /// Целочисленные коллизии и движение тел: AABB, тайловая карта, Actor.
 pub mod physics;
+/// Твёрдые тела в 3D.
+pub mod physics3d;
 /// Поверхность окна и рендер кадра.
 pub mod renderer;
 /// 3D-кадр и его раскрытие в инстансы.
@@ -53,7 +55,7 @@ pub use clock::FixedClock;
 pub use ecs::{Commands, Entity, SparseSet, World};
 pub use egui;
 pub use frame::{Color, Context, Game, Gfx, Shown, Time, step_frame};
-pub use glam::{IVec2, Mat4, Quat, Vec2, Vec3, ivec2, vec2, vec3};
+pub use glam::{IVec2, Mat3, Mat4, Quat, Vec2, Vec3, ivec2, vec2, vec3};
 pub use gpu_textures::GpuTextures;
 pub use input::Input;
 pub use mesh::{Mesh, PendingMesh, Vertex};
@@ -64,6 +66,7 @@ pub use model::{
 pub use physics::{
     Aabb, Actor, Axis, Contact, Hits, Solid, Tilemap, grounded, move_actor, move_solid,
 };
+pub use physics3d::{RigidBody, box_inertia};
 pub use renderer::{RenderError, Renderer};
 pub use scene::{
     DirectionalLight, ExpandedModels, Fog, MAX_JOINTS, MAX_LIGHTS, MeshBatch, MeshDraw,

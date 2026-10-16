@@ -246,7 +246,7 @@
 - Create: `engine/src/physics3d/mod.rs`, `engine/src/physics3d/body.rs`
 - Modify: `engine/src/lib.rs`, `docs/design.md`
 
-- [ ] тесты:
+- [x] тесты:
   - свободное падение совпадает с аналитикой с точностью шага;
   - сила в центре масс не крутит тело, сила на плече даёт `τ = r × F`;
   - после поворота на 90° `inv_inertia_world` переставляет оси;
@@ -256,9 +256,9 @@
   - вокруг промежуточной оси ω уходит (гироскопический член есть);
   - `|L|` и энергия за 10 с свободного вращения растут меньше 1 %;
   - `box_inertia` куба.
-- [ ] `RigidBody`, `box_inertia`, `integrate_velocity`, `integrate_position`, `apply_force_at`, `apply_impulse_at`, `velocity_at`, `inv_inertia_world`; при провале теста энергии — неявный гироскопический шаг
-- [ ] `docs/design.md`: раздел «Физика 3D», граница «тело в движке — машина в игре»; поломка «тензор в осях тела без `R·I⁻¹·Rᵀ` — кувырок после поворота» → тест
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] `RigidBody`, `box_inertia`, `integrate_velocity`, `integrate_position`, `apply_force_at`, `apply_impulse_at`, `velocity_at`, `inv_inertia_world`; при провале теста энергии — неявный гироскопический шаг (явный накачал |L| на 3 % — взят неявный Catto)
+- [x] `docs/design.md`: раздел «Физика 3D», граница «тело в движке — машина в игре»; поломка «тензор в осях тела без `R·I⁻¹·Rᵀ` — кувырок после поворота» → тест
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 6: Статический мир и лучи
 
