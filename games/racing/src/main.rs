@@ -3,7 +3,7 @@ mod autopilot;
 mod camera;
 mod car;
 mod car_config;
-#[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задачи 15–16"))]
+#[cfg_attr(not(test), expect(dead_code, reason = "панель редактора — задача 16"))]
 mod editor;
 mod engine_sound;
 mod garage;
@@ -21,13 +21,14 @@ use std::path::{Path, PathBuf};
 
 use engine::{
     Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Fog, Font, FontData,
-    Game, Gfx, Handle, IVec2, Input, KeyCode, LoopId, ModelDraw, Pose, Scene, Sound, StaticWorld,
-    Vec2, Vec3, Watcher, egui, vec2, vec3,
+    Game, Gfx, Handle, IVec2, Input, KeyCode, LoopId, Mesh, MeshDraw, ModelDraw, MouseButton, Pose,
+    Scene, Sound, StaticWorld, Vec2, Vec3, Watcher, egui, vec2, vec3,
 };
 
 use crate::camera::Chase;
 use crate::car::{Car, Controls, SUBSTEP, SUBSTEPS};
 use crate::car_config::{CarConfig, TUNING};
+use crate::editor::Editor;
 use crate::engine_sound::{Rpm, SoundCmd};
 use crate::garage::{Garage, GarageCmd};
 use crate::ghost::{Ghost, Recorder};
@@ -54,6 +55,13 @@ const VIEW: Vec2 = vec2(1280.0, 720.0);
 const HUD_PX: f32 = 24.0;
 const HUD_MARGIN: f32 = 12.0;
 const HUD_LAYER: i32 = 1;
+/// Квад клетки под курсором в редакторе.
+const CELL: Color = Color {
+    r: 1.0,
+    g: 1.0,
+    b: 1.0,
+    a: 0.4,
+};
 /// Атлас шрифта — только ASCII, поэтому HUD по-английски.
 const WRONG_WAY: &str = "WRONG WAY";
 
@@ -179,11 +187,15 @@ impl Spawn {
 enum Mode {
     Garage,
     Race,
+    Editor,
 }
 
 struct Racing {
     mode: Mode,
     garage: Garage,
+    editor: Editor,
+    /// Квад клетки под курсором в редакторе.
+    quad: Handle<Mesh>,
     tuning: TuningPanel,
     layout: Layout,
     models: Models,
@@ -226,9 +238,12 @@ impl Racing {
         let selected = (cars.iter().position(|c| c.model == track.car)).expect("load_track");
         let start = Spawn::start(&checkpoints);
         let car = Self::make_car(&cars[selected], &models, assets);
+        let (vertices, indices) = editor::quad();
         let mut racing = Self {
             mode: Mode::Garage,
             garage: Garage::new(selected),
+            editor: Editor::new(track.clone(), &models, assets),
+            quad: assets.add_mesh(vertices, indices),
             tuning: TuningPanel::default(),
             layout: Layout::new(&track, &models, assets),
             models,
@@ -277,6 +292,7 @@ impl Racing {
         };
         self.error = None;
         self.layout = Layout::new(&track, &self.models, assets);
+        self.editor = Editor::new(track.clone(), &self.models, assets);
         self.road_cells = track.road_cells();
         self.start = Spawn::start(&checkpoints);
         self.race = Race::new(&track, checkpoints);
@@ -370,6 +386,21 @@ impl Racing {
         self.drive(controls(&ctx.input));
     }
 
+    /// F1 возвращает в заезд по трассе с диска.
+    fn update_editor(&mut self, ctx: &Context) {
+        if ctx.input.just_pressed(KeyCode::F1) {
+            self.restart();
+            self.mode = Mode::Race;
+            return;
+        }
+        self.editor.control(&ctx.input);
+        if ctx.input.mouse_just_pressed(MouseButton::Left)
+            && let Some(ray) = ctx.cursor_ray()
+        {
+            self.editor.click(ray, &self.models, &ctx.assets);
+        }
+    }
+
     fn update_sound(&mut self, ctx: &mut Context) {
         match (
             engine_sound::command(self.mode, &self.rpm, self.voice.is_some()),
@@ -454,6 +485,26 @@ impl Racing {
         });
         self.draw_hud(&mut ctx.gfx, &ctx.assets);
         self.scene(self.chase.camera(alpha, pos, rot), models)
+    }
+
+    /// Черновик, деталь инструмента и клетка под курсором.
+    fn draw_editor(&self, ctx: &Context, alpha: f32) -> Scene {
+        let e = &self.editor;
+        let mut models = e.layout.draws.clone();
+        let mut meshes = Vec::new();
+        if let Some(ray) = ctx.cursor_ray() {
+            models.extend(e.preview(ray, &self.models));
+            meshes.extend(e.cell_quad(ray).map(|transform| MeshDraw {
+                mesh: self.quad,
+                texture: Handle::WHITE,
+                color: CELL,
+                transform,
+            }));
+        }
+        Scene {
+            meshes,
+            ..self.scene(e.camera(alpha), models)
+        }
     }
 
     fn pass_checkpoint(&mut self) -> Option<Pass> {
@@ -547,6 +598,8 @@ impl Game for Racing {
         self.reload_changed(&ctx.assets);
         self.update_tuning(&ctx.assets);
         match self.mode {
+            Mode::Editor => self.update_editor(ctx),
+            _ if ctx.input.just_pressed(KeyCode::F1) => self.mode = Mode::Editor,
             Mode::Garage => self.update_garage(ctx),
             Mode::Race => self.update_race(ctx),
         }
@@ -558,6 +611,7 @@ impl Game for Racing {
         let scene = match self.mode {
             Mode::Garage => self.draw_garage(alpha),
             Mode::Race => self.draw_race(ctx, alpha),
+            Mode::Editor => self.draw_editor(ctx, alpha),
         };
         ctx.gfx.scene = Some(scene);
     }
@@ -573,7 +627,7 @@ impl Game for Racing {
             Mode::Race if self.tuning.open => {
                 self.tuning.ui(ui, config, egui::Align2::RIGHT_TOP);
             }
-            Mode::Race => {}
+            Mode::Race | Mode::Editor => {}
         }
         let Some(error) = &self.error else {
             return;
@@ -1162,6 +1216,117 @@ mod tests {
             ))
             .collect();
         assert_eq!(wrong, want);
+    }
+
+    /// Кадр показан камерой редактора на поверхности `size`, курсор в её середине.
+    fn show_editor(g: &Racing, ctx: &mut Context) {
+        let size = engine::UVec2::new(1280, 720);
+        ctx.shown = Some(engine::Shown {
+            camera: Camera2D {
+                center: Vec2::ZERO,
+                size: VIEW,
+            },
+            viewport: engine::Viewport {
+                x: 0.0,
+                y: 0.0,
+                w: VIEW.x,
+                h: VIEW.y,
+            },
+            scene: Some(engine::ShownScene {
+                camera: g.editor.camera(1.0),
+                size,
+            }),
+        });
+        ctx.input.on_cursor(Some(size.as_vec2() / 2.0));
+    }
+
+    #[test]
+    fn f1_toggles_editor_from_race_and_garage() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        tap(&mut g, &mut ctx, KeyCode::F1);
+        assert_eq!(g.mode, Mode::Editor);
+        tap(&mut g, &mut ctx, KeyCode::KeyG);
+        assert_eq!(g.mode, Mode::Editor, "G — не из редактора");
+        g.car.place(vec3(0.0, 50.0, 0.0), 0.0);
+        tap(&mut g, &mut ctx, KeyCode::F1);
+        assert_eq!(g.mode, Mode::Race);
+        assert!(placed_at(&g, g.start));
+        g.mode = Mode::Garage;
+        tap(&mut g, &mut ctx, KeyCode::F1);
+        assert_eq!(g.mode, Mode::Editor);
+    }
+
+    #[test]
+    fn editor_draws_preview_and_cell_quad_of_one_mesh_under_cursor() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        let quads: Vec<_> = (ctx.assets.take_pending_meshes().into_iter())
+            .filter(|m| m.handle == g.quad)
+            .collect();
+        let (vertices, indices) = editor::quad();
+        assert_eq!(quads.len(), 1);
+        assert_eq!(
+            (&quads[0].vertices, &quads[0].indices),
+            (&vertices, &indices)
+        );
+        tap(&mut g, &mut ctx, KeyCode::F1);
+        tap(&mut g, &mut ctx, KeyCode::PageUp);
+        g.draw(&mut ctx, 1.0);
+        let scene = ctx.gfx.scene.take().expect("сцена");
+        assert_eq!(
+            (scene.models, scene.meshes),
+            (g.editor.layout.draws.clone(), vec![])
+        );
+        show_editor(&g, &mut ctx);
+        let ray = ctx.cursor_ray().expect("луч");
+        for _ in 0..2 {
+            g.draw(&mut ctx, 1.0);
+        }
+        let scene = ctx.gfx.scene.take().expect("сцена");
+        assert_eq!(scene.camera, g.editor.camera(1.0));
+        let mut want = g.editor.layout.draws.clone();
+        want.extend(g.editor.preview(ray, &g.models));
+        assert!(want.len() > g.editor.layout.draws.len());
+        assert_eq!(scene.models, want);
+        let quad = MeshDraw {
+            mesh: g.quad,
+            texture: Handle::WHITE,
+            color: CELL,
+            transform: g.editor.cell_quad(ray).expect("квад"),
+        };
+        assert_eq!(scene.meshes, [quad]);
+        assert_eq!(ctx.assets.take_pending_meshes(), []);
+    }
+
+    #[test]
+    fn editor_click_edits_draft_through_cursor_ray() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        tap(&mut g, &mut ctx, KeyCode::F1);
+        tap(&mut g, &mut ctx, KeyCode::PageUp);
+        show_editor(&g, &mut ctx);
+        let roads = g.editor.draft.roads.len();
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.editor.draft.roads.len(), roads, "без клика");
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.editor.draft.roads.len(), roads + 1);
+        let ray = ctx.cursor_ray().expect("луч");
+        assert_eq!(
+            g.editor.draft.roads.last().map(|r| (r.cell, r.level)),
+            (g.editor.cell_quad(ray))
+                .and_then(|m| cell_at(m.transform_point3(vec3(0.5, 0.0, 0.5))))
+        );
+        ctx.shown = None;
+        ctx.input.on_button(MouseButton::Left, Released);
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        tick(&mut g, &mut ctx);
+        assert_eq!(
+            g.editor.draft.roads.len(),
+            roads + 1,
+            "без показанного кадра"
+        );
     }
 
     #[test]

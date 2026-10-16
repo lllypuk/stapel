@@ -373,7 +373,6 @@ impl TrackDraft {
     }
 
     /// Запись дороги на каждой занятой клетке и уровне.
-    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задачи 15–16"))]
     pub(crate) fn occupancy(&self) -> HashMap<(IVec2, u32), usize> {
         (self.roads.iter().enumerate())
             .flat_map(|(i, r)| r.cells().map(move |c| (c, i)))
@@ -381,13 +380,12 @@ impl TrackDraft {
     }
 
     /// Встанет ли `road` следующей записью.
-    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задачи 15–16"))]
     pub(crate) fn can_place(&self, road: &RoadEntry) -> Result<(), DraftError> {
         road.check(self.roads.len(), &self.occupancy())
     }
 
     /// Файл целиком: комментарии прежнего файла пропадают.
-    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задачи 15–16"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "сохранение трассы — задача 16"))]
     pub(crate) fn to_toml(&self) -> String {
         let file = TrackFile {
             car: self.car.clone(),

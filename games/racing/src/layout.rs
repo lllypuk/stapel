@@ -132,7 +132,6 @@ pub(crate) struct Layout {
     pub(crate) draws: Vec<ModelDraw>,
     pub(crate) world: StaticWorld,
     /// Габариты в мире каждой модели в позе покоя, по порядку `draws`.
-    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задачи 15–16"))]
     pub(crate) bounds: Vec<(Entry, Aabb3)>,
 }
 

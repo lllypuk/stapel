@@ -1,8 +1,13 @@
 use std::collections::VecDeque;
 
-use engine::{Aabb3, Assets, IVec2, Ray, Vec3, vec2};
+use std::f32::consts::FRAC_PI_2;
 
-use crate::layout::{Layout, Models};
+use engine::{
+    Aabb3, Assets, Camera3D, Color, IVec2, Input, KeyCode, Mat4, ModelDraw, Quat, Ray, Vec2, Vec3,
+    Vertex, vec2, vec3,
+};
+
+use crate::layout::{Layout, Models, place};
 use crate::pieces::{DecorPiece, KIT_SCALE, LEVEL, PIECES, Piece, Rot};
 use crate::track::{DecorEntry, Entry, MAX_LEVEL, RoadEntry, TrackDraft};
 
@@ -10,6 +15,29 @@ use crate::track::{DecorEntry, Entry, MAX_LEVEL, RoadEntry, TrackDraft};
 pub(crate) const UNDO_LIMIT: usize = 100;
 /// Дальше луч по миру не ищет, м.
 const PICK_RANGE: f32 = 1000.0;
+/// Наклон взгляда камеры вниз.
+const PITCH: f32 = 0.95;
+/// Расстояние камеры до точки орбиты — `NEAREST · ZOOM_STEP^zoom`, м.
+const NEAREST: f32 = 8.0;
+const ZOOM_STEP: f32 = 1.25;
+pub(crate) const MAX_ZOOM: i32 = 12;
+/// Сдвиг за тик в долях расстояния до точки орбиты.
+const PAN: f32 = 0.02;
+const FAR: f32 = 600.0;
+/// Квад клетки над плоскостью уровня, м: иначе он мерцает с дорогой.
+const QUAD_LIFT: f32 = 0.05;
+pub(crate) const PLACEABLE: Color = Color {
+    r: 0.3,
+    g: 1.0,
+    b: 0.3,
+    a: 0.6,
+};
+pub(crate) const BLOCKED: Color = Color {
+    r: 1.0,
+    g: 0.25,
+    b: 0.2,
+    a: 0.6,
+};
 
 /// Что делает клик; `yaw` — в градусах, как в файле.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -33,6 +61,95 @@ pub(crate) enum EditorCmd {
     Undo,
 }
 
+/// Камера редактора — сверху наискось на точку плоскости уровня.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Orbit {
+    /// Точка орбиты по X и Z, м.
+    pub(crate) focus: Vec2,
+    prev: Vec2,
+    /// Четверти оборота против часовой сверху; 0 — взгляд по −Z.
+    pub(crate) turn: u8,
+    pub(crate) zoom: i32,
+    /// Строки колеса, ещё не ставшие шагом зума.
+    wheel: f32,
+}
+
+impl Orbit {
+    fn new(focus: Vec2) -> Self {
+        Self {
+            focus,
+            prev: focus,
+            turn: 0,
+            zoom: MAX_ZOOM / 2,
+            wheel: 0.0,
+        }
+    }
+
+    /// Взгляд по горизонтали.
+    fn heading(&self) -> Vec2 {
+        let v = Quat::from_rotation_y(f32::from(self.turn) * FRAC_PI_2) * Vec3::NEG_Z;
+        vec2(v.x, v.z)
+    }
+
+    pub(crate) fn distance(&self) -> f32 {
+        NEAREST * ZOOM_STEP.powi(self.zoom)
+    }
+
+    /// Колесо от себя — ближе.
+    pub(crate) fn scroll(&mut self, lines: f32) {
+        self.wheel += lines;
+        let steps = self.wheel.trunc();
+        self.wheel -= steps;
+        #[expect(clippy::cast_possible_truncation, reason = "строк за тик единицы")]
+        let steps = steps as i32;
+        self.zoom = (self.zoom - steps).clamp(0, MAX_ZOOM);
+    }
+
+    fn tick(&mut self, input: &Input) {
+        self.prev = self.focus;
+        if input.just_pressed(KeyCode::KeyQ) {
+            self.turn = (self.turn + 1) % 4;
+        }
+        if input.just_pressed(KeyCode::KeyE) {
+            self.turn = (self.turn + 3) % 4;
+        }
+        let forward = self.heading();
+        let right = vec2(-forward.y, forward.x);
+        let axis = |plus, minus| f32::from(input.is_down(plus)) - f32::from(input.is_down(minus));
+        let dir = forward * axis(KeyCode::KeyW, KeyCode::KeyS)
+            + right * axis(KeyCode::KeyD, KeyCode::KeyA);
+        self.focus += dir * PAN * self.distance();
+        self.scroll(input.wheel().y);
+    }
+
+    /// Глаз между тиками; точка орбиты на высоте `floor`.
+    fn camera(&self, alpha: f32, floor: f32) -> Camera3D {
+        let focus = self.prev.lerp(self.focus, alpha);
+        let target = vec3(focus.x, floor, focus.y);
+        let back = -self.heading() * PITCH.cos();
+        let eye = target + vec3(back.x, PITCH.sin(), back.y) * self.distance();
+        let mut camera = Camera3D {
+            far: FAR,
+            ..Camera3D::default()
+        };
+        camera.look_at(eye, target);
+        camera
+    }
+}
+
+/// Квад клетки 1×1 в плоскости XZ от начала, нормаль вверх.
+pub(crate) fn quad() -> (Vec<Vertex>, Vec<u32>) {
+    let vertices = [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]]
+        .map(|[x, z]| Vertex {
+            pos: [x, 0.0, z],
+            normal: [0.0, 1.0, 0.0],
+            uv: [x, z],
+            ..Vertex::default()
+        })
+        .to_vec();
+    (vertices, vec![0, 1, 2, 0, 2, 3])
+}
+
 /// Правка черновика трассы инструментом на текущем уровне.
 pub(crate) struct Editor {
     pub(crate) draft: TrackDraft,
@@ -40,6 +157,7 @@ pub(crate) struct Editor {
     pub(crate) layout: Layout,
     pub(crate) tool: Tool,
     pub(crate) level: u32,
+    pub(crate) orbit: Orbit,
     undo: VecDeque<TrackDraft>,
     saved: TrackDraft,
 }
@@ -62,16 +180,32 @@ fn at(ray: Ray, t: f32) -> Vec3 {
     ray.origin + ray.dir * t
 }
 
+/// Черновик одной детали превью.
+fn piece_draft(roads: Vec<RoadEntry>, decor: Vec<DecorEntry>) -> TrackDraft {
+    TrackDraft {
+        car: String::new(),
+        roads,
+        decor,
+    }
+}
+
 /// Клетка над или под точкой.
 fn cell(p: Vec3) -> IVec2 {
     (vec2(p.x, p.z) / KIT_SCALE).floor().as_ivec2()
 }
 
 impl Editor {
-    /// Чистый редактор черновика `draft` с диска.
+    /// Чистый редактор черновика `draft` с диска; камера — над серединой трассы.
     pub(crate) fn new(draft: TrackDraft, models: &Models, assets: &Assets) -> Self {
+        let layout = Layout::new(&draft, models, assets);
+        let all = (layout.bounds.iter().map(|(_, b)| *b)).reduce(|a, b| Aabb3 {
+            min: a.min.min(b.min),
+            max: a.max.max(b.max),
+        });
+        let mid = all.map_or(Vec3::ZERO, |b| (b.min + b.max) / 2.0);
         Self {
-            layout: Layout::new(&draft, models, assets),
+            layout,
+            orbit: Orbit::new(vec2(mid.x, mid.z)),
             tool: Tool::Road {
                 piece: &PIECES[0],
                 rot: Rot::default(),
@@ -108,6 +242,60 @@ impl Editor {
     /// Высота плоскости текущего уровня, м.
     fn floor(&self) -> f32 {
         self.level as f32 * LEVEL * KIT_SCALE
+    }
+
+    /// Камера и уровень с клавиатуры и колеса.
+    pub(crate) fn control(&mut self, input: &Input) {
+        self.orbit.tick(input);
+        if input.just_pressed(KeyCode::PageUp) {
+            self.level = (self.level + 1).min(MAX_LEVEL);
+        }
+        if input.just_pressed(KeyCode::PageDown) {
+            self.level = self.level.saturating_sub(1);
+        }
+    }
+
+    pub(crate) fn camera(&self, alpha: f32) -> Camera3D {
+        self.orbit.camera(alpha, self.floor())
+    }
+
+    /// Деталь инструмента под лучом: `PLACEABLE`, если её можно поставить, иначе `BLOCKED`.
+    pub(crate) fn preview(&self, ray: Ray, models: &Models) -> Vec<ModelDraw> {
+        let (track, ok) = match self.tool {
+            Tool::Road { piece, rot } => {
+                let Some(road) = self.road_at(ray, piece, rot) else {
+                    return Vec::new();
+                };
+                let ok = self.draft.can_place(&road).is_ok();
+                (piece_draft(vec![road], Vec::new()), ok)
+            }
+            Tool::Decor { piece, yaw } => {
+                let Some(decor) = self.decor_at(ray, piece, yaw) else {
+                    return Vec::new();
+                };
+                (piece_draft(Vec::new(), vec![decor]), decor.in_bounds())
+            }
+            Tool::Erase => return Vec::new(),
+        };
+        let tint = if ok { PLACEABLE } else { BLOCKED };
+        (place(&track).into_iter())
+            .map(|p| ModelDraw {
+                model: models.get(p.name),
+                transform: p.transform,
+                pose: None,
+                tint,
+            })
+            .collect()
+    }
+
+    /// Квад `quad` → мир: клетка под лучом на плоскости уровня.
+    pub(crate) fn cell_quad(&self, ray: Ray) -> Option<Mat4> {
+        let floor = self.floor();
+        let c = cell(at(ray, plane_t(ray, floor)?)).as_vec2() * KIT_SCALE;
+        Some(
+            Mat4::from_translation(vec3(c.x, floor + QUAD_LIFT, c.y))
+                * Mat4::from_scale(vec3(KIT_SCALE, 1.0, KIT_SCALE)),
+        )
     }
 
     /// Деталь с якорем в клетке под лучом на плоскости уровня; занятость не проверяет.
@@ -195,6 +383,7 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
+    use engine::ElementState::{Pressed, Released};
     use engine::{ivec2, vec3};
 
     use super::*;
@@ -405,5 +594,238 @@ mod tests {
         let mut e = Editor::new(draft(Vec::new(), Vec::new()), &models, &assets);
         e.apply(EditorCmd::Level(MAX_LEVEL + 5), &models, &assets);
         assert_eq!(e.level, MAX_LEVEL);
+    }
+
+    fn empty() -> (Assets, Models, Editor) {
+        let (assets, models) = loaded();
+        let e = Editor::new(draft(Vec::new(), Vec::new()), &models, &assets);
+        (assets, models, e)
+    }
+
+    /// Тик с клавишей, нажатой в нём и отпущенной после.
+    fn tap(e: &mut Editor, key: KeyCode) {
+        let mut input = Input::default();
+        input.on_key(key, Pressed, false);
+        e.control(&input);
+        input.on_key(key, Released, false);
+    }
+
+    /// Точка орбиты в NDC камеры кадра.
+    fn on_screen(e: &Editor, p: Vec2) -> Vec3 {
+        let p = vec3(p.x, e.floor(), p.y);
+        e.camera(1.0).view_proj(1.0).project_point3(p)
+    }
+
+    #[test]
+    fn camera_looks_at_track_middle_on_level_plane() {
+        let (assets, models) = loaded();
+        let a = road("roadStraight", ivec2(2, 2), 0, rot(0));
+        let b = road("roadStraight", ivec2(5, 7), 0, rot(0));
+        let mut e = Editor::new(draft(vec![a, b], Vec::new()), &models, &assets);
+        assert!(
+            e.orbit.focus.abs_diff_eq(vec2(16.0, 20.0), 0.5),
+            "{}",
+            e.orbit.focus
+        );
+        tap(&mut e, KeyCode::PageUp);
+        let ray = e.camera(1.0).ray(Vec2::ZERO, 1.0);
+        let hit = at(ray, plane_t(ray, LEVEL * KIT_SCALE).expect("вниз"));
+        assert!(hit.abs_diff_eq(vec3(16.0, 2.0, 20.0), 0.5), "{hit}");
+        assert!(ray.origin.y > hit.y);
+        let (_, _, empty) = empty();
+        assert_eq!(empty.orbit.focus, Vec2::ZERO);
+    }
+
+    #[test]
+    fn wasd_pans_relative_to_turn() {
+        let (_, _, mut e) = empty();
+        let step = PAN * e.orbit.distance();
+        let mut input = Input::default();
+        input.on_key(KeyCode::KeyW, Pressed, false);
+        e.control(&input);
+        assert!(e.orbit.focus.abs_diff_eq(vec2(0.0, -step), 1e-5));
+        assert!(on_screen(&e, Vec2::ZERO).y < 0.0, "старая точка ушла вниз");
+        input.on_key(KeyCode::KeyW, Released, false);
+        input.on_key(KeyCode::KeyD, Pressed, false);
+        let before = e.orbit.focus;
+        e.control(&input);
+        assert!(e.orbit.focus.abs_diff_eq(before + vec2(step, 0.0), 1e-5));
+        assert!(on_screen(&e, before).x < 0.0, "старая точка ушла влево");
+        input.on_key(KeyCode::KeyD, Released, false);
+        // Взгляд по −X: назад — по +X, влево — по +Z.
+        e.orbit.turn = 1;
+        for (key, moved) in [
+            (KeyCode::KeyS, vec2(step, 0.0)),
+            (KeyCode::KeyA, vec2(0.0, step)),
+        ] {
+            input.on_key(key, Pressed, false);
+            let before = e.orbit.focus;
+            e.control(&input);
+            input.on_key(key, Released, false);
+            assert!(e.orbit.focus.abs_diff_eq(before + moved, 1e-5), "{key:?}");
+        }
+        let before = e.orbit.focus;
+        e.control(&input);
+        assert_eq!(e.orbit.focus, before);
+    }
+
+    #[test]
+    fn q_and_e_turn_by_quarter_and_wrap() {
+        let (_, _, mut e) = empty();
+        let p = vec2(-10.0, 0.0);
+        tap(&mut e, KeyCode::KeyQ);
+        assert_eq!(e.orbit.turn, 1);
+        let ndc = on_screen(&e, p);
+        assert!(
+            ndc.x.abs() < 1e-4 && ndc.y > 0.0,
+            "точка слева теперь впереди: {ndc}"
+        );
+        for _ in 0..3 {
+            tap(&mut e, KeyCode::KeyQ);
+        }
+        assert_eq!(e.orbit.turn, 0);
+        tap(&mut e, KeyCode::KeyE);
+        assert_eq!(e.orbit.turn, 3);
+        let ndc = on_screen(&e, -p);
+        assert!(
+            ndc.x.abs() < 1e-4 && ndc.y > 0.0,
+            "точка справа теперь впереди: {ndc}"
+        );
+        tap(&mut e, KeyCode::KeyE);
+        assert_eq!(e.orbit.turn, 2);
+    }
+
+    #[test]
+    fn wheel_zooms_within_limits_and_keeps_fraction() {
+        let (_, _, mut e) = empty();
+        let o = &mut e.orbit;
+        let start = o.zoom;
+        o.scroll(0.6);
+        assert_eq!(o.zoom, start);
+        o.scroll(-0.2);
+        assert_eq!(o.zoom, start);
+        o.scroll(0.6);
+        assert_eq!(o.zoom, start - 1);
+        let near = o.distance();
+        o.scroll(-1.0);
+        assert!(o.distance() > near);
+        o.scroll(100.0);
+        assert_eq!((o.zoom, o.distance()), (0, NEAREST));
+        o.scroll(-100.0);
+        assert_eq!(o.zoom, MAX_ZOOM);
+        let depth = on_screen(&e, Vec2::ZERO).z;
+        assert!(
+            depth < 1.0,
+            "на дальнем зуме точка орбиты не за дальней плоскостью: {depth}"
+        );
+        let eye = e.camera(1.0).pos;
+        assert!((eye.length() - e.orbit.distance()).abs() < 1e-3, "{eye}");
+    }
+
+    #[test]
+    fn page_keys_change_level_within_range() {
+        let (_, _, mut e) = empty();
+        tap(&mut e, KeyCode::PageDown);
+        assert_eq!(e.level, 0);
+        tap(&mut e, KeyCode::PageUp);
+        assert_eq!(e.level, 1);
+        for _ in 0..MAX_LEVEL + 3 {
+            tap(&mut e, KeyCode::PageUp);
+        }
+        assert_eq!(e.level, MAX_LEVEL);
+        tap(&mut e, KeyCode::PageDown);
+        assert_eq!(e.level, MAX_LEVEL - 1);
+    }
+
+    #[test]
+    fn camera_eases_focus_between_ticks() {
+        let (_, _, mut e) = empty();
+        let mut input = Input::default();
+        input.on_key(KeyCode::KeyD, Pressed, false);
+        e.control(&input);
+        let (a, b) = (e.camera(0.0).pos, e.camera(1.0).pos);
+        assert!((b - a).abs_diff_eq(vec3(PAN * e.orbit.distance(), 0.0, 0.0), 1e-4));
+        assert!(e.camera(0.5).pos.abs_diff_eq(a.lerp(b, 0.5), 1e-4));
+    }
+
+    #[test]
+    fn preview_is_green_where_piece_fits_and_red_where_not() {
+        let (assets, models) = loaded();
+        let taken = road("roadStraight", IVec2::ZERO, 0, rot(0));
+        let mut e = Editor::new(draft(vec![taken], Vec::new()), &models, &assets);
+        e.apply(
+            EditorCmd::Tool(road_tool("roadRampLong", 90)),
+            &models,
+            &assets,
+        );
+        let free = road("roadRampLong", ivec2(4, 4), 0, rot(90));
+        let tints = |e: &Editor, ray| -> Vec<Color> {
+            e.preview(ray, &models).iter().map(|d| d.tint).collect()
+        };
+        let draws = e.preview(down_cell(ivec2(4, 4)), &models);
+        let want = place(&piece_draft(vec![free], Vec::new()));
+        assert!(want.len() > 1, "с барьерами");
+        assert_eq!(draws.len(), want.len());
+        assert_eq!(draws[0].model, models.get("roadRampLong"));
+        assert_eq!(draws[0].transform, free.transform());
+        assert!(
+            draws
+                .iter()
+                .all(|d| d.tint == PLACEABLE && d.pose.is_none())
+        );
+        assert!(
+            tints(&e, down_cell(IVec2::ZERO))
+                .iter()
+                .all(|&c| c == BLOCKED)
+        );
+        assert_ne!(tints(&e, down_cell(IVec2::ZERO)), []);
+        let up = Ray {
+            dir: Vec3::Y,
+            ..down(0.0, 0.0)
+        };
+        assert_eq!(tints(&e, up), []);
+        e.apply(EditorCmd::Tool(decor_tool("cone", 0.0)), &models, &assets);
+        assert_eq!(tints(&e, down(30.0, 2.0)), [PLACEABLE]);
+        assert_eq!(tints(&e, down(5000.0, 2.0)), [BLOCKED]);
+        assert_eq!(tints(&e, up), []);
+        e.apply(EditorCmd::Tool(Tool::Erase), &models, &assets);
+        assert_eq!(tints(&e, down(2.0, 2.0)), []);
+    }
+
+    #[test]
+    fn cell_quad_covers_cell_under_ray_on_level_plane() {
+        let (_, _, mut e) = empty();
+        e.level = 1;
+        let slant = Ray {
+            origin: vec3(0.5, 7.0, 6.0),
+            dir: vec3(2.0, -1.0, 0.0).normalize(),
+        };
+        let to_world = e.cell_quad(slant).expect("квад");
+        let (vertices, indices) = quad();
+        let corners: Vec<Vec3> = (vertices.iter())
+            .map(|v| to_world.transform_point3(Vec3::from(v.pos)))
+            .collect();
+        let top = 2.0 + QUAD_LIFT;
+        assert_eq!(
+            corners,
+            [
+                vec3(8.0, top, 4.0),
+                vec3(8.0, top, 8.0),
+                vec3(12.0, top, 8.0),
+                vec3(12.0, top, 4.0)
+            ]
+        );
+        for v in &vertices {
+            assert_eq!((v.normal, v.uv), ([0.0, 1.0, 0.0], [v.pos[0], v.pos[2]]));
+        }
+        for tri in indices.as_chunks::<3>().0 {
+            let [p0, p1, p2] = tri.map(|i| corners[i as usize]);
+            assert!((p1 - p0).cross(p2 - p0).y > 0.0, "лицом вверх");
+        }
+        let up = Ray {
+            dir: Vec3::Y,
+            ..slant
+        };
+        assert_eq!(e.cell_quad(up), None);
     }
 }
