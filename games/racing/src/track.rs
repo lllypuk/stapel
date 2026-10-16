@@ -38,7 +38,14 @@ pub(crate) enum TrackError {
         level: u32,
         found: u32,
     },
+    Bounds {
+        line: usize,
+    },
 }
+
+/// Клетка по модулю и уровень — не больше: в debug сумма клеток детали иначе паникует переполнением.
+const MAX_CELL: i32 = 1000;
+const MAX_LEVEL: u32 = 16;
 
 impl fmt::Display for TrackError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -57,6 +64,10 @@ impl fmt::Display for TrackError {
             Self::Level { line, level, found } => write!(
                 f,
                 "строка {line}: выход на уровне {level}, а дорога за ним — на уровне {found}"
+            ),
+            Self::Bounds { line } => write!(
+                f,
+                "строка {line}: клетка вне ±{MAX_CELL}, уровень больше {MAX_LEVEL} или позиция не число"
             ),
         }
     }
@@ -223,6 +234,11 @@ impl Track {
                 line: line(&r.piece),
                 rot: r.rot,
             })?;
+            if r.cell.iter().any(|c| c.abs() > MAX_CELL) || r.level > MAX_LEVEL {
+                return Err(TrackError::Bounds {
+                    line: line(&r.piece),
+                });
+            }
             let r = Road {
                 piece,
                 cell: IVec2::from(r.cell),
@@ -245,9 +261,15 @@ impl Track {
             .decor
             .iter()
             .map(|d| {
+                let pos = Vec3::from(d.pos);
+                if !pos.is_finite() || !d.yaw.is_finite() {
+                    return Err(TrackError::Bounds {
+                        line: line(&d.piece),
+                    });
+                }
                 Ok(Decor {
                     piece: decor_piece(d.piece.get_ref()).ok_or_else(|| unknown(&d.piece))?,
-                    pos: Vec3::from(d.pos),
+                    pos,
                     yaw: d.yaw.to_radians(),
                 })
             })
@@ -377,6 +399,39 @@ mod tests {
             err("car = \"race\"\n[[road]]\npiece = \"roadStraight\"\ncell = [0, 0]\nrot = 45\n");
         assert_eq!(e, TrackError::Rot { line: 3, rot: 45 });
         assert_eq!(e.to_string(), "строка 3: rot 45 не кратен 90");
+    }
+
+    #[test]
+    fn huge_cell_or_level_and_non_finite_decor_fail() {
+        let road = |cell: &str, level: u32| {
+            err(&format!(
+                "car = \"race\"\n[[road]]\npiece = \"roadStraightLong\"\ncell = {cell}\nlevel = {level}\n"
+            ))
+        };
+        let e = road("[2147483647, 0]", 0);
+        assert_eq!(e, TrackError::Bounds { line: 3 });
+        assert_eq!(
+            e.to_string(),
+            "строка 3: клетка вне ±1000, уровень больше 16 или позиция не число"
+        );
+        assert_eq!(road("[0, -1001]", 0), TrackError::Bounds { line: 3 });
+        assert_eq!(road("[0, 0]", 17), TrackError::Bounds { line: 3 });
+        for (pos, yaw) in [("[nan, 0, 0]", "0"), ("[0, 0, 0]", "inf")] {
+            let e = err(&format!(
+                "car = \"race\"\n[[decor]]\npiece = \"cone\"\npos = {pos}\nyaw = {yaw}\n"
+            ));
+            assert_eq!(e, TrackError::Bounds { line: 3 });
+        }
+    }
+
+    #[test]
+    fn largest_cell_and_level_parse() {
+        let text = "car = \"race\"\n[[road]]\npiece = \"roadStraight\"\ncell = [1000, -1000]\nlevel = 16\n";
+        let track = Track::parse(text).expect("трасса");
+        assert_eq!(
+            (track.road[0].cell, track.road[0].level),
+            (ivec2(1000, -1000), 16)
+        );
     }
 
     fn roads(entries: &[(&str, [i32; 2], u32, i64)]) -> String {

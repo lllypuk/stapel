@@ -67,9 +67,13 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    /// Файл `a.txt` с текстом `text` в своём каталоге теста.
+    /// Файл `a.txt` с текстом `text` в пустом каталоге теста в `target/` копии дерева.
     fn temp_file(name: &str, text: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("engine-watch-{}-{name}", std::process::id()));
+        let dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../target/test-dirs"))
+            .join(format!("engine-watch-{name}"));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).unwrap();
+        }
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.txt");
         fs::write(&path, text).unwrap();

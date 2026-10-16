@@ -19,7 +19,7 @@ make asteroids                                                    # любая �
 NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color
 make check                                                        # fmt, typos, clippy, doc, machete, deny, тесты; deny качает advisory-db — нужна сеть
 make cov                                                          # покрытие строк с порогом
-make mutants                                                      # мутанты, ~17 мин; исключения — .cargo/mutants.toml
+make mutants                                                      # мутанты, ~1 ч; исключения — .cargo/mutants.toml
 REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine   # офскрин-тесты 2D и 3D без адаптера падают, а не пропускаются; без WGPU_BACKEND найдётся адаптер GL
 ```
 
@@ -41,6 +41,7 @@ REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine   # офскрин-тес
 
 - Функция появляется в движке только когда она нужна игре текущего этапа (`docs/design.md`, таблица «Этапы»). Изменение решения из дизайна — вместе с правкой `docs/design.md`.
 - Исключение из линта — локальный `#[expect(lint, reason = "...")]`, не `allow`; если линт срабатывает по-разному в тестовой сборке (`unwrap_used`, `print_stderr`, `dead_code`) — `#[cfg_attr(not(test), expect(..))]`, иначе `--all-targets` упадёт на `unfulfilled_lint_expectations`.
+- Долгий тест — под `#[ignore = "..."]`: его включают `make test` и `make cov`, а `cargo test --workspace` и мутанты — нет.
 - Порог покрытия в `make cov` — только вверх; снижение — осознанное решение в коммите.
 - Выживший мутант — тест, который его убивает, или исключение в `.cargo/mutants.toml` с причиной.
 - Новая молчаливая поломка — в свой слой раздела `docs/design.md` с пометкой «→ что её ловит»; правка кода, снимающая защиту, правит и пометку.

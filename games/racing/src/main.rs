@@ -14,7 +14,8 @@ use std::path::PathBuf;
 
 use engine::{
     Assets, Camera2D, Color, Config, Context, DirectionalLight, Fog, Font, FontData, Game, Gfx,
-    Handle, IVec2, Input, KeyCode, ModelDraw, Pose, Scene, Vec2, Vec3, Watcher, egui, vec2, vec3,
+    Handle, IVec2, Input, KeyCode, ModelDraw, Pose, Scene, StaticWorld, Vec2, Vec3, Watcher, egui,
+    vec2, vec3,
 };
 
 use crate::camera::Chase;
@@ -58,6 +59,16 @@ const UPSIDE_DOWN_TICKS: u32 = 2 * TICK_HZ;
 const OFF_ROAD_TICKS: u32 = 3 * TICK_HZ;
 /// Машина ставится чуть выше дороги и падает на колёса, м.
 const SPAWN_LIFT: f32 = 0.1;
+/// Луч к асфальту респауна — от стольких метров над уровнем: ниже настила моста (1,5 м), выше середины рампы.
+const GROUND_PROBE: f32 = 1.0;
+
+/// Трасса `name` из `assets/tracks/`, без имени — `DEFAULT_TRACK`.
+fn track_path(name: Option<&str>) -> PathBuf {
+    PathBuf::from(format!(
+        "{TRACKS_DIR}{}.toml",
+        name.unwrap_or(DEFAULT_TRACK)
+    ))
+}
 
 /// Характеристики машин из `dir` по имени файла без `.toml`: `race` раньше `race-future`.
 fn load_cars(dir: &str) -> Vec<CarConfig> {
@@ -111,9 +122,14 @@ struct Spawn {
 }
 
 impl Spawn {
-    fn at(c: &Checkpoint) -> Self {
+    /// Посреди клетки за чекпоинтом, на асфальте: на линии выхода `roadRamp` зад машины — под кромкой трамплина.
+    fn at(c: &Checkpoint, world: &StaticWorld) -> Self {
+        let pos = c.origin + c.normal * KIT_SCALE / 2.0;
+        let ground = world.raycast(pos + Vec3::Y * GROUND_PROBE, Vec3::NEG_Y, KIT_SCALE, |_| {
+            true
+        });
         Self {
-            pos: c.origin,
+            pos: ground.map_or(pos, |h| h.point),
             dir: c.normal,
         }
     }
@@ -242,7 +258,7 @@ impl Racing {
     fn pass_checkpoint(&mut self) {
         let body = &self.car.body;
         if let Some(i) = self.race.tick(self.car.prev.0, body.pos, body.vel) {
-            self.respawn = Spawn::at(&self.race.checkpoints[i]);
+            self.respawn = Spawn::at(&self.race.checkpoints[i], &self.layout.world);
         }
     }
 
@@ -310,8 +326,7 @@ impl Racing {
 
 impl Game for Racing {
     fn init(ctx: &mut Context) -> Self {
-        let name = std::env::var("TRACK").unwrap_or_else(|_| DEFAULT_TRACK.into());
-        let path = PathBuf::from(format!("{TRACKS_DIR}{name}.toml"));
+        let path = track_path(std::env::var("TRACK").ok().as_deref());
         let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         Self::new(path, text, load_cars(CARS_DIR), &mut ctx.assets)
     }
@@ -398,7 +413,7 @@ mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
     use engine::ElementState::{Pressed, Released};
-    use engine::{Quat, Sprite, StaticWorld, Triangle, text};
+    use engine::{Quat, Sprite, Triangle, text};
 
     use super::*;
     use crate::layout::{self, ROAD};
@@ -547,7 +562,7 @@ mod tests {
         assert!(placed_at(&g, g.start));
 
         cross_start_line(&mut g, &mut ctx);
-        let first = Spawn::at(&g.race.checkpoints[0]);
+        let first = Spawn::at(&g.race.checkpoints[0], &g.layout.world);
         assert_eq!(g.respawn, first);
         ticks(&mut g, &mut ctx, 30);
         tap(&mut g, &mut ctx, KeyCode::KeyR);
@@ -582,6 +597,32 @@ mod tests {
         assert_eq!(g.car.config.model, "race");
         assert!(!placed_at(&g, g.start), "рестартовала");
         assert_eq!(g.race.next, 1);
+    }
+
+    #[test]
+    fn respawn_at_every_checkpoint_of_every_track_stands_on_road() {
+        let mut ctx = Context::default();
+        for entry in fs::read_dir(TRACKS_DIR).expect("трассы") {
+            let path = entry.expect("трасса").path();
+            let mut g = open(path.clone(), &mut ctx);
+            for i in 0..g.race.checkpoints.len() {
+                let at = Spawn::at(&g.race.checkpoints[i], &g.layout.world);
+                g.spawn(at);
+                ctx.input.on_key(KeyCode::KeyS, Pressed, false);
+                for _ in 0..120 {
+                    tick(&mut g, &mut ctx);
+                    let body = &g.car.body;
+                    let upright = (body.rot * Vec3::Y).y > 0.5;
+                    assert!(
+                        upright && body.pos.y > at.pos.y - 0.5,
+                        "{} чекпоинт {i}: {}",
+                        path.display(),
+                        body.pos
+                    );
+                }
+                ctx.input.on_key(KeyCode::KeyS, Released, false);
+            }
+        }
     }
 
     #[test]
@@ -748,9 +789,16 @@ mod tests {
         );
     }
 
-    /// Овал в своём каталоге теста: файл можно переписывать.
+    /// Овал в пустом каталоге теста в `target/` копии дерева: файл можно переписывать.
     fn temp_oval(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("racing-{}-{name}", std::process::id()));
+        let dir = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../target/test-dirs"
+        ))
+        .join(format!("racing-{name}"));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).expect("старый каталог");
+        }
         fs::create_dir_all(&dir).expect("каталог");
         let path = dir.join("track.toml");
         fs::copy(OVAL, &path).expect("копия");
@@ -860,10 +908,18 @@ mod tests {
     }
 
     #[test]
-    fn init_opens_default_track() {
+    fn init_opens_track_from_env_or_default() {
+        assert_eq!(
+            track_path(None),
+            PathBuf::from(format!("{TRACKS_DIR}track01.toml"))
+        );
+        assert_eq!(
+            track_path(Some("track02")),
+            PathBuf::from(format!("{TRACKS_DIR}track02.toml"))
+        );
         let mut ctx = Context::default();
         let g = Racing::init(&mut ctx);
-        let path = PathBuf::from(format!("{TRACKS_DIR}{DEFAULT_TRACK}.toml"));
+        let path = track_path(std::env::var("TRACK").ok().as_deref());
         let text = fs::read_to_string(&path).expect("трасса");
         let (track, checkpoints) = load_track(&text, &g.cars).expect("трасса");
         assert_eq!(g.path, path);

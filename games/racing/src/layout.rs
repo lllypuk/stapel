@@ -184,6 +184,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn decor_offset_centers_and_grounds_model_bounds() {
+        let (assets, models) = loaded();
+        for d in &DECOR {
+            let b = assets.model(models.get(d.name)).bounds().expect("габарит");
+            let center = (b.min + b.max) / 2.0 + d.offset;
+            assert!(center.x.abs() < EPS && center.z.abs() < EPS, "{}", d.name);
+            assert!((b.min.y + d.offset.y).abs() < EPS, "{}", d.name);
+        }
+    }
+
     fn inside(cell: IVec2, v: Vec3, margin: f32) -> bool {
         let lo = cell.as_vec2() * KIT_SCALE - margin;
         let hi = (cell + 1).as_vec2() * KIT_SCALE + margin;

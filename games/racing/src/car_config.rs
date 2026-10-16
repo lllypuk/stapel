@@ -3,6 +3,8 @@ use std::fmt;
 use engine::{Model, Vec3};
 use serde::Deserialize;
 
+use crate::pieces::CARS;
+
 /// Ведущие колёса.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -49,6 +51,7 @@ pub(crate) struct CarConfig {
 #[derive(Debug, PartialEq)]
 pub(crate) enum CarError {
     Toml(String),
+    Model { name: String },
     Field { field: &'static str, value: f32 },
     Wheel { node: &'static str },
     WheelRadius { node: &'static str, radius: f32 },
@@ -58,6 +61,7 @@ impl fmt::Display for CarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Toml(msg) => f.write_str(msg),
+            Self::Model { name } => write!(f, "модели {name:?} нет в pieces::CARS"),
             Self::Field { field, value } => write!(f, "{field} = {value} вне допустимых"),
             Self::Wheel { node } => write!(f, "у модели нет колеса {node} с мешем"),
             Self::WheelRadius { node, radius } => {
@@ -70,6 +74,9 @@ impl fmt::Display for CarError {
 impl CarConfig {
     pub(crate) fn parse(text: &str) -> Result<Self, CarError> {
         let mut car: Self = toml::from_str(text).map_err(|e| CarError::Toml(e.to_string()))?;
+        if !CARS.contains(&car.model.as_str()) {
+            return Err(CarError::Model { name: car.model });
+        }
         let positive = [
             ("mass", car.mass),
             ("power", car.power),
@@ -157,7 +164,6 @@ mod tests {
 
     use super::*;
     use crate::ASSETS;
-    use crate::pieces::CARS;
 
     const RACE: &str = r#"
 model = "race"
@@ -228,6 +234,12 @@ drive = "rwd"
                 other => panic!("{needle}: {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn model_outside_cars_is_error() {
+        let err = CarConfig::parse(&with("model", "\"suv\"")).expect_err("suv");
+        assert_eq!(err.to_string(), "модели \"suv\" нет в pieces::CARS");
     }
 
     #[test]

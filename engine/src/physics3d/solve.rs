@@ -79,12 +79,12 @@ pub fn solve_contacts(body: &mut RigidBody, contacts: &[Contact], params: &Conta
             row.jt = (old + dt).clamp_length_max(params.friction * row.jn);
             let d = row.jt - old;
             let impulse = row.tangents[0] * d.x + row.tangents[1] * d.y;
-            apply(body, &inv_inertia, impulse, row.point);
+            body.apply_impulse_at(impulse, row.point);
 
             let vn = body.velocity_at(row.point).dot(row.normal);
             let old = row.jn;
             row.jn = (old + (row.target - vn) * row.normal_mass).max(0.0);
-            apply(body, &inv_inertia, row.normal * (row.jn - old), row.point);
+            body.apply_impulse_at(row.normal * (row.jn - old), row.point);
         }
     }
 
@@ -104,12 +104,6 @@ pub fn solve_contacts(body: &mut RigidBody, contacts: &[Contact], params: &Conta
 fn effective_mass(body: &RigidBody, inv_inertia: &Mat3, r: Vec3, d: Vec3) -> f32 {
     let rd = r.cross(d);
     (body.inv_mass + rd.dot(*inv_inertia * rd)).recip()
-}
-
-/// `apply_impulse_at` без пересчёта тензора на каждый импульс.
-fn apply(body: &mut RigidBody, inv_inertia: &Mat3, impulse: Vec3, p: Vec3) {
-    body.vel += impulse * body.inv_mass;
-    body.ang_vel += *inv_inertia * (p - body.pos).cross(impulse);
 }
 
 /// Из близких контактов с почти той же нормалью остаётся самый глубокий, при равной глубине — первый.
@@ -230,7 +224,6 @@ mod tests {
             normal,
             depth,
             tri: 0,
-            tag: 0,
         }
     }
 

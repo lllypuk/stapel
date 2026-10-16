@@ -398,54 +398,16 @@ mod tests {
         assert!(close(start[0], straight[0]) && close(start[1], straight[1]));
     }
 
-    /// Габарит после корня GLB: `[min, max]`.
-    const DECOR_BOUNDS: [(&str, [Vec3; 2]); 8] = [
-        (
-            "barrierWall",
-            [vec3(-0.35, -0.01, -0.773), vec3(0.65, 0.121, -0.65)],
-        ),
-        (
-            "barrierRed",
-            [vec3(-0.35, -0.01, -0.773), vec3(-0.1, 0.121, -0.65)],
-        ),
-        (
-            "barrierWhite",
-            [vec3(-0.35, -0.01, -0.773), vec3(-0.1, 0.121, -0.65)],
-        ),
-        ("rail", [vec3(-0.35, -0.01, -0.65), vec3(0.65, 0.15, -0.6)]),
-        (
-            "treeLarge",
-            [vec3(-0.528, -0.01, -0.856), vec3(-0.172, 1.497, -0.444)],
-        ),
-        (
-            "treeSmall",
-            [vec3(-0.477, -0.01, -0.796), vec3(-0.223, 1.06, -0.504)],
-        ),
-        (
-            "grandStand",
-            [vec3(-0.35, -0.01, -1.65), vec3(0.65, 0.886, -0.65)],
-        ),
-        (
-            "cone",
-            [vec3(-0.238, 0.0, -0.238), vec3(0.238, 0.595, 0.238)],
-        ),
-    ];
-
     #[test]
-    fn decor_offset_centers_and_grounds_measured_bounds() {
-        assert_eq!(DECOR_BOUNDS.len(), DECOR.len());
-        for (name, [min, max]) in DECOR_BOUNDS {
-            let d = decor_piece(name).unwrap_or_else(|| panic!("нет декора {name}"));
-            let center = (min + max) / 2.0 + d.offset;
-            assert!(close(center.x, 0.0) && close(center.z, 0.0), "{name}");
-            assert!(close(min.y + d.offset.y, 0.0), "{name}");
-            assert_eq!(d.solid, name.starts_with("barrier"), "{name}");
-            let scale = if name == "cone" {
+    fn only_barriers_are_solid_and_cone_is_car_kit_scale() {
+        for d in &DECOR {
+            assert_eq!(d.solid, d.name.starts_with("barrier"), "{}", d.name);
+            let scale = if d.name == "cone" {
                 CAR_KIT_SCALE
             } else {
                 KIT_SCALE
             };
-            assert!(close(d.scale, scale), "{name}");
+            assert!(close(d.scale, scale), "{}", d.name);
         }
     }
 

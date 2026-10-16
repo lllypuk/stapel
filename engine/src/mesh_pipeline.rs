@@ -1067,6 +1067,10 @@ mod tests {
         let red = load_png(&mut assets, "skin-after-red", 1, 1, &[255, 0, 0, 255]);
         let green = load_png(&mut assets, "skin-after-green", 1, 1, &[0, 255, 0, 255]);
         let white = load_png(&mut assets, "skin-after-white", 1, 1, &[255; 4]);
+        let yellow = Color {
+            b: 0.0,
+            ..Color::WHITE
+        };
         let x = |x| Mat4::from_translation(vec3(x, 0.0, -3.0));
         let mut gfx = lit_scene();
         gfx.scene.as_mut().unwrap().meshes = vec![MeshDraw {
@@ -1074,8 +1078,9 @@ mod tests {
             ..at(rigid, red, 0.0, 1.0)
         }];
         let models = ExpandedModels {
-            skinned: [(green, 0.0), (white, 1.0)]
-                .map(|(texture, at)| SkinnedDraw {
+            skinned: [(green, Color::WHITE, 0.0), (white, yellow, 1.0)]
+                .map(|(texture, color, at)| SkinnedDraw {
+                    color,
                     transform: x(at),
                     ..skinned(skin, texture, 0)
                 })
@@ -1086,7 +1091,7 @@ mod tests {
         let img = render_models(&device, &queue, &mut assets, &gfx, &models);
         assert_pixel(&img, "rigid", (14, 32), [255, 0, 0]);
         assert_pixel(&img, "first skinned", CENTER, [0, 255, 0]);
-        assert_pixel(&img, "second skinned", (50, 32), [255, 255, 255]);
+        assert_pixel(&img, "second skinned, tinted", (50, 32), [255, 255, 0]);
     }
 
     #[test]

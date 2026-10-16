@@ -46,8 +46,6 @@ pub struct Contact {
     pub depth: f32,
     /// Индекс треугольника во входе `StaticWorld::new`.
     pub tri: u32,
-    /// `Triangle::tag`.
-    pub tag: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -206,7 +204,6 @@ impl StaticWorld {
                 normal,
                 depth,
                 tri: i,
-                tag: tri.tag,
             });
         }
     }
@@ -579,7 +576,7 @@ mod tests {
         let one = |center: Vec3, r: f32| {
             let found = contacts(&world, center, r);
             assert_eq!(found.len(), 1, "{center:?}: {found:?}");
-            assert_eq!((found[0].tri, found[0].tag), (0, 3));
+            assert_eq!(found[0].tri, 0);
             found[0]
         };
         let face = one(Vec3::new(0.5, 0.3, 0.5), 0.5);
@@ -786,7 +783,6 @@ mod tests {
             normal: Vec3::Y,
             depth: 1.0,
             tri: 9,
-            tag: 9,
         }];
         world.sphere_contacts(Vec3::new(0.0, 0.1, 0.0), 0.2, &mut out);
         let tris: Vec<u32> = out.iter().map(|c| c.tri).collect();
