@@ -49,7 +49,7 @@ pub mod ui;
 pub mod watch;
 
 pub use assets::{Assets, Font, Handle, MeshGeometry, PendingTexture, Texture, TextureKind};
-pub use audio::{Audio, Sound};
+pub use audio::{Audio, LoopId, Sound};
 pub use camera::{
     Camera2D, Camera3D, MAX_PITCH, Ray, Viewport, letterbox, letterbox_pixel, screen_to_world,
     viewport,

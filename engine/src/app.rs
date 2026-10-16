@@ -187,6 +187,7 @@ impl<G: Game> Running<G> {
         }
         self.sync_grab();
         self.game.ui(&self.egui);
+        self.ctx.audio.flush();
         ui::release_focus(&self.egui);
         let out = self.egui.end_pass();
         self.egui_state

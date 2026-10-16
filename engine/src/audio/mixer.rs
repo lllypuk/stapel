@@ -24,10 +24,6 @@ pub(crate) enum Command {
     /// Музыка по кругу вместо играющей.
     Music { frames: Arc<[f32]>, volume: f32 },
     /// Длящийся голос в `slot` вместо прежнего.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "API `Audio` — следующая задача этапа")
-    )]
     LoopStart {
         slot: usize,
         generation: u32,
@@ -35,10 +31,6 @@ pub(crate) enum Command {
         volume: f32,
     },
     /// Новые скорость и громкость голоса `slot` поколения `generation`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "API `Audio` — следующая задача этапа")
-    )]
     LoopSet {
         slot: usize,
         generation: u32,
@@ -46,10 +38,6 @@ pub(crate) enum Command {
         volume: f32,
     },
     /// Затухание и освобождение голоса `slot` поколения `generation`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "API `Audio` — следующая задача этапа")
-    )]
     LoopStop { slot: usize, generation: u32 },
 }
 
