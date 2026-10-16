@@ -282,6 +282,35 @@ impl Assets {
             log::warn!("sound {}: {e}", path.display());
             Vec::new()
         });
+        let handle = self.push_sound(frames);
+        self.sound_paths
+            .insert(path.to_path_buf(), Watched { handle, stamp });
+        handle
+    }
+
+    /// Звук из стерео-интерлива в `sample_rate()`; живёт, пока живут `Assets`.
+    ///
+    /// # Panics
+    /// На нечётную длину или неконечный отсчёт.
+    pub fn add_sound(&mut self, frames: Vec<f32>) -> Handle<Sound> {
+        assert!(
+            frames.len().is_multiple_of(2),
+            "add_sound: нечётная длина {}",
+            frames.len()
+        );
+        assert!(
+            frames.iter().all(|s| s.is_finite()),
+            "add_sound: неконечный отсчёт"
+        );
+        self.push_sound(frames)
+    }
+
+    /// Частота звуков `Assets` — частота устройства.
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn push_sound(&mut self, frames: Vec<f32>) -> Handle<Sound> {
         #[expect(
             clippy::cast_possible_truncation,
             reason = "u32::MAX звуков не поместится в память"
@@ -290,8 +319,6 @@ impl Assets {
         self.sounds.push(Sound {
             frames: frames.into(),
         });
-        self.sound_paths
-            .insert(path.to_path_buf(), Watched { handle, stamp });
         handle
     }
 
@@ -818,6 +845,38 @@ mod tests {
             assets.sound(h).frames.len() / 2,
             (native / 2 * 480).div_ceil(441)
         );
+    }
+
+    #[test]
+    fn added_sound_gets_new_handle_with_same_frames() {
+        let mut assets = Assets::default();
+        let loaded = assets.load_sound(SINE);
+        let a = assets.add_sound(vec![0.1, -0.2, 0.3, -0.4]);
+        let b = assets.add_sound(vec![0.5, 0.5]);
+        assert_ne!(a, loaded);
+        assert_ne!(a, b);
+        assert_eq!(&*assets.sound(a).frames, &[0.1, -0.2, 0.3, -0.4]);
+        assert_eq!(&*assets.sound(b).frames, &[0.5, 0.5]);
+    }
+
+    #[test]
+    fn sample_rate_is_assets_rate() {
+        let mut assets = Assets::default();
+        assert_eq!(assets.sample_rate(), 48_000);
+        assets.set_sample_rate(44_100);
+        assert_eq!(assets.sample_rate(), 44_100);
+    }
+
+    #[test]
+    #[should_panic(expected = "нечётная длина 3")]
+    fn added_sound_of_odd_length_panics() {
+        Assets::default().add_sound(vec![0.0; 3]);
+    }
+
+    #[test]
+    #[should_panic(expected = "неконечный отсчёт")]
+    fn added_sound_with_nan_panics() {
+        Assets::default().add_sound(vec![0.0, f32::NAN]);
     }
 
     #[test]

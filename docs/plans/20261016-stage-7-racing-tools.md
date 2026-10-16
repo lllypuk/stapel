@@ -250,10 +250,10 @@
 **Files:**
 - Modify: `engine/src/assets.rs`, `engine/src/audio/mod.rs`, `docs/design.md`
 
-- [ ] тесты: `add_sound` отдаёт новый хэндл с теми же фреймами; `sample_rate()` равна частоте `Assets`; нечётная длина и NaN — паника
-- [ ] `Assets::add_sound`, `Assets::sample_rate`
-- [ ] `docs/design.md`: «процедурный звук — только append-only через `Assets`: `Sound` в руках игры освободил бы последний `Arc` в колбэке» → тест `add_sound`
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] тесты: `add_sound` отдаёт новый хэндл с теми же фреймами; `sample_rate()` равна частоте `Assets`; нечётная длина и NaN — паника
+- [x] `Assets::add_sound`, `Assets::sample_rate`
+- [x] `docs/design.md`: «процедурный звук — только append-only через `Assets`: `Sound` в руках игры освободил бы последний `Arc` в колбэке» → тест `add_sound`
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 5: Длящиеся голоса в микшере
 
