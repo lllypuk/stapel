@@ -1,12 +1,13 @@
 use std::fmt;
+use std::ops::RangeInclusive;
 
 use engine::{Model, Vec3};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::pieces::CARS;
 
 /// Ведущие колёса.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Drive {
     Fwd,
@@ -14,8 +15,8 @@ pub(crate) enum Drive {
     Awd,
 }
 
-/// Характеристики машины из `cars/<модель>.toml`; единицы СИ, углы в файле — градусы.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+/// Характеристики машины из `cars/<модель>.toml`; единицы СИ, углы — градусы.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CarConfig {
     /// Имя модели в `assets/` без `.glb`.
@@ -32,7 +33,7 @@ pub(crate) struct CarConfig {
     pub(crate) grip_front: f32,
     /// Множитель трения шин задней оси.
     pub(crate) grip_rear: f32,
-    /// Угол руля на месте; после `parse` — радианы.
+    /// Угол руля на месте, градусы.
     pub(crate) steer_max: f32,
     /// Доля `steer_max` на `max_speed`, (0, 1].
     pub(crate) steer_at_speed: f32,
@@ -71,42 +72,144 @@ impl fmt::Display for CarError {
     }
 }
 
+/// Как правка поля доходит до машины в заезде.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Apply {
+    /// `Car::retune` на ходу.
+    Live,
+    /// Машина пересоздаётся на последнем чекпоинте.
+    Restart,
+}
+
+/// Настраиваемое поле характеристик: слайдер панели и диапазон `validate`.
+pub(crate) struct Tuning {
+    /// Имя поля в TOML.
+    pub(crate) label: &'static str,
+    pub(crate) range: RangeInclusive<f32>,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "панель характеристик — задача 11")
+    )]
+    pub(crate) apply: Apply,
+    pub(crate) field: fn(&mut CarConfig) -> &mut f32,
+}
+
+pub(crate) const TUNING: [Tuning; 12] = [
+    Tuning {
+        label: "mass",
+        range: 300.0..=3000.0,
+        apply: Apply::Live,
+        field: |c| &mut c.mass,
+    },
+    Tuning {
+        label: "power",
+        range: 20_000.0..=400_000.0,
+        apply: Apply::Live,
+        field: |c| &mut c.power,
+    },
+    Tuning {
+        label: "max_speed",
+        range: 10.0..=80.0,
+        apply: Apply::Live,
+        field: |c| &mut c.max_speed,
+    },
+    Tuning {
+        label: "brake",
+        range: 2000.0..=30_000.0,
+        apply: Apply::Live,
+        field: |c| &mut c.brake,
+    },
+    Tuning {
+        label: "grip_front",
+        range: 0.5..=2.0,
+        apply: Apply::Live,
+        field: |c| &mut c.grip_front,
+    },
+    Tuning {
+        label: "grip_rear",
+        range: 0.5..=2.0,
+        apply: Apply::Live,
+        field: |c| &mut c.grip_rear,
+    },
+    Tuning {
+        label: "steer_max",
+        range: 10.0..=45.0,
+        apply: Apply::Live,
+        field: |c| &mut c.steer_max,
+    },
+    Tuning {
+        label: "steer_at_speed",
+        range: 0.1..=1.0,
+        apply: Apply::Live,
+        field: |c| &mut c.steer_at_speed,
+    },
+    Tuning {
+        label: "spring",
+        range: 10_000.0..=80_000.0,
+        apply: Apply::Live,
+        field: |c| &mut c.spring,
+    },
+    Tuning {
+        label: "damper",
+        range: 500.0..=8000.0,
+        apply: Apply::Live,
+        field: |c| &mut c.damper,
+    },
+    Tuning {
+        label: "travel",
+        range: 0.05..=0.4,
+        apply: Apply::Restart,
+        field: |c| &mut c.travel,
+    },
+    Tuning {
+        label: "com_offset.y",
+        range: -0.5..=0.3,
+        apply: Apply::Restart,
+        field: |c| &mut c.com_offset[1],
+    },
+];
+
 impl CarConfig {
     pub(crate) fn parse(text: &str) -> Result<Self, CarError> {
-        let mut car: Self = toml::from_str(text).map_err(|e| CarError::Toml(e.to_string()))?;
-        if !CARS.contains(&car.model.as_str()) {
-            return Err(CarError::Model { name: car.model });
-        }
-        let positive = [
-            ("mass", car.mass),
-            ("power", car.power),
-            ("max_speed", car.max_speed),
-            ("brake", car.brake),
-            ("grip_front", car.grip_front),
-            ("grip_rear", car.grip_rear),
-            ("steer_max", car.steer_max),
-            ("steer_at_speed", car.steer_at_speed),
-            ("spring", car.spring),
-            ("damper", car.damper),
-            ("travel", car.travel),
-        ];
-        if let Some(&(field, value)) = positive.iter().find(|(_, v)| !v.is_finite() || *v <= 0.0) {
-            return Err(CarError::Field { field, value });
-        }
-        if car.steer_at_speed > 1.0 {
-            return Err(CarError::Field {
-                field: "steer_at_speed",
-                value: car.steer_at_speed,
+        let car: Self = toml::from_str(text).map_err(|e| CarError::Toml(e.to_string()))?;
+        car.validate()?;
+        Ok(car)
+    }
+
+    /// Модель из `CARS`, поля `TUNING` в своих `range`, остальные числа конечны.
+    pub(crate) fn validate(&self) -> Result<(), CarError> {
+        if !CARS.contains(&self.model.as_str()) {
+            return Err(CarError::Model {
+                name: self.model.clone(),
             });
         }
-        if let Some(&value) = car.com_offset.iter().find(|v| !v.is_finite()) {
+        let mut car = self.clone();
+        for t in &TUNING {
+            let value = *(t.field)(&mut car);
+            if !t.range.contains(&value) {
+                return Err(CarError::Field {
+                    field: t.label,
+                    value,
+                });
+            }
+        }
+        let [x, _, z] = self.com_offset;
+        if let Some(value) = [x, z].into_iter().find(|v| !v.is_finite()) {
             return Err(CarError::Field {
                 field: "com_offset",
                 value,
             });
         }
-        car.steer_max = car.steer_max.to_radians();
-        Ok(car)
+        Ok(())
+    }
+
+    /// Файл целиком, поля в порядке структуры.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "панель характеристик — задача 11")
+    )]
+    pub(crate) fn to_toml(&self) -> String {
+        toml::to_string(self).expect("строки и конечные числа пишутся в TOML")
     }
 }
 
@@ -196,7 +299,7 @@ drive = "rwd"
     }
 
     #[test]
-    fn parses_fields_and_steer_to_radians() {
+    fn parses_fields_with_steer_in_degrees() {
         let car = CarConfig::parse(RACE).expect("race");
         assert_eq!(
             car,
@@ -208,7 +311,7 @@ drive = "rwd"
                 brake: 12_000.0,
                 grip_front: 1.2,
                 grip_rear: 1.1,
-                steer_max: 30f32.to_radians(),
+                steer_max: 30.0,
                 steer_at_speed: 0.25,
                 spring: 30_000.0,
                 damper: 2500.0,
@@ -283,13 +386,87 @@ drive = "rwd"
     }
 
     #[test]
-    fn com_offset_is_finite() {
+    fn com_offset_x_and_z_are_finite() {
         assert!(CarConfig::parse(&with("com_offset", "[-1.0, 0.0, 2.0]")).is_ok());
-        let err = CarConfig::parse(&with("com_offset", "[0.0, inf, 0.0]"));
+        for text in ["[inf, 0.0, 0.0]", "[0.0, 0.0, nan]"] {
+            let err = CarConfig::parse(&with("com_offset", text));
+            assert!(
+                matches!(err, Err(CarError::Field { field: "com_offset", value }) if !value.is_finite()),
+                "{text}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_car_file_survives_to_toml_byte_for_byte() {
+        for name in CARS {
+            let path = format!("{ASSETS}cars/{name}.toml");
+            let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let car = CarConfig::parse(&text).unwrap_or_else(|e| panic!("{path}: {e}"));
+            assert_eq!(car.to_toml(), text, "{path}");
+            assert_eq!(CarConfig::parse(&car.to_toml()), Ok(car), "{path}");
+        }
+        let car = CarConfig::parse(RACE).expect("race");
         assert!(
-            matches!(err, Err(CarError::Field { field: "com_offset", value }) if value.is_infinite()),
-            "{err:?}"
+            car.to_toml().contains("\nsteer_max = 30.0\n"),
+            "{}",
+            car.to_toml()
         );
+    }
+
+    #[test]
+    fn tuning_edges_pass_validate_and_beyond_fail_with_label() {
+        let base = CarConfig::parse(RACE).expect("race");
+        assert_eq!(base.validate(), Ok(()));
+        for t in &TUNING {
+            let (lo, hi) = (*t.range.start(), *t.range.end());
+            assert!(lo < hi, "{}", t.label);
+            for (value, ok) in [
+                (lo, true),
+                (hi, true),
+                (lo.next_down(), false),
+                (hi.next_up(), false),
+                (f32::NAN, false),
+            ] {
+                let mut car = base.clone();
+                *(t.field)(&mut car) = value;
+                match car.validate() {
+                    Ok(()) => assert!(ok, "{} = {value}", t.label),
+                    Err(CarError::Field { field, .. }) => {
+                        assert!(!ok && field == t.label, "{} = {value}: {field}", t.label);
+                    }
+                    Err(e) => panic!("{} = {value}: {e}", t.label),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tuning_label_names_its_toml_field() {
+        for (i, t) in TUNING.iter().enumerate() {
+            let mut car = CarConfig::parse(RACE).expect("race");
+            let sentinel = 0.125 + i as f32;
+            *(t.field)(&mut car) = sentinel;
+            let table: toml::Table = toml::from_str(&car.to_toml()).expect("toml");
+            let value = match t.label.strip_suffix(".y") {
+                Some(name) => &table[name][1],
+                None => &table[t.label],
+            };
+            assert_eq!(value.as_float(), Some(f64::from(sentinel)), "{}", t.label);
+        }
+    }
+
+    #[test]
+    fn only_travel_and_com_offset_restart_and_model_drive_are_not_tuned() {
+        let restart: Vec<_> = (TUNING.iter())
+            .filter(|t| t.apply == Apply::Restart)
+            .map(|t| t.label)
+            .collect();
+        assert_eq!(restart, ["travel", "com_offset.y"]);
+        // com_offset — одна строка, только Y.
+        let table: toml::Table = toml::from_str(RACE).expect("toml");
+        assert_eq!(TUNING.len(), table.len() - 2);
+        assert!((TUNING.iter()).all(|t| t.label != "model" && t.label != "drive"));
     }
 
     fn assert_near(got: Vec3, want: Vec3) {

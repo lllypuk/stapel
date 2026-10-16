@@ -87,7 +87,7 @@ fn surface_grip(tag: u32) -> f32 {
 /// Угол колёс по рулю: от `steer_max` на месте до `steer_max·steer_at_speed` на `max_speed`.
 pub(crate) fn steer_angle(config: &CarConfig, steer: f32, speed: f32) -> f32 {
     let k = (speed.abs() / config.max_speed).min(1.0);
-    steer * config.steer_max * (1.0 + (config.steer_at_speed - 1.0) * k)
+    steer * config.steer_max.to_radians() * (1.0 + (config.steer_at_speed - 1.0) * k)
 }
 
 /// Сила мотора на машину при скорости `speed` вперёд, Н.
@@ -557,7 +557,8 @@ mod tests {
     #[test]
     fn steer_shrinks_with_speed_and_turns_front_wheels() {
         let cfg = config("race");
-        let (max, at_speed) = (cfg.steer_max, cfg.steer_max * cfg.steer_at_speed);
+        let max = cfg.steer_max.to_radians();
+        let at_speed = max * cfg.steer_at_speed;
         let near = |a: f32, b: f32| (a - b).abs() < 1e-6;
         assert!(near(steer_angle(&cfg, 1.0, 0.0), max));
         assert!(near(steer_angle(&cfg, -1.0, 0.0), -max));

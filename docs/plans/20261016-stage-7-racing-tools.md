@@ -306,10 +306,10 @@
 **Files:**
 - Modify: `games/racing/src/car_config.rs`, `games/racing/src/car.rs`
 
-- [ ] тесты: `parse → to_toml → parse` равны для каждой машины; `steer_max` хранится и пишется в градусах без хвостов
-- [ ] тесты: каждое поле `TUNING` на краях `range` проходит `validate`, за краем — ошибка с именем поля; `travel` и `com_offset` помечены `Restart`; `model` и `drive` в `TUNING` нет
-- [ ] `validate`, `to_toml`, `TUNING`; `Serialize` у `CarConfig`; `steer_angle` переводит градусы
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] тесты: `parse → to_toml → parse` равны для каждой машины; `steer_max` хранится и пишется в градусах без хвостов
+- [x] тесты: каждое поле `TUNING` на краях `range` проходит `validate`, за краем — ошибка с именем поля; `travel` и `com_offset` помечены `Restart`; `model` и `drive` в `TUNING` нет
+- [x] `validate`, `to_toml`, `TUNING`; `Serialize` у `CarConfig`; `steer_angle` переводит градусы
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 9: `Car::retune`
 
