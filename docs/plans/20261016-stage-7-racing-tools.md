@@ -316,10 +316,10 @@
 **Files:**
 - Modify: `games/racing/src/car.rs`
 
-- [ ] тесты: `retune` сохраняет `pos`, `rot`, `vel`, `ang_vel`, `prev`; новая масса меняет `inv_mass` и инерцию так же, как `Car::new`
-- [ ] тест: после `retune` с меньшим `max_speed` машина на прямой не разгоняется выше него
-- [ ] `Car::retune`; габариты модели — поле `Car`
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] тесты: `retune` сохраняет `pos`, `rot`, `vel`, `ang_vel`, `prev`; новая масса меняет `inv_mass` и инерцию так же, как `Car::new`
+- [x] тест: после `retune` с меньшим `max_speed` машина на прямой не разгоняется выше него
+- [x] `Car::retune`; габариты модели — поле `Car`
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 10: Режимы игры и гараж
 

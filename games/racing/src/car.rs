@@ -6,7 +6,7 @@ use engine::{
     box_inertia, solve_contacts,
 };
 
-use crate::car_config::{CarConfig, CarError, Drive, Wheel, Wheels, wheels};
+use crate::car_config::{Apply, CarConfig, CarError, Drive, TUNING, Wheel, Wheels, wheels};
 use crate::layout::{BARRIER, GRASS};
 
 /// Подшагов физики на тик 60 Гц.
@@ -72,6 +72,8 @@ pub(crate) struct Car {
     /// Угол вращения колёс по пройденному пути, рад, 0..2π.
     pub(crate) spin: [f32; 4],
     mounts: Wheels,
+    /// Габариты модели — для инерции.
+    size: Vec3,
     /// Центр масс в пространстве модели.
     com: Vec3,
     /// Центры сфер кузова от центра масс в осях тела.
@@ -129,11 +131,8 @@ impl Car {
         let mounts = wheels(model)?;
         let b = model.bounds().expect("у колёс есть габариты");
         let com = (b.min + b.max) / 2.0 + Vec3::from(config.com_offset);
-        let body = RigidBody::new(
-            Vec3::ZERO,
-            config.mass,
-            box_inertia(config.mass, b.max - b.min),
-        );
+        let size = b.max - b.min;
+        let body = RigidBody::new(Vec3::ZERO, config.mass, box_inertia(config.mass, size));
         let at = |x: f32, z: f32| Vec3::new(x, mounts[0].mount.y, z) - com;
         let (left, right) = (b.max.x - BODY_RADIUS, b.min.x + BODY_RADIUS);
         let (front, back) = (b.max.z - BODY_RADIUS, b.min.z + BODY_RADIUS);
@@ -153,6 +152,7 @@ impl Car {
             prev: (Vec3::ZERO, Quat::IDENTITY),
             spin: [0.0; 4],
             mounts,
+            size,
             com,
             spheres,
             contacts: Vec::new(),
@@ -171,6 +171,21 @@ impl Car {
         body.ang_vel = Vec3::ZERO;
         self.wheels = [WheelState::default(); 4];
         self.prev = (body.pos, body.rot);
+    }
+
+    /// Берёт `Live`-поля `config` на ходу; движение и `Restart`-поля не трогает.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "панель характеристик — задача 11")
+    )]
+    pub(crate) fn retune(&mut self, config: &CarConfig) {
+        let mut config = config.clone();
+        for t in TUNING.iter().filter(|t| t.apply == Apply::Live) {
+            *(t.field)(&mut self.config) = *(t.field)(&mut config);
+        }
+        let mass = self.config.mass;
+        self.body.inv_mass = mass.recip();
+        self.body.inv_inertia = box_inertia(mass, self.size).recip();
     }
 
     /// Центр масс и поворот между `prev` и текущим состоянием.
@@ -456,6 +471,52 @@ mod tests {
         let max = car.config.max_speed;
         assert!(car.forward_speed() > max - 0.5, "{}", car.forward_speed());
         assert!(top < max + 0.1, "{top}");
+    }
+
+    #[test]
+    fn retune_keeps_motion_and_applies_mass_like_new() {
+        let world = world(plane(ROAD));
+        let mut car = rolling("race", &world, 15.0);
+        car.body.ang_vel = vec3(0.1, 0.2, -0.3);
+        car.tick(&world, Controls::default());
+        let (body, prev) = (car.body, car.prev);
+        let mut tuned = config("race");
+        tuned.mass *= 2.0;
+        tuned.travel *= 2.0;
+        tuned.com_offset[1] += 0.1;
+        car.retune(&tuned);
+        assert_eq!(
+            (car.body.pos, car.body.rot, car.body.vel, car.body.ang_vel),
+            (body.pos, body.rot, body.vel, body.ang_vel)
+        );
+        assert_eq!(car.prev, prev);
+        let fresh = car_with(tuned, 0.0, 0.0).0;
+        assert_eq!(car.config.mass, fresh.config.mass);
+        assert_eq!(car.body.inv_mass, fresh.body.inv_mass);
+        assert_eq!(car.body.inv_inertia, fresh.body.inv_inertia);
+        assert!(car.body.inv_mass < body.inv_mass);
+        let restart = config("race");
+        assert_eq!(car.config.travel, restart.travel);
+        assert_eq!(car.config.com_offset, restart.com_offset);
+    }
+
+    #[test]
+    fn retune_lower_max_speed_caps_acceleration() {
+        let world = world(plane(ROAD));
+        let mut car = settled("race", &world);
+        let mut tuned = car.config.clone();
+        tuned.max_speed = 20.0;
+        car.retune(&tuned);
+        let gas = Controls {
+            throttle: 1.0,
+            ..Controls::default()
+        };
+        let mut top = 0.0f32;
+        for _ in 0..15 * 60 {
+            car.tick(&world, gas);
+            top = top.max(car.forward_speed());
+        }
+        assert!(top > 19.5 && top < 20.1, "{top}");
     }
 
     /// Машина на `world`, катящаяся носом со скоростью `speed`.
