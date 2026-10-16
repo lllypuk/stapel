@@ -1,0 +1,437 @@
+use std::collections::HashMap;
+
+use engine::{Assets, Handle, Mat4, Model, ModelDraw, StaticWorld, Triangle, Vec3, vec3};
+
+use crate::ASSETS;
+use crate::pieces::{BARRIER_WALL, CARS, DECOR, KIT_SCALE, PIECES};
+use crate::track::Track;
+
+/// Метки треугольников мира.
+pub(crate) const ROAD: u32 = 0;
+pub(crate) const GRASS: u32 = 1;
+pub(crate) const BARRIER: u32 = 2;
+
+/// Неизвестный материал — дорога; тест держит список материалов деталей полным.
+fn surface(material: &str) -> u32 {
+    if material == "grass" { GRASS } else { ROAD }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Road,
+    Barrier,
+    /// Только рисуется.
+    Prop,
+}
+
+/// Модель на трассе.
+#[derive(Debug)]
+pub(crate) struct Placed {
+    pub(crate) name: &'static str,
+    pub(crate) transform: Mat4,
+    pub(crate) kind: Kind,
+}
+
+/// Модели деталей, декора и машин по имени.
+pub(crate) struct Models(HashMap<&'static str, Handle<Model>>);
+
+impl Models {
+    pub(crate) fn load(assets: &mut Assets) -> Self {
+        let names = (PIECES.iter().map(|p| p.name))
+            .chain(DECOR.iter().map(|d| d.name))
+            .chain(CARS);
+        Self(
+            names
+                .map(|name| (name, assets.load_model(format!("{ASSETS}{name}.glb"))))
+                .collect(),
+        )
+    }
+
+    pub(crate) fn get(&self, name: &str) -> Handle<Model> {
+        self.0[name]
+    }
+}
+
+/// Барьер вдоль оси `[a, b]` в клетках детали, растянутый по длине оси.
+fn wall(frame: Mat4, [a, b]: [Vec3; 2]) -> Mat4 {
+    let (a, b) = (frame.transform_point3(a), frame.transform_point3(b));
+    let x = (b - a).normalize();
+    let z = x.cross(Vec3::Y).normalize();
+    let basis = Mat4::from_cols(
+        x.extend(0.0),
+        z.cross(x).extend(0.0),
+        z.extend(0.0),
+        ((a + b) / 2.0).extend(1.0),
+    );
+    // Модель барьера — одна единица набора вдоль X.
+    basis
+        * Mat4::from_scale(vec3(a.distance(b), KIT_SCALE, KIT_SCALE))
+        * Mat4::from_translation(BARRIER_WALL.offset)
+}
+
+/// Дороги с барьерами приподнятых деталей, затем декор.
+pub(crate) fn place(track: &Track) -> Vec<Placed> {
+    let mut out = Vec::new();
+    for r in &track.road {
+        out.push(Placed {
+            name: r.piece.name,
+            transform: r.transform(),
+            kind: Kind::Road,
+        });
+        let frame = r.frame();
+        out.extend(r.piece.walls.iter().map(|&axis| Placed {
+            name: BARRIER_WALL.name,
+            transform: wall(frame, axis),
+            kind: Kind::Barrier,
+        }));
+    }
+    out.extend(track.decor.iter().map(|d| Placed {
+        name: d.piece.name,
+        transform: d.transform(),
+        kind: if d.piece.solid {
+            Kind::Barrier
+        } else {
+            Kind::Prop
+        },
+    }));
+    out
+}
+
+/// Треугольники твёрдых моделей в позе покоя; преобразование узла — как у `ExpandedModels`.
+fn triangles(placed: &[Placed], models: &Models, assets: &Assets) -> Vec<Triangle> {
+    let mut out = Vec::new();
+    for p in placed.iter().filter(|p| p.kind != Kind::Prop) {
+        let model = assets.model(models.get(p.name));
+        for (node, global) in model.nodes.iter().zip(&model.rest.globals) {
+            let m = p.transform * *global;
+            for prim in &node.primitives {
+                let tag = match p.kind {
+                    Kind::Road => surface(&model.materials[prim.material as usize].name),
+                    Kind::Barrier | Kind::Prop => BARRIER,
+                };
+                let g = assets.mesh_geometry(prim.mesh);
+                out.extend(g.indices.as_chunks::<3>().0.iter().map(|t| Triangle {
+                    verts: t.map(|i| m.transform_point3(g.positions[i as usize])),
+                    tag,
+                }));
+            }
+        }
+    }
+    out
+}
+
+/// Трасса для рендера и столкновений.
+pub(crate) struct Layout {
+    pub(crate) draws: Vec<ModelDraw>,
+    #[cfg_attr(not(test), expect(dead_code, reason = "по миру ездит машина, Task 14"))]
+    pub(crate) world: StaticWorld,
+}
+
+impl Layout {
+    pub(crate) fn new(track: &Track, models: &Models, assets: &Assets) -> Self {
+        let placed = place(track);
+        Self {
+            draws: placed
+                .iter()
+                .map(|p| ModelDraw {
+                    model: models.get(p.name),
+                    transform: p.transform,
+                    pose: None,
+                })
+                .collect(),
+            world: StaticWorld::new(KIT_SCALE, triangles(&placed, models, assets)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use engine::{ExpandedModels, IVec2, Vec3, ivec2};
+
+    use super::*;
+    use crate::pieces::{LEVEL, Piece, Rot};
+    use crate::track::Road;
+
+    const EPS: f32 = 1e-3;
+
+    fn loaded() -> (Assets, Models) {
+        let mut assets = Assets::default();
+        let models = Models::load(&mut assets);
+        (assets, models)
+    }
+
+    fn rots() -> [Rot; 4] {
+        [0, 90, 180, 270].map(|d| Rot::from_degrees(d).expect("rot"))
+    }
+
+    fn track(road: Vec<Road>) -> Track {
+        Track {
+            car: "race".into(),
+            road,
+            decor: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn every_model_loads_non_empty() {
+        let (assets, models) = loaded();
+        assert_eq!(models.0.len(), PIECES.len() + DECOR.len() + CARS.len());
+        for (name, &h) in &models.0 {
+            let model = assets.model(h);
+            assert!(
+                model.nodes.iter().any(|n| !n.primitives.is_empty()),
+                "{name}"
+            );
+        }
+    }
+
+    fn inside(cell: IVec2, v: Vec3, margin: f32) -> bool {
+        let lo = cell.as_vec2() * KIT_SCALE - margin;
+        let hi = (cell + 1).as_vec2() * KIT_SCALE + margin;
+        (lo.x..=hi.x).contains(&v.x) && (lo.y..=hi.y).contains(&v.z)
+    }
+
+    #[test]
+    fn piece_stays_in_its_cells_and_level_lifts_two_meters() {
+        let (assets, models) = loaded();
+        for piece in &PIECES {
+            // Стойки арки `roadStart` выходят в соседние клетки, см. таблицу деталей.
+            let spill = if piece.name == "roadStart" {
+                0.13 * KIT_SCALE + EPS
+            } else {
+                EPS
+            };
+            let model = assets.model(models.get(piece.name));
+            for rot in rots() {
+                let road = Road {
+                    piece,
+                    cell: ivec2(3, -2),
+                    level: 0,
+                    rot,
+                };
+                let cells: Vec<_> = piece.cells(rot).map(|c| road.cell + c).collect();
+                for (node, global) in model.nodes.iter().zip(&model.rest.globals) {
+                    let m = road.transform() * *global;
+                    for prim in &node.primitives {
+                        let asphalt = model.materials[prim.material as usize].name == "road";
+                        let margin = if asphalt { EPS } else { spill };
+                        let g = assets.mesh_geometry(prim.mesh);
+                        for &i in &g.indices {
+                            let v = m.transform_point3(g.positions[i as usize]);
+                            assert!(
+                                cells.iter().any(|&c| inside(c, v, margin)),
+                                "{} {rot:?}: {v} вне клеток, асфальт {asphalt}",
+                                piece.name
+                            );
+                        }
+                    }
+                }
+                let up = Road { level: 1, ..road };
+                let lift = Mat4::from_translation(vec3(0.0, 2.0, 0.0));
+                assert!(
+                    up.transform().abs_diff_eq(lift * road.transform(), 1e-4),
+                    "{}",
+                    piece.name
+                );
+            }
+        }
+    }
+
+    const MIXED: &str = r#"
+car = "race"
+
+[[road]]
+piece = "roadStraightBridge"
+cell = [0, 0]
+rot = 90
+
+[[road]]
+piece = "roadRampLong"
+cell = [2, 0]
+rot = 180
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [0, 3]
+rot = 270
+
+[[decor]]
+piece = "barrierRed"
+pos = [10.0, 0.0, 20.0]
+yaw = 30.0
+
+[[decor]]
+piece = "treeLarge"
+pos = [20.0, 0.0, 20.0]
+"#;
+
+    #[test]
+    fn render_and_world_share_one_transform() {
+        let (assets, models) = loaded();
+        let track = Track::parse(MIXED).expect("трасса");
+        let placed = place(&track);
+        let layout = Layout::new(&track, &models, &assets);
+        assert_eq!(layout.draws.len(), placed.len());
+        let solid: Vec<ModelDraw> = (layout.draws.iter().zip(&placed))
+            .filter(|(_, p)| p.kind != Kind::Prop)
+            .map(|(d, p)| {
+                assert_eq!((d.model, d.transform), (models.get(p.name), p.transform));
+                d.clone()
+            })
+            .collect();
+        let rendered: Vec<[Vec3; 3]> =
+            ExpandedModels::new(&solid, &assets)
+                .meshes
+                .iter()
+                .flat_map(|d| {
+                    let g = assets.mesh_geometry(d.mesh);
+                    g.indices.as_chunks::<3>().0.iter().map(move |t| {
+                        t.map(|i| d.transform.transform_point3(g.positions[i as usize]))
+                    })
+                })
+                .collect();
+        let world: Vec<_> = triangles(&placed, &models, &assets)
+            .iter()
+            .map(|t| t.verts)
+            .collect();
+        assert_ne!(world.len(), 0);
+        assert_eq!(rendered, world);
+    }
+
+    fn down(world: &StaticWorld, x: f32, z: f32) -> Option<u32> {
+        world
+            .raycast(vec3(x, 20.0, z), Vec3::NEG_Y, 40.0, |_| true)
+            .map(|h| h.tag)
+    }
+
+    #[test]
+    fn tags_follow_material_and_props_stay_out_of_world() {
+        let (assets, models) = loaded();
+        let track = Track::parse(
+            "car = \"race\"\n\
+             [[road]]\npiece = \"roadStraight\"\ncell = [0, 0]\n\
+             [[decor]]\npiece = \"barrierWhite\"\npos = [10.0, 0.0, 2.0]\n\
+             [[decor]]\npiece = \"treeLarge\"\npos = [20.0, 0.0, 2.0]\n\
+             [[decor]]\npiece = \"treeSmall\"\npos = [25.0, 0.0, 2.0]\n\
+             [[decor]]\npiece = \"grandStand\"\npos = [30.0, 0.0, 2.0]\n\
+             [[decor]]\npiece = \"rail\"\npos = [40.0, 0.0, 2.0]\n\
+             [[decor]]\npiece = \"cone\"\npos = [45.0, 0.0, 2.0]\n",
+        )
+        .expect("трасса");
+        let world = Layout::new(&track, &models, &assets).world;
+        // Трава — x 0..0,082 клетки, бортик — до 0,155, дальше асфальт.
+        assert_eq!(down(&world, 2.0, 2.0), Some(ROAD));
+        assert_eq!(down(&world, 0.48, 2.0), Some(ROAD));
+        assert_eq!(down(&world, 0.1, 2.0), Some(GRASS));
+        assert_eq!(down(&world, 10.0, 2.0), Some(BARRIER));
+        for x in [20.0, 25.0, 30.0, 40.0, 45.0] {
+            assert_eq!(down(&world, x, 2.0), None, "x {x}");
+        }
+    }
+
+    #[test]
+    fn piece_materials_are_known() {
+        let (assets, models) = loaded();
+        for piece in &PIECES {
+            for m in &assets.model(models.get(piece.name)).materials {
+                assert!(
+                    ["road", "grey", "_defaultMat", "wall", "grass"].contains(&m.name.as_str()),
+                    "{}: {}",
+                    piece.name,
+                    m.name
+                );
+            }
+        }
+        assert_eq!(surface("grass"), GRASS);
+        for name in ["road", "grey", "_defaultMat", "wall"] {
+            assert_eq!(surface(name), ROAD, "{name}");
+        }
+    }
+
+    fn check_walls(piece: &'static Piece, rot: Rot, assets: &Assets, models: &Models) {
+        let road = Road {
+            piece,
+            cell: ivec2(1, 1),
+            level: 0,
+            rot,
+        };
+        let frame = road.frame();
+        let world = Layout::new(&track(vec![road]), models, assets).world;
+        let side = frame.transform_vector3(Vec3::X).normalize();
+        let length = piece.size.y as f32;
+        for z in [0.05, 0.5, length - 0.5, length - 0.05] {
+            let at = |x| frame.transform_point3(vec3(x, 2.0 * LEVEL + 1.0, z));
+            let deck = world
+                .raycast(at(0.5), Vec3::NEG_Y, 20.0, |h| h.tag != BARRIER)
+                .expect("настил");
+            assert_eq!(deck.tag, ROAD);
+            let eye = deck.point + Vec3::Y * 0.2;
+            for dir in [side, -side] {
+                let hit = world.raycast(eye, dir, KIT_SCALE / 2.0, |_| true);
+                let what = format!("{} {rot:?} z {z}", piece.name);
+                assert_eq!(hit.map(|h| h.tag), Some(BARRIER), "{what}");
+                // Грань у основания — на краю асфальта 0,155 клетки, выше скошена наружу на ~6 см.
+                let t = hit.map_or(0.0, |h| h.t);
+                assert!((t - (0.5 - 0.155) * KIT_SCALE).abs() < 0.1, "{what}: {t}");
+            }
+            for x in [0.16, 0.84] {
+                let edge = world.raycast(at(x), Vec3::NEG_Y, 20.0, |_| true);
+                assert_eq!(
+                    edge.map(|h| h.tag),
+                    Some(ROAD),
+                    "{} барьер на асфальте",
+                    piece.name
+                );
+            }
+            // Внешняя полоса на 4 см ниже асфальта: луч снаружи над ней упирается в барьер, щели под ним нет.
+            for (x, dir) in [(-0.5, side), (1.5, -side)] {
+                let mut origin = frame.transform_point3(vec3(x, 0.0, z));
+                origin.y = deck.point.y - 0.02;
+                let hit = world.raycast(origin, dir, KIT_SCALE, |_| true);
+                assert_eq!(
+                    hit.map(|h| h.tag),
+                    Some(BARRIER),
+                    "{} z {z}: щель",
+                    piece.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn raised_pieces_get_side_barriers() {
+        let (assets, models) = loaded();
+        for piece in PIECES.iter().filter(|p| !p.walls.is_empty()) {
+            for rot in rots() {
+                check_walls(piece, rot, &assets, &models);
+            }
+        }
+        let flat = track(vec![Road {
+            piece: &PIECES[0],
+            cell: IVec2::ZERO,
+            level: 0,
+            rot: Rot::default(),
+        }]);
+        assert_eq!(place(&flat).len(), 1);
+    }
+
+    #[test]
+    fn piece_triangles_wind_with_normals() {
+        let mut assets = Assets::default();
+        Models::load(&mut assets);
+        let meshes = assets.take_pending_meshes();
+        assert_ne!(meshes.len(), 0);
+        for mesh in meshes {
+            for t in mesh.indices.as_chunks::<3>().0 {
+                let v = t.map(|i| &mesh.vertices[i as usize]);
+                let [a, b, c] = v.map(|v| Vec3::from(v.pos));
+                let cross = (b - a).cross(c - a);
+                if cross.length() < 1e-8 {
+                    continue;
+                }
+                let normal: Vec3 = v.iter().map(|v| Vec3::from(v.normal)).sum();
+                assert!(cross.dot(normal) > 0.0, "{:?}: {a} {b} {c}", mesh.handle);
+            }
+        }
+    }
+}

@@ -6,8 +6,17 @@ use engine::{IVec2, Vec3, ivec2, vec3};
 pub(crate) const KIT_SCALE: f32 = 4.0;
 /// Метров в единице Car Kit.
 pub(crate) const CAR_KIT_SCALE: f32 = 1.0;
+/// Высота уровня в единицах набора: асфальт моста и выхода `roadRampLong`.
+pub(crate) const LEVEL: f32 = 0.5;
+
+/// Модели Car Kit, на которых ездят.
+pub(crate) const CARS: [&str; 4] = ["race", "race-future", "sedan-sports", "hatchback-sports"];
 
 /// Сторона клетки; +X и +Z — рост индексов клетки.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "стыки обходит цепочка трассы, Task 12")
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Side {
     PosX,
@@ -16,6 +25,10 @@ pub(crate) enum Side {
     NegZ,
 }
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "стыки обходит цепочка трассы, Task 12")
+)]
 impl Side {
     pub(crate) fn step(self) -> IVec2 {
         match self {
@@ -52,6 +65,10 @@ impl Rot {
         }
     }
 
+    pub(crate) fn radians(self) -> f32 {
+        f32::from(self.0) * std::f32::consts::FRAC_PI_2
+    }
+
     /// Поворот смещения клетки вокруг якорной клетки детали.
     pub(crate) fn cell(self, cell: IVec2) -> IVec2 {
         (0..self.0).fold(cell, |c, _| ivec2(c.y, -c.x))
@@ -78,6 +95,8 @@ pub(crate) struct Piece {
     pub(crate) offset: Vec3,
     /// У рамп и старта `ends[1]` — выход.
     pub(crate) ends: [End; 2],
+    /// Оси `barrierWall` вдоль боков приподнятой дороги, в клетках детали.
+    pub(crate) walls: &'static [[Vec3; 2]],
 }
 
 impl Piece {
@@ -86,6 +105,10 @@ impl Piece {
         (0..size.x).flat_map(move |x| (0..size.y).map(move |z| rot.cell(ivec2(x, z))))
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "стыки обходит цепочка трассы, Task 12")
+    )]
     pub(crate) fn ends(&self, rot: Rot) -> [End; 2] {
         self.ends.map(|end| End {
             cell: rot.cell(end.cell),
@@ -113,13 +136,49 @@ const fn end(x: i32, z: i32, side: Side, level: u32) -> End {
     }
 }
 
-const fn straight(name: &'static str, levels: RangeInclusive<u32>, level: u32) -> Piece {
+/// Внутренняя грань барьера толщиной 0,123 — на краю асфальта 0,155.
+const WALL_X: f32 = 0.155 - 0.123 / 2.0;
+/// Низ барьера — на внешней полосе, она на 0,01 ниже асфальта.
+const WALL_Y: f32 = LEVEL - 0.01;
+
+const BRIDGE_WALLS: [[Vec3; 2]; 2] = [
+    [vec3(WALL_X, WALL_Y, 0.0), vec3(WALL_X, WALL_Y, 1.0)],
+    [
+        vec3(1.0 - WALL_X, WALL_Y, 0.0),
+        vec3(1.0 - WALL_X, WALL_Y, 1.0),
+    ],
+];
+
+/// Барьер подъёма `roadRampLong` от `z` до `z + 1`; подъём прямой, следующий уровень — у `z = 0`.
+const fn ramp_wall(x: f32, z: f32) -> [Vec3; 2] {
+    let drop = LEVEL / 2.0;
+    [
+        vec3(x, WALL_Y - drop * z, z),
+        vec3(x, WALL_Y - drop * (z + 1.0), z + 1.0),
+    ]
+}
+
+/// По отрезку на клетку: растянутый барьер растянул бы и полосы, и скосы на концах.
+const RAMP_WALLS: [[Vec3; 2]; 4] = [
+    ramp_wall(WALL_X, 0.0),
+    ramp_wall(WALL_X, 1.0),
+    ramp_wall(1.0 - WALL_X, 0.0),
+    ramp_wall(1.0 - WALL_X, 1.0),
+];
+
+const fn straight(
+    name: &'static str,
+    levels: RangeInclusive<u32>,
+    level: u32,
+    walls: &'static [[Vec3; 2]],
+) -> Piece {
     Piece {
         name,
         size: ivec2(1, 1),
         levels,
         offset: vec3(0.35, 0.0, 1.65),
         ends: [end(0, 0, Side::PosZ, level), end(0, 0, Side::NegZ, level)],
+        walls,
     }
 }
 
@@ -130,18 +189,20 @@ const fn corner(name: &'static str, n: i32) -> Piece {
         levels: 0..=0,
         offset: vec3(0.35, 0.0, 0.65 + n as f32),
         ends: [end(0, n - 1, Side::PosZ, 0), end(n - 1, 0, Side::PosX, 0)],
+        walls: &[],
     }
 }
 
 /// Асфальт стыков у всех деталей — x 0,155..0,845 клетки; мост и `roadRampLong` поднимают его на 0,5.
 pub(crate) const PIECES: [Piece; 11] = [
-    straight("roadStraight", 0..=0, 0),
+    straight("roadStraight", 0..=0, 0, &[]),
     Piece {
         name: "roadStraightLong",
         size: ivec2(1, 2),
         levels: 0..=0,
         offset: vec3(0.35, 0.0, 2.65),
         ends: [end(0, 1, Side::PosZ, 0), end(0, 0, Side::NegZ, 0)],
+        walls: &[],
     },
     corner("roadCornerSmall", 1),
     corner("roadCornerLarge", 2),
@@ -153,6 +214,7 @@ pub(crate) const PIECES: [Piece; 11] = [
         levels: 0..=0,
         offset: vec3(0.22, 0.0, 2.65),
         ends: [end(0, 1, Side::PosZ, 0), end(0, 0, Side::NegZ, 0)],
+        walls: &[],
     },
     Piece {
         name: "roadRampLong",
@@ -160,15 +222,16 @@ pub(crate) const PIECES: [Piece; 11] = [
         levels: 0..=1,
         offset: vec3(0.35, 0.0, 2.65),
         ends: [end(0, 1, Side::PosZ, 0), end(0, 0, Side::NegZ, 1)],
+        walls: &RAMP_WALLS,
     },
     // Опора у стыка +Z до земли.
-    straight("roadStraightBridgeStart", 0..=1, 1),
+    straight("roadStraightBridgeStart", 0..=1, 1, &BRIDGE_WALLS),
     // Только настил, низ на 0,38: под ним проходит дорога уровня 0.
-    straight("roadStraightBridgeMid", 1..=1, 1),
+    straight("roadStraightBridgeMid", 1..=1, 1, &BRIDGE_WALLS),
     // Опоры и земля под настилом.
-    straight("roadStraightBridge", 0..=1, 1),
+    straight("roadStraightBridge", 0..=1, 1, &BRIDGE_WALLS),
     // Выход на 0,25 — трамплин: машина приземляется на уровень 0.
-    straight("roadRamp", 0..=0, 0),
+    straight("roadRamp", 0..=0, 0, &[]),
 ];
 
 const fn decor(name: &'static str, offset: Vec3, solid: bool) -> DecorPiece {
@@ -195,6 +258,9 @@ pub(crate) const DECOR: [DecorPiece; 8] = [
         solid: false,
     },
 ];
+
+/// Барьер вдоль боков приподнятой дороги.
+pub(crate) const BARRIER_WALL: &DecorPiece = &DECOR[0];
 
 pub(crate) fn piece(name: &str) -> Option<&'static Piece> {
     PIECES.iter().find(|p| p.name == name)
@@ -390,5 +456,13 @@ mod tests {
         assert!(piece("roadSplit").is_none());
         assert!(piece("cone").is_none());
         assert!(decor_piece("roadStraight").is_none());
+        assert_eq!(BARRIER_WALL.name, "barrierWall");
+    }
+
+    #[test]
+    fn only_raised_pieces_have_walls() {
+        for p in &PIECES {
+            assert_eq!(p.walls.is_empty(), *p.levels.end() == 0, "{}", p.name);
+        }
     }
 }

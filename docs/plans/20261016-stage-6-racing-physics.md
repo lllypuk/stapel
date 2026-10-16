@@ -340,18 +340,18 @@
 ### Task 11: Сцена трассы и мир столкновений
 
 **Files:**
-- Create: `games/racing/assets/` (GLB деталей и машин, `Textures/colormap.png`, `CREDITS.md`)
-- Modify: `games/racing/src/main.rs`, `games/racing/src/track.rs`
+- Create: `games/racing/assets/` (GLB деталей и машин, `Textures/colormap.png`, `CREDITS.md`, `tracks/oval.toml`), `games/racing/src/layout.rs` (размещение, мир, метки)
+- Modify: `games/racing/src/main.rs`, `games/racing/src/track.rs`, `games/racing/src/pieces.rs` (оси автобарьеров `walls`)
 
-- [ ] тесты:
+- [x] тесты:
   - каждая модель таблицы деталей, декора и машин загружается непустой;
   - асфальт каждой детали — в своих клетках при четырёх `rot`; уровень поднимает на 2 м;
   - рендер-инстансы и треугольники мира из одного преобразования;
   - `tag` треугольника по материалу, `barrier*` — барьер, деревья и трибуны в мир не попадают;
   - у деталей уровня ≥1 по бокам барьеры;
   - обмотка треугольников деталей этапа согласована с `NORMAL`.
-- [ ] размещение, `StaticWorld` трассы, автобарьеры уровня ≥1; сцена: солнце, ambient, туман, камера сверху
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] размещение, `StaticWorld` трассы, автобарьеры уровня ≥1; сцена: солнце, ambient, туман, камера сверху
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 12: Цепочка трассы и чекпоинты
 

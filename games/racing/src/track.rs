@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use engine::{IVec2, Vec3};
+use engine::{IVec2, Mat4, Vec3, vec3};
 use serde::Deserialize;
 use toml::Spanned;
 
-use crate::pieces::{DecorPiece, Piece, Rot, decor_piece, piece};
+use crate::pieces::{DecorPiece, KIT_SCALE, LEVEL, Piece, Rot, decor_piece, piece};
 
 /// Ошибка разбора трассы; `line` — с единицы, строка поля `piece`.
 #[derive(Debug, PartialEq)]
@@ -49,6 +49,26 @@ pub(crate) struct Road {
     pub(crate) rot: Rot,
 }
 
+impl Road {
+    /// Клетки детали → мир: клетки трассы по 4 м, поворот вокруг центра якорной клетки.
+    pub(crate) fn frame(&self) -> Mat4 {
+        let anchor = vec3(
+            self.cell.x as f32 + 0.5,
+            self.level as f32 * LEVEL,
+            self.cell.y as f32 + 0.5,
+        );
+        Mat4::from_translation(anchor * KIT_SCALE)
+            * Mat4::from_rotation_y(self.rot.radians())
+            * Mat4::from_scale(Vec3::splat(KIT_SCALE))
+            * Mat4::from_translation(vec3(-0.5, 0.0, -0.5))
+    }
+
+    /// Модель → мир.
+    pub(crate) fn transform(&self) -> Mat4 {
+        self.frame() * Mat4::from_translation(self.piece.offset)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Decor {
     pub(crate) piece: &'static DecorPiece,
@@ -58,8 +78,19 @@ pub(crate) struct Decor {
     pub(crate) yaw: f32,
 }
 
+impl Decor {
+    /// Модель → мир.
+    pub(crate) fn transform(&self) -> Mat4 {
+        Mat4::from_translation(self.pos)
+            * Mat4::from_rotation_y(self.yaw)
+            * Mat4::from_scale(Vec3::splat(self.piece.scale))
+            * Mat4::from_translation(self.piece.offset)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Track {
+    #[cfg_attr(not(test), expect(dead_code, reason = "машину ставит Task 15"))]
     pub(crate) car: String,
     pub(crate) road: Vec<Road>,
     pub(crate) decor: Vec<Decor>,
