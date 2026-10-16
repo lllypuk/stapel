@@ -66,6 +66,10 @@ impl Rot {
         }
     }
 
+    pub(crate) fn degrees(self) -> i64 {
+        i64::from(self.0) * 90
+    }
+
     pub(crate) fn radians(self) -> f32 {
         f32::from(self.0) * std::f32::consts::FRAC_PI_2
     }

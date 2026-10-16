@@ -142,10 +142,10 @@
     - `rate` и громкость линейно ведутся от прежних к новым в пределах буфера;
     - `Start` нарастает за `FADE`, `Stop` затухает за `FADE` и освобождает слот.
 - **Черновик трассы** (`track.rs`):
-  - `TrackDraft { car, roads: Vec<RoadEntry { piece: &'static Piece, cell, level, rot_deg }>, decor: Vec<DecorEntry { piece, pos, yaw_deg }> }`;
+  - `TrackDraft { car, roads: Vec<RoadEntry { piece: &'static Piece, cell, level, rot: Rot }>, decor: Vec<DecorEntry { piece, pos, yaw_deg }> }`; четверть оборота `Rot` пишется в градусы без потерь;
   - `parse`:
     - разбирает файл и переводит имена в `&'static Piece`, так что `UnknownPiece` остаётся со строкой;
-    - собирает `TrackDraft` и рядом `lines: Vec<usize>` для дорог и декора;
+    - собирает `TrackDraft` и рядом `Lines` — строки дорог и декора (`parse_lines`; `Lines::locate` переводит ошибку `chain` в строку);
     - зовёт `validate`;
   - ошибки `validate` и `chain` несут индекс записи (`Entry::Road(i)` / `Entry::Decor(i)`). Номер строки из индекса получает только `parse`, а панель редактора пишет «деталь #i» и подсвечивает её;
   - `occupancy() -> HashMap<(IVec2, u32), usize>` — владелец каждой клетки;
@@ -286,20 +286,20 @@
 **Files:**
 - Modify: `Cargo.toml`, `games/racing/src/track.rs`, `games/racing/src/layout.rs`, `games/racing/src/main.rs`
 
-- [ ] тесты:
+- [x] тесты:
   - `parse → to_toml → parse` даёт равный черновик для `track01`–`03` и `testdata`;
   - `to_toml` пишет углы без хвостов (`yaw = 30.0`, а не `30.000002`)
-- [ ] тесты: ошибки `validate` и `chain` несут индекс записи, `parse` переводит его в прежнюю строку; тесты строк этапа 6 зелёные
-- [ ] тесты:
+- [x] тесты: ошибки `validate` и `chain` несут индекс записи, `parse` переводит его в прежнюю строку; тесты строк этапа 6 зелёные
+- [x] тесты:
   - `can_place` отказывает при занятой клетке любым уровнем следа, за `MAX_CELL` и за `MAX_LEVEL`;
   - `occupancy` даёт владельца каждой клетки многоклеточной детали
-- [ ] тест: незамкнутый черновик проходит `validate`, но не `chain`
-- [ ] реализация:
+- [x] тест: незамкнутый черновик проходит `validate`, но не `chain`
+- [x] реализация:
   - `TrackDraft`, `RoadEntry`, `DecorEntry`, `Entry`, `validate`, `occupancy`, `can_place`, `to_toml`;
   - `parse` через черновик со списком строк;
   - углы в градусах;
   - фича `display` у `toml`
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 8: Характеристики — таблица, проверка, сохранение
 

@@ -24,7 +24,7 @@ use crate::car_config::CarConfig;
 use crate::layout::{Layout, Models};
 use crate::pieces::KIT_SCALE;
 use crate::race::{Race, lap_time};
-use crate::track::{Checkpoint, Track, cell_at};
+use crate::track::{Checkpoint, TrackDraft, cell_at};
 
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
 const TRACKS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/tracks/");
@@ -88,9 +88,9 @@ fn load_cars(dir: &str) -> Vec<CarConfig> {
 }
 
 /// Трасса с цепочкой и машиной из `cars`.
-fn load_track(text: &str, cars: &[CarConfig]) -> Result<(Track, Vec<Checkpoint>), String> {
-    let track = Track::parse(text).map_err(|e| e.to_string())?;
-    let checkpoints = track.chain().map_err(|e| e.to_string())?;
+fn load_track(text: &str, cars: &[CarConfig]) -> Result<(TrackDraft, Vec<Checkpoint>), String> {
+    let (track, lines) = TrackDraft::parse_lines(text).map_err(|e| e.to_string())?;
+    let checkpoints = (track.chain()).map_err(|e| lines.locate(e).to_string())?;
     if !cars.iter().any(|c| c.model == track.car) {
         return Err(format!("машины {} нет в cars/", track.car));
     }
@@ -839,7 +839,7 @@ mod tests {
         fs::write(&path, text).expect("запись");
         tick(&mut g, &mut ctx);
 
-        let track = Track::parse(text).expect("восьмёрка");
+        let track = TrackDraft::parse(text).expect("восьмёрка");
         let start = Spawn::start(&track.chain().expect("цепочка"));
         assert_eq!(g.start, start);
         assert!(placed_at(&g, start));

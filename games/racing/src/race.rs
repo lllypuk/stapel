@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use engine::{IVec2, Vec3};
 
 use crate::TICK_HZ;
-use crate::track::{Checkpoint, Track, cell_at};
+use crate::track::{Checkpoint, TrackDraft, cell_at};
 
 /// Тиков против цепочки до «не туда»: дольше 1 с.
 const WRONG_WAY_TICKS: u32 = TICK_HZ;
@@ -30,13 +30,13 @@ pub(crate) struct Race {
 
 impl Race {
     /// `checkpoints` — `track.chain()`: выход детали `i` — вход детали `i + 1`.
-    pub(crate) fn new(track: &Track, checkpoints: Vec<Checkpoint>) -> Self {
+    pub(crate) fn new(track: &TrackDraft, checkpoints: Vec<Checkpoint>) -> Self {
         let n = checkpoints.len();
         let mut dirs = HashMap::new();
         for (i, c) in checkpoints.iter().enumerate() {
             let entry = checkpoints[(i + n - 1) % n].origin;
             let dir = (c.origin - entry).with_y(0.0).normalize_or_zero();
-            dirs.extend(track.road[c.road].cells().map(|cell| (cell, dir)));
+            dirs.extend(track.roads[c.road].cells().map(|cell| (cell, dir)));
         }
         Self {
             checkpoints,
@@ -102,7 +102,7 @@ mod tests {
     use crate::pieces::KIT_SCALE;
 
     fn oval() -> Race {
-        let track = Track::parse(include_str!("testdata/oval.toml")).expect("овал");
+        let track = TrackDraft::parse(include_str!("testdata/oval.toml")).expect("овал");
         let checkpoints = track.chain().expect("цепочка");
         Race::new(&track, checkpoints)
     }

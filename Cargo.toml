@@ -26,7 +26,7 @@ egui-winit = { version = "0.36.2", default-features = false, features = ["waylan
 egui-wgpu = { version = "0.36.2", default-features = false }
 egui_kittest = { version = "0.36.2", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
-toml = { version = "1.1.8", default-features = false, features = ["std", "parse", "serde"] }
+toml = { version = "1.1.8", default-features = false, features = ["std", "parse", "display", "serde"] }
 gltf = { version = "1.4.1", default-features = false, features = ["utils", "names"] }
 
 # Полный декод музыки в debug без оптимизаций занимает секунды.

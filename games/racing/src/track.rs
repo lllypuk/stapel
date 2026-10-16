@@ -1,11 +1,80 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use engine::{IVec2, Mat4, Vec3, ivec2, vec3};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use toml::Spanned;
 
 use crate::pieces::{DecorPiece, End, KIT_SCALE, LEVEL, Piece, Rot, decor_piece, piece};
+
+/// Запись черновика: индекс в `roads` или `decor`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Entry {
+    Road(usize),
+    Decor(usize),
+}
+
+/// Ошибка черновика; `road` — индекс в `roads`.
+#[derive(Debug, PartialEq)]
+pub(crate) enum DraftError {
+    Overlap {
+        road: usize,
+        cell: IVec2,
+        level: u32,
+    },
+    Start {
+        count: usize,
+    },
+    Gap {
+        road: usize,
+    },
+    Branch {
+        road: usize,
+    },
+    Level {
+        road: usize,
+        level: u32,
+        found: u32,
+    },
+    Bounds {
+        entry: Entry,
+    },
+}
+
+impl DraftError {
+    /// У `Start` записи нет.
+    pub(crate) fn entry(&self) -> Option<Entry> {
+        match *self {
+            Self::Overlap { road, .. }
+            | Self::Gap { road }
+            | Self::Branch { road }
+            | Self::Level { road, .. } => Some(Entry::Road(road)),
+            Self::Bounds { entry } => Some(entry),
+            Self::Start { .. } => None,
+        }
+    }
+}
+
+impl fmt::Display for DraftError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Overlap { cell, level, .. } => {
+                write!(f, "клетка {cell} уровня {level} уже занята")
+            }
+            Self::Start { count } => write!(f, "нужен один roadStart, а их {count}"),
+            Self::Gap { .. } => f.write_str("за выходом детали нет дороги"),
+            Self::Branch { .. } => f.write_str("деталь вне цепочки от старта"),
+            Self::Level { level, found, .. } => write!(
+                f,
+                "выход на уровне {level}, а дорога за ним — на уровне {found}"
+            ),
+            Self::Bounds { .. } => write!(
+                f,
+                "клетка вне ±{MAX_CELL}, уровень больше {MAX_LEVEL} или позиция не число либо вне трассы"
+            ),
+        }
+    }
+}
 
 /// Ошибка разбора трассы; `line` — с единицы, строка поля `piece`.
 #[derive(Debug, PartialEq)]
@@ -19,27 +88,9 @@ pub(crate) enum TrackError {
         line: usize,
         rot: i64,
     },
-    Overlap {
-        line: usize,
-        cell: IVec2,
-        level: u32,
-    },
-    Start {
-        count: usize,
-    },
-    Gap {
-        line: usize,
-    },
-    Branch {
-        line: usize,
-    },
-    Level {
-        line: usize,
-        level: u32,
-        found: u32,
-    },
-    Bounds {
-        line: usize,
+    Draft {
+        line: Option<usize>,
+        error: DraftError,
     },
 }
 
@@ -55,34 +106,24 @@ impl fmt::Display for TrackError {
                 write!(f, "строка {line}: неизвестная деталь {name:?}")
             }
             Self::Rot { line, rot } => write!(f, "строка {line}: rot {rot} не кратен 90"),
-            Self::Overlap { line, cell, level } => {
-                write!(f, "строка {line}: клетка {cell} уровня {level} уже занята")
-            }
-            Self::Start { count } => write!(f, "нужен один roadStart, а их {count}"),
-            Self::Gap { line } => write!(f, "строка {line}: за выходом детали нет дороги"),
-            Self::Branch { line } => write!(f, "строка {line}: деталь вне цепочки от старта"),
-            Self::Level { line, level, found } => write!(
-                f,
-                "строка {line}: выход на уровне {level}, а дорога за ним — на уровне {found}"
-            ),
-            Self::Bounds { line } => write!(
-                f,
-                "строка {line}: клетка вне ±{MAX_CELL}, уровень больше {MAX_LEVEL} или позиция не число либо вне трассы"
-            ),
+            Self::Draft {
+                line: Some(line),
+                error,
+            } => write!(f, "строка {line}: {error}"),
+            Self::Draft { line: None, error } => error.fmt(f),
         }
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct Road {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RoadEntry {
     pub(crate) piece: &'static Piece,
     pub(crate) cell: IVec2,
     pub(crate) level: u32,
     pub(crate) rot: Rot,
-    pub(crate) line: usize,
 }
 
-impl Road {
+impl RoadEntry {
     /// Стыки в клетках и уровнях трассы.
     fn ends(&self) -> [End; 2] {
         self.piece.ends(self.rot).map(|e| End {
@@ -116,24 +157,47 @@ impl Road {
     pub(crate) fn transform(&self) -> Mat4 {
         self.frame() * Mat4::from_translation(self.piece.offset)
     }
+
+    /// Запись `road` в пределах и не на клетках `taken`.
+    fn check(&self, road: usize, taken: &HashMap<(IVec2, u32), usize>) -> Result<(), DraftError> {
+        if self
+            .cell
+            .to_array()
+            .iter()
+            .any(|c| c.unsigned_abs() > MAX_CELL.unsigned_abs())
+            || self.level > MAX_LEVEL
+        {
+            return Err(DraftError::Bounds {
+                entry: Entry::Road(road),
+            });
+        }
+        match self.cells().find(|c| taken.contains_key(c)) {
+            Some((cell, level)) => Err(DraftError::Overlap { road, cell, level }),
+            None => Ok(()),
+        }
+    }
 }
 
-#[derive(Debug)]
-pub(crate) struct Decor {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DecorEntry {
     pub(crate) piece: &'static DecorPiece,
     /// В метрах.
     pub(crate) pos: Vec3,
-    /// В радианах; в файле — градусы.
-    pub(crate) yaw: f32,
+    pub(crate) yaw_deg: f32,
 }
 
-impl Decor {
+impl DecorEntry {
     /// Модель → мир.
     pub(crate) fn transform(&self) -> Mat4 {
         Mat4::from_translation(self.pos)
-            * Mat4::from_rotation_y(self.yaw)
+            * Mat4::from_rotation_y(self.yaw_deg.to_radians())
             * Mat4::from_scale(Vec3::splat(self.piece.scale))
             * Mat4::from_translation(self.piece.offset)
+    }
+
+    fn in_bounds(&self) -> bool {
+        let limit = (MAX_CELL + 1) as f32 * KIT_SCALE;
+        self.pos.is_finite() && self.pos.abs().max_element() <= limit && self.yaw_deg.is_finite()
     }
 }
 
@@ -187,27 +251,29 @@ pub(crate) fn cell_at(p: Vec3) -> Option<(IVec2, u32)> {
     Some((ivec2(c.x, c.z), u32::try_from(c.y).ok()?))
 }
 
-#[derive(Debug)]
-pub(crate) struct Track {
+/// Трасса как в файле: цепочка не обязана замыкаться, порядок записей — порядок файла.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TrackDraft {
     pub(crate) car: String,
-    pub(crate) road: Vec<Road>,
-    pub(crate) decor: Vec<Decor>,
+    pub(crate) roads: Vec<RoadEntry>,
+    pub(crate) decor: Vec<DecorEntry>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TrackFile {
+/// `N` — имя детали: `Spanned` при чтении ради строки ошибки, `&str` при записи.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, bound(deserialize = "N: Deserialize<'de>"))]
+struct TrackFile<N> {
     car: String,
     #[serde(default)]
-    road: Vec<RoadFile>,
+    road: Vec<RoadFile<N>>,
     #[serde(default)]
-    decor: Vec<DecorFile>,
+    decor: Vec<DecorFile<N>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct RoadFile {
-    piece: Spanned<String>,
+struct RoadFile<N> {
+    piece: N,
     cell: [i32; 2],
     #[serde(default)]
     level: u32,
@@ -215,102 +281,154 @@ struct RoadFile {
     rot: i64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct DecorFile {
-    piece: Spanned<String>,
+struct DecorFile<N> {
+    piece: N,
     pos: [f32; 3],
     #[serde(default)]
     yaw: f32,
 }
 
-impl Track {
+/// Строки поля `piece` записей файла.
+#[derive(Debug)]
+pub(crate) struct Lines {
+    roads: Vec<usize>,
+    decor: Vec<usize>,
+}
+
+impl Lines {
+    pub(crate) fn locate(&self, error: DraftError) -> TrackError {
+        let line = error.entry().map(|e| match e {
+            Entry::Road(i) => self.roads[i],
+            Entry::Decor(i) => self.decor[i],
+        });
+        TrackError::Draft { line, error }
+    }
+}
+
+impl TrackDraft {
+    #[cfg(test)]
     pub(crate) fn parse(text: &str) -> Result<Self, TrackError> {
-        let file: TrackFile = toml::from_str(text).map_err(|e| TrackError::Toml(e.to_string()))?;
+        Self::parse_lines(text).map(|(draft, _)| draft)
+    }
+
+    /// Строки нужны, чтобы назвать место ошибки `chain`.
+    pub(crate) fn parse_lines(text: &str) -> Result<(Self, Lines), TrackError> {
+        let file: TrackFile<Spanned<String>> =
+            toml::from_str(text).map_err(|e| TrackError::Toml(e.to_string()))?;
         let line = |name: &Spanned<String>| text[..name.span().start].matches('\n').count() + 1;
         let unknown = |name: &Spanned<String>| TrackError::UnknownPiece {
             line: line(name),
             name: name.get_ref().clone(),
         };
-        let mut taken = HashSet::new();
-        let mut road = Vec::with_capacity(file.road.len());
-        for r in &file.road {
-            let piece = piece(r.piece.get_ref()).ok_or_else(|| unknown(&r.piece))?;
-            let rot = Rot::from_degrees(r.rot).ok_or(TrackError::Rot {
-                line: line(&r.piece),
-                rot: r.rot,
-            })?;
-            if r.cell
-                .iter()
-                .any(|c| c.unsigned_abs() > MAX_CELL.unsigned_abs())
-                || r.level > MAX_LEVEL
-            {
-                return Err(TrackError::Bounds {
-                    line: line(&r.piece),
-                });
-            }
-            let r = Road {
-                piece,
-                cell: IVec2::from(r.cell),
-                level: r.level,
-                rot,
-                line: line(&r.piece),
-            };
-            for (cell, level) in r.cells() {
-                if !taken.insert((cell, level)) {
-                    return Err(TrackError::Overlap {
-                        line: r.line,
-                        cell,
-                        level,
-                    });
-                }
-            }
-            road.push(r);
-        }
-        let decor = file
-            .decor
-            .iter()
-            .map(|d| {
-                let pos = Vec3::from(d.pos);
-                let limit = (MAX_CELL + 1) as f32 * KIT_SCALE;
-                if !pos.is_finite() || pos.abs().max_element() > limit || !d.yaw.is_finite() {
-                    return Err(TrackError::Bounds {
-                        line: line(&d.piece),
-                    });
-                }
-                Ok(Decor {
-                    piece: decor_piece(d.piece.get_ref()).ok_or_else(|| unknown(&d.piece))?,
-                    pos,
-                    yaw: d.yaw.to_radians(),
+        let roads = (file.road.iter())
+            .map(|r| {
+                Ok(RoadEntry {
+                    piece: piece(r.piece.get_ref()).ok_or_else(|| unknown(&r.piece))?,
+                    cell: IVec2::from(r.cell),
+                    level: r.level,
+                    rot: Rot::from_degrees(r.rot).ok_or(TrackError::Rot {
+                        line: line(&r.piece),
+                        rot: r.rot,
+                    })?,
                 })
             })
             .collect::<Result<_, _>>()?;
-        Ok(Self {
+        let decor = (file.decor.iter())
+            .map(|d| {
+                Ok(DecorEntry {
+                    piece: decor_piece(d.piece.get_ref()).ok_or_else(|| unknown(&d.piece))?,
+                    pos: Vec3::from(d.pos),
+                    yaw_deg: d.yaw,
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        let lines = Lines {
+            roads: file.road.iter().map(|r| line(&r.piece)).collect(),
+            decor: file.decor.iter().map(|d| line(&d.piece)).collect(),
+        };
+        let draft = Self {
             car: file.car,
-            road,
+            roads,
             decor,
-        })
+        };
+        draft.validate().map_err(|e| lines.locate(e))?;
+        Ok((draft, lines))
+    }
+
+    /// Пределы клеток и позиций, пересечения дорог; цепочку не требует.
+    pub(crate) fn validate(&self) -> Result<(), DraftError> {
+        let mut taken = HashMap::new();
+        for (i, r) in self.roads.iter().enumerate() {
+            r.check(i, &taken)?;
+            taken.extend(r.cells().map(|c| (c, i)));
+        }
+        match self.decor.iter().position(|d| !d.in_bounds()) {
+            Some(i) => Err(DraftError::Bounds {
+                entry: Entry::Decor(i),
+            }),
+            None => Ok(()),
+        }
+    }
+
+    /// Запись дороги на каждой занятой клетке и уровне.
+    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задача 14"))]
+    pub(crate) fn occupancy(&self) -> HashMap<(IVec2, u32), usize> {
+        (self.roads.iter().enumerate())
+            .flat_map(|(i, r)| r.cells().map(move |c| (c, i)))
+            .collect()
+    }
+
+    /// Встанет ли `road` следующей записью.
+    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задача 14"))]
+    pub(crate) fn can_place(&self, road: &RoadEntry) -> Result<(), DraftError> {
+        road.check(self.roads.len(), &self.occupancy())
+    }
+
+    /// Файл целиком: комментарии прежнего файла пропадают.
+    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задача 14"))]
+    pub(crate) fn to_toml(&self) -> String {
+        let file = TrackFile {
+            car: self.car.clone(),
+            road: (self.roads.iter())
+                .map(|r| RoadFile {
+                    piece: r.piece.name,
+                    cell: r.cell.to_array(),
+                    level: r.level,
+                    rot: r.rot.degrees(),
+                })
+                .collect(),
+            decor: (self.decor.iter())
+                .map(|d| DecorFile {
+                    piece: d.piece.name,
+                    pos: d.pos.to_array(),
+                    yaw: d.yaw_deg,
+                })
+                .collect(),
+        };
+        toml::to_string(&file).expect("строки и конечные числа пишутся в TOML")
     }
 
     /// Клетки и уровни под дорогой.
     pub(crate) fn road_cells(&self) -> HashSet<(IVec2, u32)> {
-        self.road.iter().flat_map(Road::cells).collect()
+        self.roads.iter().flat_map(RoadEntry::cells).collect()
     }
 
     /// Чекпоинты на выходах деталей по цепочке от `roadStart`, первый — у старта.
     /// Повториться может только старт: стык в занятой клетке уже отсечён `Overlap`.
-    pub(crate) fn chain(&self) -> Result<Vec<Checkpoint>, TrackError> {
-        let starts: Vec<usize> = (0..self.road.len())
-            .filter(|&i| self.road[i].piece.name == "roadStart")
+    pub(crate) fn chain(&self) -> Result<Vec<Checkpoint>, DraftError> {
+        let starts: Vec<usize> = (0..self.roads.len())
+            .filter(|&i| self.roads[i].piece.name == "roadStart")
             .collect();
         let &[start] = &starts[..] else {
-            return Err(TrackError::Start {
+            return Err(DraftError::Start {
                 count: starts.len(),
             });
         };
         let taken = self.road_cells();
-        let mut checkpoints = Vec::with_capacity(self.road.len());
-        let (mut road, mut exit) = (start, self.road[start].ends()[1]);
+        let mut checkpoints = Vec::with_capacity(self.roads.len());
+        let (mut road, mut exit) = (start, self.roads[start].ends()[1]);
         loop {
             let (cell, side) = (exit.cell + exit.side.step(), exit.side.opposite());
             let ceiling = (taken.iter())
@@ -318,17 +436,16 @@ impl Track {
                 .map(|&(_, l)| l)
                 .min();
             checkpoints.push(Checkpoint::new(road, exit, ceiling));
-            let next = (self.road.iter().enumerate())
+            let next = (self.roads.iter().enumerate())
                 .flat_map(|(i, r)| r.ends().into_iter().enumerate().map(move |e| (i, e)))
                 .filter(|(_, (_, e))| e.cell == cell && e.side == side)
                 .min_by_key(|(_, (_, e))| e.level != exit.level);
-            let line = self.road[road].line;
             let Some((i, (entry, e))) = next else {
-                return Err(TrackError::Gap { line });
+                return Err(DraftError::Gap { road });
             };
             if e.level != exit.level {
-                return Err(TrackError::Level {
-                    line,
+                return Err(DraftError::Level {
+                    road,
                     level: exit.level,
                     found: e.level,
                 });
@@ -336,12 +453,11 @@ impl Track {
             if checkpoints.iter().any(|c| c.road == i) {
                 break;
             }
-            (road, exit) = (i, self.road[i].ends()[1 - entry]);
+            (road, exit) = (i, self.roads[i].ends()[1 - entry]);
         }
-        if let Some(r) = (0..self.road.len()).find(|i| checkpoints.iter().all(|c| c.road != *i)) {
-            return Err(TrackError::Branch {
-                line: self.road[r].line,
-            });
+        if let Some(road) = (0..self.roads.len()).find(|i| checkpoints.iter().all(|c| c.road != *i))
+        {
+            return Err(DraftError::Branch { road });
         }
         Ok(checkpoints)
     }
@@ -356,12 +472,19 @@ mod tests {
     use super::*;
 
     fn err(text: &str) -> TrackError {
-        Track::parse(text).expect_err("трасса разобралась")
+        TrackDraft::parse(text).expect_err("трасса разобралась")
+    }
+
+    fn at(line: usize, error: DraftError) -> TrackError {
+        TrackError::Draft {
+            line: Some(line),
+            error,
+        }
     }
 
     #[test]
     fn parses_fields_and_defaults() {
-        let track = Track::parse(
+        let track = TrackDraft::parse(
             "car = \"race\"\n\
              [[road]]\npiece = \"roadCornerLarge\"\ncell = [3, -5]\nlevel = 1\nrot = 270\n\
              [[road]]\npiece = \"roadStraight\"\ncell = [0, 0]\n\
@@ -370,8 +493,8 @@ mod tests {
         )
         .expect("трасса");
         assert_eq!(track.car, "race");
-        let [a, b] = &track.road[..] else {
-            panic!("{:?}", track.road)
+        let [a, b] = &track.roads[..] else {
+            panic!("{:?}", track.roads)
         };
         assert_eq!(a.piece.name, "roadCornerLarge");
         assert_eq!(
@@ -383,10 +506,12 @@ mod tests {
         let [c, d] = &track.decor[..] else {
             panic!("{:?}", track.decor)
         };
-        assert_eq!((c.piece.name, c.pos), ("barrierRed", vec3(17.0, 0.5, 30.0)));
-        assert!((c.yaw - 30f32.to_radians()).abs() < 1e-6);
         assert_eq!(
-            (d.piece.name, d.pos, d.yaw),
+            (c.piece.name, c.pos, c.yaw_deg),
+            ("barrierRed", vec3(17.0, 0.5, 30.0), 30.0)
+        );
+        assert_eq!(
+            (d.piece.name, d.pos, d.yaw_deg),
             ("cone", vec3(1.0, 0.0, 2.0), 0.0)
         );
     }
@@ -424,35 +549,54 @@ mod tests {
                 "car = \"race\"\n[[road]]\npiece = \"roadStraightLong\"\ncell = {cell}\nlevel = {level}\n"
             ))
         };
+        let bounds = at(
+            3,
+            DraftError::Bounds {
+                entry: Entry::Road(0),
+            },
+        );
         let e = road("[2147483647, 0]", 0);
-        assert_eq!(e, TrackError::Bounds { line: 3 });
+        assert_eq!(e, bounds);
         assert_eq!(
             e.to_string(),
             "строка 3: клетка вне ±1000, уровень больше 16 или позиция не число либо вне трассы"
         );
-        assert_eq!(road("[0, -1001]", 0), TrackError::Bounds { line: 3 });
-        assert_eq!(road("[-2147483648, 0]", 0), TrackError::Bounds { line: 3 });
-        assert_eq!(road("[0, 0]", 17), TrackError::Bounds { line: 3 });
+        assert_eq!(road("[0, -1001]", 0), bounds);
+        assert_eq!(road("[-2147483648, 0]", 0), bounds);
+        assert_eq!(road("[0, 0]", 17), bounds);
         for (pos, yaw) in [
             ("[nan, 0, 0]", "0"),
             ("[0, 0, 0]", "inf"),
             ("[3000000, 0, 0]", "0"),
-            ("[0, -4005, 0]", "0"),
+            ("[0, -4004.01, 0]", "0"),
         ] {
             let e = err(&format!(
                 "car = \"race\"\n[[decor]]\npiece = \"cone\"\npos = {pos}\nyaw = {yaw}\n"
             ));
-            assert_eq!(e, TrackError::Bounds { line: 3 });
+            assert_eq!(
+                e,
+                at(
+                    3,
+                    DraftError::Bounds {
+                        entry: Entry::Decor(0)
+                    }
+                )
+            );
         }
     }
 
     #[test]
     fn largest_cell_and_level_parse() {
         let text = "car = \"race\"\n[[road]]\npiece = \"roadStraight\"\ncell = [1000, -1000]\nlevel = 16\n";
-        let track = Track::parse(text).expect("трасса");
+        let track = TrackDraft::parse(text).expect("трасса");
         assert_eq!(
-            (track.road[0].cell, track.road[0].level),
+            (track.roads[0].cell, track.roads[0].level),
             (ivec2(1000, -1000), 16)
+        );
+        let edge = "car = \"race\"\n[[decor]]\npiece = \"cone\"\npos = [4004.0, 0.0, -4004.0]\n";
+        assert_eq!(
+            TrackDraft::parse(edge).expect("трасса").decor[0].pos,
+            vec3(4004.0, 0.0, -4004.0)
         );
     }
 
@@ -476,11 +620,14 @@ mod tests {
                 ("roadStraight", [2, 3], 0, 0),
                 ("roadStraight", [2, 3], 0, 90)
             ])),
-            TrackError::Overlap {
-                line: 8,
-                cell: ivec2(2, 3),
-                level: 0
-            }
+            at(
+                8,
+                DraftError::Overlap {
+                    road: 1,
+                    cell: ivec2(2, 3),
+                    level: 0
+                }
+            )
         );
         // Вторая клетка длинной прямой при rot = 90 — +X.
         assert_eq!(
@@ -488,22 +635,28 @@ mod tests {
                 ("roadStraightLong", [0, 0], 0, 90),
                 ("roadCornerSmall", [1, 0], 0, 0)
             ])),
-            TrackError::Overlap {
-                line: 8,
-                cell: ivec2(1, 0),
-                level: 0
-            }
+            at(
+                8,
+                DraftError::Overlap {
+                    road: 1,
+                    cell: ivec2(1, 0),
+                    level: 0
+                }
+            )
         );
         assert_eq!(
             err(&roads(&[
                 ("roadStraight", [0, 0], 1, 0),
                 ("roadStraightBridgeMid", [0, 0], 0, 0)
             ])),
-            TrackError::Overlap {
-                line: 8,
-                cell: ivec2(0, 0),
-                level: 1
-            }
+            at(
+                8,
+                DraftError::Overlap {
+                    road: 1,
+                    cell: ivec2(0, 0),
+                    level: 1
+                }
+            )
         );
         assert_eq!(
             err(&roads(&[
@@ -517,13 +670,13 @@ mod tests {
 
     #[test]
     fn piece_under_bridge_on_other_level_is_fine() {
-        let track = Track::parse(&roads(&[
+        let track = TrackDraft::parse(&roads(&[
             ("roadStraight", [0, 0], 0, 90),
             ("roadStraightBridgeMid", [0, 0], 0, 0),
             ("roadStraight", [0, 0], 2, 0),
         ]))
         .expect("трасса");
-        assert_eq!(track.road.len(), 3);
+        assert_eq!(track.roads.len(), 3);
     }
 
     #[test]
@@ -541,22 +694,23 @@ mod tests {
 
     #[test]
     fn oval_parses() {
-        let track = Track::parse(include_str!("testdata/oval.toml")).expect("овал");
+        let track = TrackDraft::parse(include_str!("testdata/oval.toml")).expect("овал");
         assert_eq!(track.car, "race");
-        assert_eq!(track.road.len(), 10);
+        assert_eq!(track.roads.len(), 10);
         assert_eq!(
             track
-                .road
+                .roads
                 .iter()
                 .filter(|r| r.piece.name == "roadStart")
                 .count(),
             1
         );
-        assert!(!track.decor.is_empty());
+        assert_ne!(track.decor, []);
     }
 
     fn chain(text: &str) -> Result<Vec<Checkpoint>, TrackError> {
-        Track::parse(text).expect("трасса").chain()
+        let (track, lines) = TrackDraft::parse_lines(text).expect("трасса");
+        track.chain().map_err(|e| lines.locate(e))
     }
 
     /// Строка `cell = …` за строкой ошибки.
@@ -566,7 +720,7 @@ mod tests {
 
     #[test]
     fn oval_chains_every_road_from_start_in_its_direction() {
-        let oval = Track::parse(include_str!("testdata/oval.toml")).expect("овал");
+        let oval = TrackDraft::parse(include_str!("testdata/oval.toml")).expect("овал");
         let checkpoints = oval.chain().expect("цепочка");
         assert_eq!(
             checkpoints.iter().map(|c| c.road).collect::<Vec<_>>(),
@@ -586,7 +740,7 @@ mod tests {
         assert_eq!(checkpoints[1].origin, vec3(2.0, 0.0, 8.0));
         assert_eq!(checkpoints[1].normal, vec3(0.0, 0.0, 1.0));
         for (c, next) in checkpoints.iter().zip(checkpoints.iter().cycle().skip(1)) {
-            let road = &oval.road[next.road];
+            let road = &oval.roads[next.road];
             let ahead = ((c.origin + c.normal * 2.0) / KIT_SCALE).floor().as_ivec3();
             assert!(
                 road.piece
@@ -602,7 +756,11 @@ mod tests {
     fn gap_names_last_piece_before_it() {
         let text = include_str!("testdata/gap.toml");
         let e = chain(text).expect_err("цепочка с дырой");
-        let TrackError::Gap { line } = e else {
+        let TrackError::Draft {
+            line: Some(line),
+            error: DraftError::Gap { .. },
+        } = e
+        else {
             panic!("{e:?}")
         };
         assert_eq!(cell_after(text, line), "cell = [6, 4]");
@@ -616,7 +774,11 @@ mod tests {
     fn branch_off_the_loop_fails() {
         let text = include_str!("testdata/branch.toml");
         let e = chain(text).expect_err("цепочка с веткой");
-        let TrackError::Branch { line } = e else {
+        let TrackError::Draft {
+            line: Some(line),
+            error: DraftError::Branch { .. },
+        } = e
+        else {
             panic!("{e:?}")
         };
         assert_eq!(cell_after(text, line), "cell = [3, -1]");
@@ -636,11 +798,14 @@ mod tests {
         .expect_err("уровни не совпали");
         assert_eq!(
             e,
-            TrackError::Level {
-                line: 3,
-                level: 0,
-                found: 1
-            }
+            at(
+                3,
+                DraftError::Level {
+                    road: 0,
+                    level: 0,
+                    found: 1
+                }
+            )
         );
         assert_eq!(
             e.to_string(),
@@ -652,33 +817,42 @@ mod tests {
                 ("roadStraightBridgeMid", [0, -1], 0, 0),
                 ("roadStraight", [0, -1], 0, 0),
             ])),
-            Err(TrackError::Gap { line: 13 })
+            Err(at(13, DraftError::Gap { road: 2 }))
         );
     }
 
     #[test]
     fn exactly_one_start() {
         let e = chain(&roads(&[("roadStraight", [0, 0], 0, 0)])).expect_err("без старта");
-        assert_eq!(e, TrackError::Start { count: 0 });
+        assert_eq!(
+            e,
+            TrackError::Draft {
+                line: None,
+                error: DraftError::Start { count: 0 }
+            }
+        );
         assert_eq!(e.to_string(), "нужен один roadStart, а их 0");
         assert_eq!(
             chain(&roads(&[
                 ("roadStart", [0, 0], 0, 0),
                 ("roadStart", [1, 0], 0, 0)
             ])),
-            Err(TrackError::Start { count: 2 })
+            Err(TrackError::Draft {
+                line: None,
+                error: DraftError::Start { count: 2 }
+            })
         );
     }
 
     #[test]
     fn figure_eight_passes_both_pieces_under_bridge_in_order() {
-        let track = Track::parse(include_str!("testdata/bridge8.toml")).expect("восьмёрка");
+        let track = TrackDraft::parse(include_str!("testdata/bridge8.toml")).expect("восьмёрка");
         let checkpoints = track.chain().expect("цепочка");
         assert_eq!(
             checkpoints.iter().map(|c| c.road).collect::<Vec<_>>(),
-            (0..track.road.len()).collect::<Vec<_>>()
+            (0..track.roads.len()).collect::<Vec<_>>()
         );
-        let [under, over] = [3, 12].map(|i| &track.road[i]);
+        let [under, over] = [3, 12].map(|i| &track.roads[i]);
         assert_eq!((under.cell, under.level), (IVec2::ZERO, 0));
         assert_eq!(over.cell, IVec2::ZERO);
         assert_eq!(over.piece.name, "roadStraightBridgeMid");
@@ -688,9 +862,9 @@ mod tests {
 
     #[test]
     fn road_cells_hold_every_level_of_piece() {
-        let track = Track::parse(include_str!("testdata/bridge8.toml")).expect("восьмёрка");
+        let track = TrackDraft::parse(include_str!("testdata/bridge8.toml")).expect("восьмёрка");
         let cells = track.road_cells();
-        let taken: usize = (track.road.iter())
+        let taken: usize = (track.roads.iter())
             .map(|r| r.piece.cells(r.rot).count() * r.piece.levels.clone().count())
             .sum();
         assert_eq!(cells.len(), taken);
@@ -768,12 +942,157 @@ mod tests {
 
     #[test]
     fn bridge8_checkpoints_stop_under_bridge_deck() {
-        let track = Track::parse(include_str!("testdata/bridge8.toml")).expect("восьмёрка");
+        let track = TrackDraft::parse(include_str!("testdata/bridge8.toml")).expect("восьмёрка");
         let checkpoints = track.chain().expect("цепочка");
         let under: Vec<_> = (checkpoints.iter())
             .filter(|c| c.height.is_finite())
             .map(|c| (c.origin.y, c.height))
             .collect();
         assert_eq!(under, [(0.0, LEVEL * KIT_SCALE); 4]);
+    }
+
+    fn road(name: &str, cell: IVec2, level: u32, deg: i64) -> RoadEntry {
+        RoadEntry {
+            piece: piece(name).expect("деталь"),
+            cell,
+            level,
+            rot: Rot::from_degrees(deg).expect("rot"),
+        }
+    }
+
+    fn draft(roads: Vec<RoadEntry>) -> TrackDraft {
+        TrackDraft {
+            car: "race".into(),
+            roads,
+            decor: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn toml_round_trip_keeps_draft() {
+        for text in [
+            include_str!("../assets/tracks/track01.toml"),
+            include_str!("../assets/tracks/track02.toml"),
+            include_str!("../assets/tracks/track03.toml"),
+            include_str!("testdata/oval.toml"),
+            include_str!("testdata/gap.toml"),
+            include_str!("testdata/branch.toml"),
+            include_str!("testdata/bridge8.toml"),
+        ] {
+            let track = TrackDraft::parse(text).expect("трасса");
+            assert_eq!(TrackDraft::parse(&track.to_toml()), Ok(track));
+        }
+    }
+
+    #[test]
+    fn to_toml_writes_file_back_without_angle_tails() {
+        let text = "car = \"race\"\n\n\
+                    [[road]]\npiece = \"roadStart\"\ncell = [-3, 4]\nlevel = 2\nrot = 270\n\n\
+                    [[decor]]\npiece = \"cone\"\npos = [0.37, 0.5, -5.96]\nyaw = 30.0\n";
+        assert_eq!(TrackDraft::parse(text).expect("трасса").to_toml(), text);
+    }
+
+    #[test]
+    fn draft_errors_name_entry_and_parse_turns_it_into_line() {
+        let mut track = draft(vec![
+            road("roadStraight", IVec2::ZERO, 0, 0),
+            road("roadStraight", ivec2(5, 5), 0, 0),
+            road("roadStraightLong", ivec2(5, 4), 0, 0),
+        ]);
+        let e = track.validate().expect_err("пересечение");
+        assert_eq!(
+            e,
+            DraftError::Overlap {
+                road: 2,
+                cell: ivec2(5, 5),
+                level: 0
+            }
+        );
+        assert_eq!(e.entry(), Some(Entry::Road(2)));
+        assert_eq!(e.to_string(), "клетка [5, 5] уровня 0 уже занята");
+        track.roads.pop();
+        let cone = |pos| DecorEntry {
+            piece: decor_piece("cone").expect("конус"),
+            pos,
+            yaw_deg: 0.0,
+        };
+        track.decor = vec![cone(Vec3::ZERO), cone(Vec3::NAN)];
+        let e = track.validate().expect_err("позиция");
+        assert_eq!(e.entry(), Some(Entry::Decor(1)));
+        track.decor.clear();
+        let e = track.chain().expect_err("без старта");
+        assert_eq!(
+            (e.entry(), e.to_string()),
+            (None, "нужен один roadStart, а их 0".into())
+        );
+        assert_eq!(
+            err("car = \"race\"\n\
+                 [[decor]]\npiece = \"cone\"\npos = [0.0, 0.0, 0.0]\n\
+                 [[decor]]\npiece = \"cone\"\npos = [0.0, 0.0, 0.0]\nyaw = nan\n"),
+            at(
+                6,
+                DraftError::Bounds {
+                    entry: Entry::Decor(1)
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn can_place_refuses_taken_cells_on_any_level_and_out_of_bounds() {
+        // Рампа занимает [0, 0] и [0, 1] на уровнях 0 и 1.
+        let track = draft(vec![
+            road("roadRampLong", IVec2::ZERO, 0, 0),
+            road("roadStraight", ivec2(3, 0), 1, 0),
+        ]);
+        let taken = |cell, level| {
+            Err(DraftError::Overlap {
+                road: 2,
+                cell,
+                level,
+            })
+        };
+        let place = |name, cell, level| track.can_place(&road(name, cell, level, 0));
+        assert_eq!(place("roadStraight", ivec2(0, 1), 1), taken(ivec2(0, 1), 1));
+        assert_eq!(place("roadStraight", IVec2::ZERO, 0), taken(IVec2::ZERO, 0));
+        assert_eq!(
+            place("roadRampLong", ivec2(3, -1), 0),
+            taken(ivec2(3, 0), 1)
+        );
+        assert_eq!(place("roadStraight", IVec2::ZERO, 2), Ok(()));
+        assert_eq!(place("roadStraight", ivec2(3, 0), 0), Ok(()));
+        assert_eq!(place("roadStraight", ivec2(1000, -1000), 16), Ok(()));
+        let out = Err(DraftError::Bounds {
+            entry: Entry::Road(2),
+        });
+        assert_eq!(place("roadStraight", ivec2(1001, 0), 0), out);
+        assert_eq!(place("roadStraight", ivec2(0, -1001), 0), out);
+        assert_eq!(place("roadStraight", ivec2(5, 5), 17), out);
+    }
+
+    #[test]
+    fn occupancy_names_owner_of_every_cell() {
+        let track = TrackDraft::parse(include_str!("testdata/bridge8.toml")).expect("восьмёрка");
+        let owners = track.occupancy();
+        assert_eq!(owners.len(), track.road_cells().len());
+        for (i, r) in track.roads.iter().enumerate() {
+            for c in r.cells() {
+                assert_eq!(owners[&c], i, "{c:?} {}", r.piece.name);
+            }
+        }
+        assert!(
+            (track.roads.iter()).any(|r| r.cells().count() > 1),
+            "есть многоклеточные"
+        );
+    }
+
+    #[test]
+    fn open_draft_validates_but_does_not_chain() {
+        let track = draft(vec![
+            road("roadStart", IVec2::ZERO, 0, 0),
+            road("roadStraight", ivec2(0, -1), 0, 0),
+        ]);
+        assert_eq!(track.validate(), Ok(()));
+        assert_eq!(track.chain(), Err(DraftError::Gap { road: 1 }));
     }
 }

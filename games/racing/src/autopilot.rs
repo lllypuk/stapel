@@ -8,7 +8,7 @@ use engine::{Context, Vec2, Vec3};
 
 use crate::car::{Car, Controls, steer_angle};
 use crate::race::lap_time;
-use crate::track::{Checkpoint, Track, cell_at};
+use crate::track::{Checkpoint, TrackDraft, cell_at};
 use crate::{CARS_DIR, Racing, TICK_HZ, TRACKS_DIR, load_cars};
 
 /// Точек средней линии на деталь.
@@ -130,7 +130,7 @@ fn reference(track: &str) -> u64 {
 fn lap(track: &str, car: &str) {
     let path = PathBuf::from(format!("{TRACKS_DIR}{track}.toml"));
     let text = fs::read_to_string(&path).expect("трасса");
-    let parsed = Track::parse(&text).expect("разбор");
+    let parsed = TrackDraft::parse(&text).expect("разбор");
     let mut ctx = Context::default();
     let mut g = Racing::new(path, text, load_cars(CARS_DIR), &mut ctx.assets);
     for _ in 0..g.cars.len() {
@@ -153,7 +153,7 @@ fn lap(track: &str, car: &str) {
             body.pos
         );
         let last = &g.race.checkpoints[(g.race.next + n - 1) % n];
-        let flying = parsed.road[last.road].piece.name == "roadRamp"
+        let flying = parsed.roads[last.road].piece.name == "roadRamp"
             && g.car.wheels.iter().all(|w| w.ground.is_none());
         let on_road = cell_at(body.pos).is_some_and(|c| g.road_cells.contains(&c));
         assert!(

@@ -4,7 +4,7 @@ use engine::{Assets, Color, Handle, Mat4, Model, ModelDraw, StaticWorld, Triangl
 
 use crate::ASSETS;
 use crate::pieces::{BARRIER_WALL, CARS, DECOR, KIT_SCALE, PIECES};
-use crate::track::Track;
+use crate::track::TrackDraft;
 
 /// Метки треугольников мира.
 pub(crate) const ROAD: u32 = 0;
@@ -70,9 +70,9 @@ fn wall(frame: Mat4, [a, b]: [Vec3; 2]) -> Mat4 {
 }
 
 /// Дороги с барьерами приподнятых деталей, затем декор.
-pub(crate) fn place(track: &Track) -> Vec<Placed> {
+pub(crate) fn place(track: &TrackDraft) -> Vec<Placed> {
     let mut out = Vec::new();
-    for r in &track.road {
+    for r in &track.roads {
         out.push(Placed {
             name: r.piece.name,
             transform: r.transform(),
@@ -127,7 +127,7 @@ pub(crate) struct Layout {
 }
 
 impl Layout {
-    pub(crate) fn new(track: &Track, models: &Models, assets: &Assets) -> Self {
+    pub(crate) fn new(track: &TrackDraft, models: &Models, assets: &Assets) -> Self {
         let placed = place(track);
         Self {
             draws: placed
@@ -150,7 +150,7 @@ mod tests {
 
     use super::*;
     use crate::pieces::{LEVEL, Piece, Rot};
-    use crate::track::Road;
+    use crate::track::RoadEntry;
 
     const EPS: f32 = 1e-3;
 
@@ -164,10 +164,10 @@ mod tests {
         [0, 90, 180, 270].map(|d| Rot::from_degrees(d).expect("rot"))
     }
 
-    fn track(road: Vec<Road>) -> Track {
-        Track {
+    fn track(roads: Vec<RoadEntry>) -> TrackDraft {
+        TrackDraft {
             car: "race".into(),
-            road,
+            roads,
             decor: Vec::new(),
         }
     }
@@ -214,12 +214,11 @@ mod tests {
             };
             let model = assets.model(models.get(piece.name));
             for rot in rots() {
-                let road = Road {
+                let road = RoadEntry {
                     piece,
                     cell: ivec2(3, -2),
                     level: 0,
                     rot,
-                    line: 0,
                 };
                 let cells: Vec<_> = piece.cells(rot).map(|c| road.cell + c).collect();
                 for (node, global) in model.nodes.iter().zip(&model.rest.globals) {
@@ -238,7 +237,7 @@ mod tests {
                         }
                     }
                 }
-                let up = Road { level: 1, ..road };
+                let up = RoadEntry { level: 1, ..road };
                 let lift = Mat4::from_translation(vec3(0.0, 2.0, 0.0));
                 assert!(
                     up.transform().abs_diff_eq(lift * road.transform(), 1e-4),
@@ -280,7 +279,7 @@ pos = [20.0, 0.0, 20.0]
     #[test]
     fn render_and_world_share_one_transform() {
         let (assets, models) = loaded();
-        let track = Track::parse(MIXED).expect("трасса");
+        let track = TrackDraft::parse(MIXED).expect("трасса");
         let placed = place(&track);
         let layout = Layout::new(&track, &models, &assets);
         assert_eq!(layout.draws.len(), placed.len());
@@ -319,7 +318,7 @@ pos = [20.0, 0.0, 20.0]
     #[test]
     fn tags_follow_material_and_props_stay_out_of_world() {
         let (assets, models) = loaded();
-        let track = Track::parse(
+        let track = TrackDraft::parse(
             "car = \"race\"\n\
              [[road]]\npiece = \"roadStraight\"\ncell = [0, 0]\n\
              [[decor]]\npiece = \"barrierWhite\"\npos = [10.0, 0.0, 2.0]\n\
@@ -361,12 +360,11 @@ pos = [20.0, 0.0, 20.0]
     }
 
     fn check_walls(piece: &'static Piece, rot: Rot, assets: &Assets, models: &Models) {
-        let road = Road {
+        let road = RoadEntry {
             piece,
             cell: ivec2(1, 1),
             level: 0,
             rot,
-            line: 0,
         };
         let frame = road.frame();
         let world = Layout::new(&track(vec![road]), models, assets).world;
@@ -419,12 +417,11 @@ pos = [20.0, 0.0, 20.0]
                 check_walls(piece, rot, &assets, &models);
             }
         }
-        let flat = track(vec![Road {
+        let flat = track(vec![RoadEntry {
             piece: &PIECES[0],
             cell: IVec2::ZERO,
             level: 0,
             rot: Rot::default(),
-            line: 0,
         }]);
         assert_eq!(place(&flat).len(), 1);
     }
