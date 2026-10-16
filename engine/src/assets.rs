@@ -6,6 +6,8 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use glam::Vec3;
+
 use crate::audio::{Sound, decode};
 use crate::frame::{linear_to_srgb, srgb_to_linear};
 use crate::mesh::{Mesh, PendingMesh, Vertex};
@@ -102,6 +104,15 @@ pub struct PendingTexture {
     pub rgba: Vec<u8>,
 }
 
+/// Позиции и индексы меша на CPU, как их получил `Assets::add_mesh`.
+#[derive(Debug, Default, PartialEq)]
+pub struct MeshGeometry {
+    /// Позиции вершин в пространстве меша.
+    pub positions: Vec<Vec3>,
+    /// Тройки индексов треугольников.
+    pub indices: Vec<u32>,
+}
+
 /// Версия файла для перезагрузки; правка с тем же `mtime` и длиной не заметна.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Stamp {
@@ -130,7 +141,7 @@ struct Watched<T> {
 pub struct Assets {
     next_index: u32,
     pending: Vec<PendingTexture>,
-    meshes: u32,
+    geometry: Vec<MeshGeometry>,
     pending_meshes: Vec<PendingMesh>,
     models: Vec<Model>,
     model_paths: HashMap<PathBuf, Handle<Model>>,
@@ -149,7 +160,7 @@ impl Default for Assets {
         let mut assets = Self {
             next_index: 0,
             pending: Vec::new(),
-            meshes: 0,
+            geometry: Vec::new(),
             pending_meshes: Vec::new(),
             models: Vec::new(),
             model_paths: HashMap::new(),
@@ -314,14 +325,26 @@ impl Assets {
 
     /// Меш из вершин и индексов треугольников.
     pub fn add_mesh(&mut self, vertices: Vec<Vertex>, indices: Vec<u32>) -> Handle<Mesh> {
-        let handle = Handle::new(self.meshes);
-        self.meshes += 1;
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "u32::MAX мешей не поместится в память"
+        )]
+        let handle = Handle::new(self.geometry.len() as u32);
+        self.geometry.push(MeshGeometry {
+            positions: vertices.iter().map(|v| Vec3::from(v.pos)).collect(),
+            indices: indices.clone(),
+        });
         self.pending_meshes.push(PendingMesh {
             handle,
             vertices,
             indices,
         });
         handle
+    }
+
+    /// Геометрия меша на CPU; хранится одна на меш и после заливки на GPU.
+    pub fn mesh_geometry(&self, handle: Handle<Mesh>) -> &MeshGeometry {
+        &self.geometry[handle.index as usize]
     }
 
     /// Забирает меши, добавленные с прошлого вызова, в порядке хэндлов.
@@ -474,6 +497,47 @@ mod tests {
         );
         assert_eq!(assets.take_pending_meshes(), []);
         assert_eq!(assets.add_mesh(Vec::new(), Vec::new()), Handle::new(2));
+    }
+
+    #[test]
+    fn mesh_geometry_keeps_positions_and_indices_after_upload() {
+        let mut assets = Assets::default();
+        let tri: Vec<Vertex> = [0.0, 1.0, 2.0]
+            .into_iter()
+            .map(|x| Vertex {
+                pos: [x, 1.0, 2.0],
+                ..Vertex::default()
+            })
+            .collect();
+        let a = assets.add_mesh(tri, vec![2, 1, 0]);
+        let b = assets.add_mesh(Vec::new(), Vec::new());
+        assets.take_pending_meshes();
+        assert_eq!(
+            assets.mesh_geometry(a),
+            &MeshGeometry {
+                positions: vec![
+                    Vec3::new(0.0, 1.0, 2.0),
+                    Vec3::new(1.0, 1.0, 2.0),
+                    Vec3::new(2.0, 1.0, 2.0),
+                ],
+                indices: vec![2, 1, 0],
+            }
+        );
+        assert_eq!(assets.mesh_geometry(b), &MeshGeometry::default());
+    }
+
+    #[test]
+    fn reloaded_model_does_not_duplicate_geometry() {
+        let path = model::tests::testdata("racing/roadStraight.glb");
+        let mut assets = Assets::default();
+        let h = assets.load_model(&path);
+        assert_eq!(assets.geometry.len(), 3);
+        assert_eq!(assets.load_model(&path), h);
+        assert_eq!(assets.geometry.len(), 3);
+        let road = assets.model(h).nodes[0].primitives[2].mesh;
+        let g = assets.mesh_geometry(road);
+        assert!(!g.indices.is_empty() && g.indices.len().is_multiple_of(3));
+        assert!(g.positions.iter().all(|p| (0.0..=1.0).contains(&p.x)));
     }
 
     #[test]

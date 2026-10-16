@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3};
 use gltf::animation::util::ReadOutputs;
 use gltf::animation::{Interpolation, Property};
 use gltf::mesh::Mode;
@@ -78,6 +78,43 @@ pub struct Node {
     pub primitives: Vec<Primitive>,
     /// Индекс в `Model::skins`.
     pub skin: Option<usize>,
+    /// Габариты меша узла в пространстве узла; `None` без вершин.
+    pub bounds: Option<Aabb3>,
+}
+
+/// Осевой параллелепипед в 3D.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Aabb3 {
+    /// Угол с наименьшими координатами.
+    pub min: Vec3,
+    /// Угол с наибольшими координатами.
+    pub max: Vec3,
+}
+
+impl Aabb3 {
+    const fn point(p: Vec3) -> Self {
+        Self { min: p, max: p }
+    }
+
+    /// Объемлющий оба.
+    #[must_use]
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            min: self.min.min(other.min),
+            max: self.max.max(other.max),
+        }
+    }
+
+    /// Объемлющий образ под аффинной `m`.
+    #[must_use]
+    pub fn transformed(self, m: Mat4) -> Self {
+        let center = m.transform_point3((self.min + self.max) / 2.0);
+        let half = Mat3::from_mat4(m).abs() * ((self.max - self.min) / 2.0);
+        Self {
+            min: center - half,
+            max: center + half,
+        }
+    }
 }
 
 /// Часть меша со своей текстурой и материалом.
@@ -213,6 +250,16 @@ impl Model {
         self.recompose(pose);
     }
 
+    /// Габариты мешей в позе покоя в пространстве модели; `None` без вершин.
+    /// Меш со скином берёт `G_node` узла, как жёсткий, а не палитру покоя.
+    pub fn bounds(&self) -> Option<Aabb3> {
+        self.nodes
+            .iter()
+            .zip(&self.rest.globals)
+            .filter_map(|(n, g)| Some(n.bounds?.transformed(*g)))
+            .reduce(Aabb3::union)
+    }
+
     /// Глобальные матрицы и палитры из локальных TRS позы этой модели после `Pose::local_mut`.
     pub fn recompose(&self, pose: &mut Pose) {
         pose.globals.clear();
@@ -314,6 +361,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Parsed, String> {
     if meshes.iter().flatten().any(|p| p.material == fallback) {
         materials.push(Material::default());
     }
+    let mesh_bounds: Vec<Option<Aabb3>> = meshes.iter().map(|m| bounds(m)).collect();
 
     let mut parents = vec![None; gltf.nodes().len()];
     for n in gltf.nodes() {
@@ -343,6 +391,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Parsed, String> {
             scale: s.into(),
             primitives: Vec::new(),
             skin: n.skin().map(|s| s.index()),
+            bounds: n.mesh().and_then(|m| mesh_bounds[m.index()]),
         });
         node_meshes.push(n.mesh().map(|m| m.index()));
     }
@@ -381,6 +430,14 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Parsed, String> {
         node_meshes,
         meshes,
     })
+}
+
+fn bounds(primitives: &[RawPrimitive]) -> Option<Aabb3> {
+    primitives
+        .iter()
+        .flat_map(|p| &p.vertices)
+        .map(|v| Aabb3::point(v.pos.into()))
+        .reduce(Aabb3::union)
 }
 
 fn color([r, g, b, a]: [f32; 4]) -> Color {
@@ -601,6 +658,7 @@ pub(crate) mod tests {
             scale: Vec3::ONE,
             primitives: Vec::new(),
             skin: None,
+            bounds: None,
         }
     }
 
@@ -1107,5 +1165,56 @@ pub(crate) mod tests {
                 .iter()
                 .all(|p| (p.material, p.texture) == (0, colormap))
         );
+    }
+
+    fn assert_near(got: Vec3, want: Vec3) {
+        assert!(got.abs_diff_eq(want, 1e-5), "{got} != {want}");
+    }
+
+    #[test]
+    fn wheel_bounds_give_radius_and_meshless_node_has_none() {
+        let car = load("racing/race.glb");
+        let wheel = car.nodes.iter().find(|n| n.name == "wheel-back-right");
+        let b = wheel.unwrap().bounds.unwrap();
+        assert_near(b.min, Vec3::splat(-0.3));
+        assert_near(b.max, Vec3::new(0.0, 0.3, 0.3));
+        assert_eq!(load("gate.glb").nodes[0].bounds, None);
+        assert!(load("gate.glb").nodes[1].bounds.is_some());
+    }
+
+    #[test]
+    fn car_bounds_join_body_and_wheels_in_model_space() {
+        let b = load("racing/race.glb").bounds().unwrap();
+        assert_near(b.min, Vec3::new(-0.65, 0.0, -1.279_886));
+        assert_near(b.max, Vec3::new(0.65, 0.732_544_3, 1.279_886));
+    }
+
+    #[test]
+    fn road_bounds_include_unity_root() {
+        let road = load("racing/roadStraight.glb");
+        let node = road.nodes[0].bounds.unwrap();
+        assert_eq!((node.min, node.max), (-Vec3::Z, Vec3::new(1.0, 0.02, 0.0)));
+        let b = road.bounds().unwrap();
+        assert_near(b.min, Vec3::new(-0.35, -0.01, -1.65));
+        assert_near(b.max, Vec3::new(0.65, 0.01, -0.65));
+    }
+
+    #[test]
+    fn model_without_meshes_has_no_bounds() {
+        assert_eq!(slider().bounds(), None);
+    }
+
+    #[test]
+    fn transformed_bounds_cover_all_corners() {
+        let cube = Aabb3 {
+            min: Vec3::splat(-1.0),
+            max: Vec3::new(1.0, 2.0, 1.0),
+        };
+        let m =
+            Mat4::from_rotation_translation(Quat::from_rotation_y(FRAC_PI_2 / 2.0), Vec3::X * 10.0);
+        let b = cube.transformed(m);
+        let r = std::f32::consts::SQRT_2;
+        assert_near(b.min, Vec3::new(10.0 - r, -1.0, -r));
+        assert_near(b.max, Vec3::new(10.0 + r, 2.0, r));
     }
 }

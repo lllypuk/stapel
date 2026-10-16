@@ -44,7 +44,7 @@ pub mod text;
 /// egui поверх кадра: маршрутизация ввода и вывод кадра.
 pub mod ui;
 
-pub use assets::{Assets, Font, Handle, PendingTexture, Texture, TextureKind};
+pub use assets::{Assets, Font, Handle, MeshGeometry, PendingTexture, Texture, TextureKind};
 pub use audio::{Audio, Sound};
 pub use camera::{
     Camera2D, Camera3D, MAX_PITCH, Viewport, letterbox, letterbox_pixel, screen_to_world, viewport,
@@ -58,7 +58,9 @@ pub use gpu_textures::GpuTextures;
 pub use input::Input;
 pub use mesh::{Mesh, PendingMesh, Vertex};
 pub use mesh_pipeline::MeshPipeline;
-pub use model::{Animation, Channel, Material, Model, Node, Pose, Primitive, Skin, Trs, Values};
+pub use model::{
+    Aabb3, Animation, Channel, Material, Model, Node, Pose, Primitive, Skin, Trs, Values,
+};
 pub use physics::{
     Aabb, Actor, Axis, Contact, Hits, Solid, Tilemap, grounded, move_actor, move_solid,
 };

@@ -234,11 +234,11 @@
 **Files:**
 - Modify: `engine/src/model.rs`, `engine/src/assets.rs`, `engine/src/lib.rs`, `docs/design.md`
 
-- [ ] тесты: `race.glb` — `Node::bounds` колеса даёт радиус 0,3; `roadStraight.glb` — `Model::bounds` = меш `[0,1]×[-1,0]`, сдвинутый корнем Unity; узел без меша — `None`
-- [ ] тесты: `mesh_geometry` хранит позиции и индексы `add_mesh`; повторная загрузка модели геометрию не дублирует
-- [ ] `Aabb3`, `Node::bounds`, `Model::bounds`, `MeshGeometry`, `Assets::mesh_geometry`
-- [ ] `docs/design.md`: «габариты без `G_node` — деталь смещена на 0,35 клетки» → тест
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] тесты: `race.glb` — `Node::bounds` колеса даёт радиус 0,3; `roadStraight.glb` — `Model::bounds` = меш `[0,1]×[-1,0]`, сдвинутый корнем Unity; узел без меша — `None`
+- [x] тесты: `mesh_geometry` хранит позиции и индексы `add_mesh`; повторная загрузка модели геометрию не дублирует
+- [x] `Aabb3`, `Node::bounds`, `Model::bounds`, `MeshGeometry`, `Assets::mesh_geometry`
+- [x] `docs/design.md`: «габариты без `G_node` — деталь смещена на 0,35 клетки» → тест
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 5: Твёрдое тело
 
