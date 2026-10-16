@@ -308,7 +308,6 @@ impl Lines {
 }
 
 impl TrackDraft {
-    #[cfg(test)]
     pub(crate) fn parse(text: &str) -> Result<Self, TrackError> {
         Self::parse_lines(text).map(|(draft, _)| draft)
     }
@@ -385,7 +384,6 @@ impl TrackDraft {
     }
 
     /// Файл целиком: комментарии прежнего файла пропадают.
-    #[cfg_attr(not(test), expect(dead_code, reason = "сохранение трассы — задача 16"))]
     pub(crate) fn to_toml(&self) -> String {
         let file = TrackFile {
             car: self.car.clone(),

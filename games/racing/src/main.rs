@@ -3,8 +3,8 @@ mod autopilot;
 mod camera;
 mod car;
 mod car_config;
-#[cfg_attr(not(test), expect(dead_code, reason = "панель редактора — задача 16"))]
 mod editor;
+mod editor_panel;
 mod engine_sound;
 mod garage;
 mod ghost;
@@ -28,7 +28,8 @@ use engine::{
 use crate::camera::Chase;
 use crate::car::{Car, Controls, SUBSTEP, SUBSTEPS};
 use crate::car_config::{CarConfig, TUNING};
-use crate::editor::Editor;
+use crate::editor::{Editor, EditorCmd};
+use crate::editor_panel::{EditorPanel, PanelCmd, Switch};
 use crate::engine_sound::{Rpm, SoundCmd};
 use crate::garage::{Garage, GarageCmd};
 use crate::ghost::{Ghost, Recorder};
@@ -126,6 +127,35 @@ fn load_cars(dir: &Path) -> Vec<CarConfig> {
         .collect()
 }
 
+/// Файлы `*.toml` каталога по имени.
+fn list_tracks(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let error = |e: std::io::Error| format!("{}: {e}", dir.display());
+    let mut tracks = Vec::new();
+    for entry in fs::read_dir(dir).map_err(error)? {
+        let path = entry.map_err(error)?.path();
+        if path.extension().is_some_and(|e| e == "toml") {
+            tracks.push(path);
+        }
+    }
+    tracks.sort();
+    Ok(tracks)
+}
+
+/// `trackNN.toml` после наибольшего NN списка; без таких — `track01.toml`.
+fn new_track_name(tracks: &[PathBuf]) -> String {
+    let nn = (tracks.iter())
+        .filter_map(|p| {
+            let name = p.file_name()?.to_str()?;
+            name.strip_prefix("track")?
+                .strip_suffix(".toml")?
+                .parse::<u32>()
+                .ok()
+        })
+        .max()
+        .map_or(1, |n| n + 1);
+    format!("track{nn:02}.toml")
+}
+
 /// Трасса с цепочкой и машиной из `cars`.
 fn load_track(text: &str, cars: &[CarConfig]) -> Result<(TrackDraft, Vec<Checkpoint>), String> {
     let (track, lines) = TrackDraft::parse_lines(text).map_err(|e| e.to_string())?;
@@ -194,9 +224,12 @@ struct Racing {
     mode: Mode,
     garage: Garage,
     editor: Editor,
+    panel: EditorPanel,
     /// Квад клетки под курсором в редакторе.
     quad: Handle<Mesh>,
     tuning: TuningPanel,
+    /// Трасса заезда: последняя цельная с диска или черновик, с которым вышли из редактора.
+    track: TrackDraft,
     layout: Layout,
     models: Models,
     sky: Color,
@@ -239,10 +272,18 @@ impl Racing {
         let start = Spawn::start(&checkpoints);
         let car = Self::make_car(&cars[selected], &models, assets);
         let (vertices, indices) = editor::quad();
+        let tracks = list_tracks(&dirs.tracks).unwrap_or_else(|e| {
+            log::warn!("{e}");
+            Vec::new()
+        });
         let mut racing = Self {
             mode: Mode::Garage,
             garage: Garage::new(selected),
             editor: Editor::new(track.clone(), &models, assets),
+            panel: EditorPanel {
+                tracks,
+                ..EditorPanel::default()
+            },
             quad: assets.add_mesh(vertices, indices),
             tuning: TuningPanel::default(),
             layout: Layout::new(&track, &models, assets),
@@ -268,36 +309,157 @@ impl Racing {
             path,
             watch: Watcher::new(text),
             dirs,
+            track,
         };
         racing.restart();
         racing
     }
 
-    /// Изменённая на диске трасса — заново с прежними моделями и машиной; битая — прежняя и ошибка.
+    /// Изменённая на диске трасса; при `dirty` черновик не трогается, панель показывает флаг.
     fn reload_changed(&mut self, assets: &Assets) {
-        let text = match self.watch.tick(&self.path) {
-            Ok(Some(text)) => text,
-            Ok(None) => return,
-            Err(e) => {
-                log::warn!("{e}");
-                return;
+        match self.watch.tick(&self.path) {
+            Ok(Some(_)) if self.editor.dirty() => self.panel.changed_on_disk = true,
+            Ok(Some(text)) => self.load_text(&text, assets),
+            Ok(None) => {}
+            Err(e) => log::warn!("{e}"),
+        }
+    }
+
+    /// Текст файла трассы — в черновик, цельный — и в заезд; битый — ошибка, заезд прежний.
+    fn load_text(&mut self, text: &str, assets: &Assets) {
+        self.panel.changed_on_disk = false;
+        match load_track(text, &self.cars) {
+            Ok((track, checkpoints)) => {
+                self.error = None;
+                self.editor.replace(track.clone(), &self.models, assets);
+                self.set_race(track, checkpoints, assets);
             }
-        };
-        let (track, checkpoints) = match load_track(&text, &self.cars) {
-            Ok(t) => t,
             Err(e) => {
                 self.error = Some(e);
-                return;
+                if let Ok(draft) = TrackDraft::parse(text) {
+                    self.editor.replace(draft, &self.models, assets);
+                }
             }
-        };
-        self.error = None;
+        }
+    }
+
+    /// Заезд по `track` с прежними моделями и машиной, со старта и без лучшего круга.
+    fn set_race(&mut self, track: TrackDraft, checkpoints: Vec<Checkpoint>, assets: &Assets) {
         self.layout = Layout::new(&track, &self.models, assets);
-        self.editor = Editor::new(track.clone(), &self.models, assets);
         self.road_cells = track.road_cells();
         self.start = Spawn::start(&checkpoints);
         self.race = Race::new(&track, checkpoints);
         self.ghost = Ghost::default();
+        self.track = track;
         self.restart();
+    }
+
+    fn file_error(&mut self, path: &Path, e: impl std::fmt::Display) {
+        self.panel.error = Some(format!("{}: {e}", path.display()));
+    }
+
+    /// Черновик — в файл трассы целиком.
+    fn save(&mut self) {
+        let text = self.editor.draft.to_toml();
+        match fs::write(&self.path, &text) {
+            Ok(()) => {
+                self.editor.saved();
+                self.watch.saved(text);
+                self.panel.changed_on_disk = false;
+                self.panel.error = None;
+            }
+            Err(e) => self.file_error(&self.path.clone(), e),
+        }
+    }
+
+    /// Черновик — файл с диска; правки теряются.
+    fn load_from_disk(&mut self, assets: &Assets) {
+        match fs::read_to_string(&self.path) {
+            Ok(text) => {
+                self.load_text(&text, assets);
+                self.watch.saved(text);
+                self.panel.error = None;
+            }
+            Err(e) => self.file_error(&self.path.clone(), e),
+        }
+    }
+
+    /// Трасса `path` в редакторе с камерой над ней; цельная — и в заезде.
+    fn open_track(&mut self, path: PathBuf, assets: &Assets) {
+        let read = fs::read_to_string(&path).map_err(|e| e.to_string());
+        let parsed = read.and_then(|text| {
+            let draft = TrackDraft::parse(&text).map_err(|e| e.to_string())?;
+            Ok((text, draft))
+        });
+        let (text, draft) = match parsed {
+            Ok(t) => t,
+            Err(e) => return self.file_error(&path, e),
+        };
+        self.editor = Editor::new(draft, &self.models, assets);
+        self.path = path;
+        self.watch = Watcher::new(text.clone());
+        self.error = None;
+        self.panel.error = None;
+        self.panel.changed_on_disk = false;
+        if let Ok((track, checkpoints)) = load_track(&text, &self.cars) {
+            self.set_race(track, checkpoints, assets);
+        }
+    }
+
+    /// Пустая трасса с машиной гаража — новым файлом в каталог трасс и в редактор.
+    fn new_track(&mut self, assets: &Assets) {
+        let draft = TrackDraft {
+            car: self.cars[self.garage.selected].model.clone(),
+            roads: Vec::new(),
+            decor: Vec::new(),
+        };
+        let dir = &self.dirs.tracks;
+        let created = list_tracks(dir).and_then(|tracks| {
+            let path = dir.join(new_track_name(&tracks));
+            fs::write(&path, draft.to_toml()).map_err(|e| format!("{}: {e}", path.display()))?;
+            Ok((path, list_tracks(dir)?))
+        });
+        match created {
+            Ok((path, tracks)) => {
+                self.panel.tracks = tracks;
+                self.open_track(path, assets);
+            }
+            Err(e) => self.panel.error = Some(e),
+        }
+    }
+
+    fn switch(&mut self, to: Switch, assets: &Assets) {
+        match to {
+            Switch::Open(path) => self.open_track(path, assets),
+            Switch::New => self.new_track(assets),
+        }
+    }
+
+    fn apply_panel(&mut self, cmd: PanelCmd, assets: &Assets) {
+        match cmd {
+            PanelCmd::Edit(cmd) => self.editor.apply(cmd, &self.models, assets),
+            PanelCmd::Switch(to) if self.editor.dirty() => self.panel.pending = Some(to),
+            PanelCmd::Switch(to) => self.switch(to, assets),
+            PanelCmd::Save => self.save(),
+            PanelCmd::LoadFromDisk => self.load_from_disk(assets),
+            PanelCmd::Discard => {
+                if let Some(to) = self.panel.pending.take() {
+                    self.switch(to, assets);
+                }
+            }
+            PanelCmd::Keep => self.panel.pending = None,
+        }
+    }
+
+    /// Цельный черновик — заезд по нему машиной гаража; изменённый — заново, без лучшего круга.
+    fn leave_editor(&mut self, assets: &Assets) {
+        let Ok(checkpoints) = self.editor.draft.chain() else {
+            return;
+        };
+        if self.editor.draft != self.track {
+            self.set_race(self.editor.draft.clone(), checkpoints, assets);
+        }
+        self.go(assets);
     }
 
     fn make_car(config: &CarConfig, models: &Models, assets: &Assets) -> Car {
@@ -386,11 +548,21 @@ impl Racing {
         self.drive(controls(&ctx.input));
     }
 
-    /// F1 возвращает в заезд по трассе с диска.
+    /// F1 — в заезд, если цепочка цела; Ctrl+S — сохранить, Ctrl+Z — отменить.
     fn update_editor(&mut self, ctx: &Context) {
-        if ctx.input.just_pressed(KeyCode::F1) {
-            self.restart();
-            self.mode = Mode::Race;
+        let input = &ctx.input;
+        let ctrl = input.is_down(KeyCode::ControlLeft) || input.is_down(KeyCode::ControlRight);
+        if ctrl && input.just_pressed(KeyCode::KeyS) {
+            self.panel.queue.push(PanelCmd::Save);
+        }
+        if ctrl && input.just_pressed(KeyCode::KeyZ) {
+            self.panel.queue.push(PanelCmd::Edit(EditorCmd::Undo));
+        }
+        for cmd in mem::take(&mut self.panel.queue) {
+            self.apply_panel(cmd, &ctx.assets);
+        }
+        if input.just_pressed(KeyCode::F1) {
+            self.leave_editor(&ctx.assets);
             return;
         }
         self.editor.control(&ctx.input);
@@ -490,7 +662,7 @@ impl Racing {
     /// Черновик, деталь инструмента и клетка под курсором.
     fn draw_editor(&self, ctx: &Context, alpha: f32) -> Scene {
         let e = &self.editor;
-        let mut models = e.layout.draws.clone();
+        let mut models = e.draws();
         let mut meshes = Vec::new();
         if let Some(ray) = ctx.cursor_ray() {
             models.extend(e.preview(ray, &self.models));
@@ -627,7 +799,8 @@ impl Game for Racing {
             Mode::Race if self.tuning.open => {
                 self.tuning.ui(ui, config, egui::Align2::RIGHT_TOP);
             }
-            Mode::Race | Mode::Editor => {}
+            Mode::Editor => self.panel.ui(ui, &self.editor, &self.path),
+            Mode::Race => {}
         }
         let Some(error) = &self.error else {
             return;
@@ -659,12 +832,14 @@ mod tests {
     use egui_kittest::kittest::Queryable;
     use engine::ElementState::{Pressed, Released};
     use engine::egui::accesskit::Role;
-    use engine::{Mat4, Quat, Sprite, Triangle, text};
+    use engine::{Mat4, Quat, Ray, Sprite, Triangle, text};
 
     use super::*;
+    use crate::editor::Tool;
     use crate::ghost::{Lap, Sample};
     use crate::layout::{self, ROAD};
-    use crate::pieces::LEVEL;
+    use crate::pieces::{LEVEL, decor_piece};
+    use crate::track::{DraftError, Entry};
 
     const OVAL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/testdata/oval.toml");
 
@@ -1697,6 +1872,294 @@ mod tests {
         assert_eq!(g.path, path);
         assert_eq!(g.start, Spawn::start(&checkpoints));
         assert_eq!(g.layout.draws.len(), layout::place(&track).len());
+    }
+
+    #[test]
+    fn new_track_name_follows_largest_number() {
+        assert_eq!(new_track_name(&[]), "track01.toml");
+        let tracks = [
+            "/t/track01.toml",
+            "/t/track03.toml",
+            "/t/oval.toml",
+            "/t/track7.txt",
+        ]
+        .map(PathBuf::from);
+        assert_eq!(new_track_name(&tracks), "track04.toml");
+    }
+
+    #[test]
+    fn list_tracks_takes_toml_files_by_name() {
+        let dir = temp_tracks("list");
+        fs::write(dir.tracks.join("notes.txt"), "").expect("запись");
+        let names: Vec<_> = (list_tracks(&dir.tracks).expect("список").iter())
+            .map(|p| p.file_name().expect("имя").to_owned())
+            .collect();
+        assert_eq!(names, ["track01.toml", "track03.toml"]);
+        let missing = dir.tracks.join("нет");
+        let error = list_tracks(&missing).expect_err("нет каталога");
+        assert!(error.starts_with(&missing.display().to_string()), "{error}");
+    }
+
+    /// Овал — `track01`, восьмёрка — `track03` каталога теста; машины из `assets/`.
+    fn temp_tracks(name: &str) -> Dirs {
+        let tracks = temp_dir(name);
+        fs::copy(OVAL, tracks.join("track01.toml")).expect("копия");
+        fs::write(tracks.join("track03.toml"), EIGHT).expect("копия");
+        Dirs {
+            tracks,
+            cars: CARS_DIR.into(),
+        }
+    }
+
+    const EIGHT: &str = include_str!("testdata/bridge8.toml");
+
+    /// В редакторе овала `track01` каталога теста.
+    fn editing(name: &str, ctx: &mut Context) -> Racing {
+        let dirs = temp_tracks(name);
+        let path = dirs.track(None);
+        let text = fs::read_to_string(&path).expect("овал");
+        let mut g = Racing::new(path, text, dirs, &mut ctx.assets);
+        tap(&mut g, ctx, KeyCode::F1);
+        assert_eq!(g.mode, Mode::Editor);
+        g
+    }
+
+    /// Отвесно вниз над точкой `x, z`.
+    fn down(x: f32, z: f32) -> Ray {
+        Ray {
+            origin: vec3(x, 30.0, z),
+            dir: Vec3::NEG_Y,
+        }
+    }
+
+    /// Конус внутри овала: цепочка цела, черновик `dirty`.
+    fn add_cone(g: &mut Racing, ctx: &mut Context) {
+        let piece = decor_piece("cone").expect("декор");
+        let cone = Tool::Decor { piece, yaw: 0.0 };
+        g.panel.queue.push(PanelCmd::Edit(EditorCmd::Tool(cone)));
+        tick(g, ctx);
+        assert!(g.editor.click(down(14.0, 10.0), &g.models, &ctx.assets));
+        assert!(g.editor.dirty());
+    }
+
+    #[test]
+    fn f1_races_whole_draft_unsaved_and_resets_best_lap_only_after_edit() {
+        let mut ctx = Context::default();
+        let mut g = editing("f1-draft", &mut ctx);
+        let file = fs::read_to_string(&g.path).expect("файл");
+        g.race.best = Some(500);
+        g.ghost.best = Some(still_lap("race", Mat4::IDENTITY));
+        tap(&mut g, &mut ctx, KeyCode::F1);
+        assert_eq!((g.mode, g.race.best), (Mode::Race, Some(500)));
+        tap(&mut g, &mut ctx, KeyCode::F1);
+        add_cone(&mut g, &mut ctx);
+        g.race.ticks = 77;
+        tap(&mut g, &mut ctx, KeyCode::F1);
+        assert_eq!(g.mode, Mode::Race);
+        assert_eq!((g.race.best, g.ghost.best.is_none()), (None, true));
+        assert_eq!(g.track, g.editor.draft);
+        assert_eq!(g.layout.draws, g.editor.layout.draws);
+        assert!(placed_at(&g, g.start));
+        assert_eq!(g.race.ticks, 0);
+        assert!(g.editor.dirty());
+        assert_eq!(fs::read_to_string(&g.path).expect("файл"), file);
+    }
+
+    #[test]
+    fn f1_with_broken_chain_stays_in_editor_naming_piece() {
+        let mut ctx = Context::default();
+        let mut g = editing("f1-broken", &mut ctx);
+        g.panel
+            .queue
+            .push(PanelCmd::Edit(EditorCmd::Tool(Tool::Erase)));
+        tick(&mut g, &mut ctx);
+        // roadStraight [4, 0] — третья деталь овала.
+        assert!(g.editor.click(down(18.0, 2.0), &g.models, &ctx.assets));
+        let track = g.track.clone();
+        tap(&mut g, &mut ctx, KeyCode::F1);
+        assert_eq!(g.mode, Mode::Editor);
+        assert_eq!(g.track, track);
+        let entry = g.editor.chain.as_ref().err().and_then(DraftError::entry);
+        let Some(Entry::Road(i)) = entry else {
+            panic!("{:?}", g.editor.chain);
+        };
+        let status = editor_panel::chain_status(&g.editor.chain);
+        assert!(
+            status.starts_with(&format!("деталь #{}: ", i + 1)),
+            "{status}"
+        );
+        g.draw(&mut ctx, 1.0);
+        let scene = ctx.gfx.scene.take().expect("сцена");
+        assert_eq!(scene.models, g.editor.draws());
+        assert!(scene.models.iter().any(|m| m.tint == editor::BLOCKED));
+    }
+
+    fn ctrl(g: &mut Racing, ctx: &mut Context, key: KeyCode) {
+        ctx.input.on_key(KeyCode::ControlLeft, Pressed, false);
+        tap(g, ctx, key);
+        ctx.input.on_key(KeyCode::ControlLeft, Released, false);
+    }
+
+    #[test]
+    fn ctrl_s_writes_draft_and_tells_watcher_ctrl_z_undoes() {
+        let mut ctx = Context::default();
+        let mut g = editing("ctrl-s", &mut ctx);
+        let oval = g.editor.draft.clone();
+        add_cone(&mut g, &mut ctx);
+        tap(&mut g, &mut ctx, KeyCode::KeyS);
+        assert!(g.editor.dirty(), "S без Ctrl");
+        ctrl(&mut g, &mut ctx, KeyCode::KeyS);
+        assert!(!g.editor.dirty());
+        let text = fs::read_to_string(&g.path).expect("файл");
+        assert_eq!(TrackDraft::parse(&text), Ok(g.editor.draft.clone()));
+        assert_eq!(
+            g.watch.poll(&g.path),
+            Ok(None),
+            "своё сохранение — не изменение"
+        );
+        assert_eq!(g.panel.error, None);
+        ctrl(&mut g, &mut ctx, KeyCode::KeyZ);
+        assert_eq!(g.editor.draft, oval);
+
+        g.path = g.dirs.tracks.join("нет/track.toml");
+        ctrl(&mut g, &mut ctx, KeyCode::KeyS);
+        let error = g.panel.error.clone().expect("ошибка");
+        assert!(error.starts_with(&g.path.display().to_string()), "{error}");
+        assert!(g.editor.dirty());
+        g.panel.queue.push(PanelCmd::LoadFromDisk);
+        tick(&mut g, &mut ctx);
+        assert!(g.panel.error.is_some() && g.editor.dirty());
+    }
+
+    #[test]
+    fn new_creates_next_free_track_with_garage_car() {
+        let mut ctx = Context::default();
+        let mut g = editing("new", &mut ctx);
+        let oval = g.track.clone();
+        g.garage.selected = car_index(&g, "sedan-sports");
+        g.panel.queue.push(PanelCmd::Switch(Switch::New));
+        tick(&mut g, &mut ctx);
+        let path = g.dirs.tracks.join("track04.toml");
+        assert_eq!(g.path, path);
+        let empty = TrackDraft {
+            car: "sedan-sports".into(),
+            roads: Vec::new(),
+            decor: Vec::new(),
+        };
+        let text = fs::read_to_string(&path).expect("файл");
+        assert_eq!(TrackDraft::parse(&text), Ok(empty.clone()));
+        assert_eq!(g.editor.draft, empty);
+        assert!(!g.editor.dirty());
+        let names = ["track01.toml", "track03.toml", "track04.toml"];
+        assert_eq!(g.panel.tracks, names.map(|n| g.dirs.tracks.join(n)));
+        tap(&mut g, &mut ctx, KeyCode::F1);
+        assert_eq!(g.mode, Mode::Editor, "без roadStart");
+        assert_eq!(g.track, oval);
+
+        fs::remove_dir_all(&g.dirs.tracks).expect("удаление");
+        g.panel.queue.push(PanelCmd::Switch(Switch::New));
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.path, path);
+        let error = g.panel.error.clone().expect("ошибка");
+        assert!(
+            error.starts_with(&g.dirs.tracks.display().to_string()),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn new_and_open_wait_for_confirmation_while_dirty() {
+        let mut ctx = Context::default();
+        let mut g = editing("confirm", &mut ctx);
+        let first = g.path.clone();
+        add_cone(&mut g, &mut ctx);
+        let draft = g.editor.draft.clone();
+        g.panel.queue.push(PanelCmd::Switch(Switch::New));
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.panel.pending, Some(Switch::New));
+        assert_eq!(g.editor.draft, draft);
+        assert!(!g.dirs.tracks.join("track04.toml").exists());
+        g.panel.queue.push(PanelCmd::Keep);
+        tick(&mut g, &mut ctx);
+        assert_eq!((&g.panel.pending, &g.editor.draft), (&None, &draft));
+
+        let eight = g.dirs.tracks.join("track03.toml");
+        g.panel
+            .queue
+            .push(PanelCmd::Switch(Switch::Open(eight.clone())));
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.panel.pending, Some(Switch::Open(eight.clone())));
+        assert_eq!(g.path, first);
+        g.panel.queue.push(PanelCmd::Discard);
+        tick(&mut g, &mut ctx);
+        let want = TrackDraft::parse(EIGHT).expect("восьмёрка");
+        assert_eq!((&g.path, &g.panel.pending), (&eight, &None));
+        assert_eq!((&g.editor.draft, &g.track), (&want, &want));
+        assert!(!g.editor.dirty());
+
+        g.panel.queue.push(PanelCmd::Discard);
+        g.panel
+            .queue
+            .push(PanelCmd::Switch(Switch::Open(first.clone())));
+        tick(&mut g, &mut ctx);
+        assert_eq!((&g.path, &g.panel.pending), (&first, &None));
+        let missing = g.dirs.tracks.join("track09.toml");
+        g.panel
+            .queue
+            .push(PanelCmd::Switch(Switch::Open(missing.clone())));
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.path, first);
+        let error = g.panel.error.clone().expect("ошибка");
+        assert!(error.starts_with(&missing.display().to_string()), "{error}");
+    }
+
+    #[test]
+    fn external_change_keeps_dirty_draft_and_replaces_clean_one() {
+        let mut ctx = Context::default();
+        let mut g = editing("external", &mut ctx);
+        add_cone(&mut g, &mut ctx);
+        let draft = g.editor.draft.clone();
+        fs::write(&g.path, EIGHT).expect("запись");
+        ticks(&mut g, &mut ctx, engine::WATCH_TICKS);
+        assert_eq!(g.editor.draft, draft);
+        assert!(g.panel.changed_on_disk);
+        g.panel.queue.push(PanelCmd::LoadFromDisk);
+        tick(&mut g, &mut ctx);
+        let eight = TrackDraft::parse(EIGHT).expect("восьмёрка");
+        assert_eq!((&g.editor.draft, &g.track), (&eight, &eight));
+        assert!(!g.editor.dirty() && !g.panel.changed_on_disk);
+        assert_eq!(g.panel.error, None);
+        ticks(&mut g, &mut ctx, engine::WATCH_TICKS);
+        assert_eq!(g.editor.draft, eight, "загруженный текст — не изменение");
+
+        let oval = fs::read_to_string(OVAL).expect("овал");
+        fs::write(&g.path, &oval).expect("запись");
+        ticks(&mut g, &mut ctx, engine::WATCH_TICKS);
+        let want = TrackDraft::parse(&oval).expect("овал");
+        assert_eq!((&g.editor.draft, &g.track), (&want, &want));
+        assert!(!g.panel.changed_on_disk);
+
+        fs::write(&g.path, "car = \"race\"\n").expect("запись");
+        ticks(&mut g, &mut ctx, engine::WATCH_TICKS);
+        assert_eq!(g.editor.draft.roads, []);
+        assert_eq!(g.track, want, "заезд — по прежней цельной");
+        assert!(g.error.is_some());
+    }
+
+    #[test]
+    fn editor_panel_shown_only_in_editor() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        g.panel.tracks = vec![g.path.clone()];
+        let mut h = harness(g);
+        assert!(h.query_by_label("Редактор").is_none());
+        h.state_mut().mode = Mode::Editor;
+        h.run();
+        assert!(h.query_by_label("Редактор").is_some());
+        h.get_by_label("стереть").click();
+        h.run();
+        let erase = PanelCmd::Edit(EditorCmd::Tool(Tool::Erase));
+        assert_eq!(h.state().panel.queue, [erase]);
     }
 
     #[test]

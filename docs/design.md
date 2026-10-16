@@ -214,6 +214,9 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 - Прямоугольник чекпоинта `racing` поднимается до ближайшей дороги выше в клетках стыка, без неё — без предела. С высотой в полосу уровня (2 м) быстрый прыжок с `roadRamp` перелетал чекпоинт за трамплином, и круг молча не засчитывался; без предела под мостом машина сверху засчитала бы чекпоинт нижней дороги. → тесты `track::checkpoint_without_road_above_counts_any_jump_height`, `track::bridge8_checkpoints_stop_under_bridge_deck`, `autopilot::hatchback_laps_ramp_jump`
 - Торец барьера `roadRampLong` прямо за поворотом ловит машину, срезавшую поворот, и она стоит у него без ошибки. На стартовых трассах между поворотом и рампой — прямая. → тест `autopilot::race_future_laps_bridge_eight`, `autopilot::every_car_laps_every_track`
 - Редактор `racing` перестраивает `Layout` после каждой правки и отмены: пикинг декора идёт лучом по его `StaticWorld`, и по старому `Layout` декор вставал бы на прежнюю трассу — на снятую дорогу или сквозь новую. → тест `editor::picking_follows_layout_after_edit_and_undo`
+- Внешнее изменение трассы при `dirty` черновике редактора `racing` черновик не трогает, а ставит флаг до «Загрузить с диска» или «Сохранить»; «Новый» и открытие другой трассы при `dirty` ждут «Отбросить» в панели. Иначе несохранённые правки молча пропали бы. → тесты `racing::external_change_keeps_dirty_draft_and_replaces_clean_one`, `racing::new_and_open_wait_for_confirmation_while_dirty`
+- Заезд `racing` идёт по последней цельной трассе — с диска или по черновику, с которым вышли по F1; трасса с рваной цепочкой открывается только в редактор, а при запуске игры — паника. Лучший круг и призрак сбрасываются только при смене этой трассы: F1 без правок их оставляет. → тесты `racing::f1_races_whole_draft_unsaved_and_resets_best_lap_only_after_edit`, `racing::f1_with_broken_chain_stays_in_editor_naming_piece`
+
 
 ## Этапы
 

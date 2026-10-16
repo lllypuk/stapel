@@ -9,10 +9,12 @@ use engine::{
 
 use crate::layout::{Layout, Models, place};
 use crate::pieces::{DecorPiece, KIT_SCALE, LEVEL, PIECES, Piece, Rot};
-use crate::track::{DecorEntry, Entry, MAX_LEVEL, RoadEntry, TrackDraft};
+use crate::track::{Checkpoint, DecorEntry, DraftError, Entry, MAX_LEVEL, RoadEntry, TrackDraft};
 
 /// Снимков отмены не больше.
 pub(crate) const UNDO_LIMIT: usize = 100;
+/// Шаг поворота декора, градусы.
+pub(crate) const YAW_STEP: f32 = 15.0;
 /// Дальше луч по миру не ищет, м.
 const PICK_RANGE: f32 = 1000.0;
 /// Наклон взгляда камеры вниз.
@@ -51,6 +53,23 @@ pub(crate) enum Tool {
         yaw: f32,
     },
     Erase,
+}
+
+impl Tool {
+    /// На `step` шагов: дорога — по 90°, декор — по `YAW_STEP`.
+    pub(crate) fn turned(self, step: i8) -> Self {
+        match self {
+            Self::Road { piece, rot } => Self::Road {
+                piece,
+                rot: Rot::from_degrees(rot.degrees() + 90 * i64::from(step)).expect("кратен 90"),
+            },
+            Self::Decor { piece, yaw } => Self::Decor {
+                piece,
+                yaw: (yaw + YAW_STEP * f32::from(step)).rem_euclid(360.0),
+            },
+            Self::Erase => self,
+        }
+    }
 }
 
 /// Команда панели редактора; разбирает следующий `update`.
@@ -155,6 +174,8 @@ pub(crate) struct Editor {
     pub(crate) draft: TrackDraft,
     /// Перестраивается после каждой правки и отмены: по нему идёт пикинг.
     pub(crate) layout: Layout,
+    /// Цепочка черновика; пересчитывается вместе с `layout`.
+    pub(crate) chain: Result<Vec<Checkpoint>, DraftError>,
     pub(crate) tool: Tool,
     pub(crate) level: u32,
     pub(crate) orbit: Orbit,
@@ -205,6 +226,7 @@ impl Editor {
         let mid = all.map_or(Vec3::ZERO, |b| (b.min + b.max) / 2.0);
         Self {
             layout,
+            chain: draft.chain(),
             orbit: Orbit::new(vec2(mid.x, mid.z)),
             tool: Tool::Road {
                 piece: &PIECES[0],
@@ -226,6 +248,34 @@ impl Editor {
         self.saved = self.draft.clone();
     }
 
+    /// Черновик с диска вместо текущего, чистый и без отмены; камера, инструмент и уровень прежние.
+    pub(crate) fn replace(&mut self, draft: TrackDraft, models: &Models, assets: &Assets) {
+        self.saved = draft.clone();
+        self.draft = draft;
+        self.undo.clear();
+        self.rebuild(models, assets);
+    }
+
+    fn rebuild(&mut self, models: &Models, assets: &Assets) {
+        self.layout = Layout::new(&self.draft, models, assets);
+        self.chain = self.draft.chain();
+    }
+
+    /// Модели черновика; деталь, на которой рвётся цепочка, — `BLOCKED`.
+    pub(crate) fn draws(&self) -> Vec<ModelDraw> {
+        let broken = self.chain.as_ref().err().and_then(DraftError::entry);
+        (self.layout.draws.iter().zip(&self.layout.bounds))
+            .map(|(d, &(entry, _))| ModelDraw {
+                tint: if Some(entry) == broken {
+                    BLOCKED
+                } else {
+                    d.tint
+                },
+                ..d.clone()
+            })
+            .collect()
+    }
+
     pub(crate) fn apply(&mut self, cmd: EditorCmd, models: &Models, assets: &Assets) {
         match cmd {
             EditorCmd::Tool(tool) => self.tool = tool,
@@ -233,7 +283,7 @@ impl Editor {
             EditorCmd::Undo => {
                 if let Some(before) = self.undo.pop_back() {
                     self.draft = before;
-                    self.layout = Layout::new(&self.draft, models, assets);
+                    self.rebuild(models, assets);
                 }
             }
         }
@@ -376,7 +426,7 @@ impl Editor {
             self.undo.pop_front();
         }
         self.undo.push_back(before);
-        self.layout = Layout::new(&self.draft, models, assets);
+        self.rebuild(models, assets);
         true
     }
 }
@@ -790,6 +840,82 @@ mod tests {
         assert_eq!(tints(&e, up), []);
         e.apply(EditorCmd::Tool(Tool::Erase), &models, &assets);
         assert_eq!(tints(&e, down(2.0, 2.0)), []);
+    }
+
+    #[test]
+    fn turned_steps_road_by_quarter_and_decor_by_yaw_step_with_wrap() {
+        assert_eq!(
+            road_tool("roadStraight", 270).turned(1),
+            road_tool("roadStraight", 0)
+        );
+        assert_eq!(
+            road_tool("roadStraight", 0).turned(-1),
+            road_tool("roadStraight", 270)
+        );
+        assert_eq!(decor_tool("cone", 350.0).turned(1), decor_tool("cone", 5.0));
+        assert_eq!(
+            decor_tool("cone", 0.0).turned(-1),
+            decor_tool("cone", 345.0)
+        );
+        assert_eq!(Tool::Erase.turned(1), Tool::Erase);
+        assert_eq!(
+            road_tool("roadStraight", 90).turned(2),
+            road_tool("roadStraight", 270)
+        );
+        assert_eq!(decor_tool("cone", 0.0).turned(2), decor_tool("cone", 30.0));
+    }
+
+    #[test]
+    fn replace_takes_clean_draft_without_undo_and_keeps_camera() {
+        let (assets, models, mut e) = empty();
+        e.apply(EditorCmd::Tool(decor_tool("cone", 0.0)), &models, &assets);
+        assert!(e.click(down(1.0, 1.0), &models, &assets));
+        e.orbit.turn = 2;
+        let start = road("roadStart", IVec2::ZERO, 0, rot(0));
+        let disk = draft(vec![start], Vec::new());
+        e.replace(disk.clone(), &models, &assets);
+        assert_eq!(e.draft, disk);
+        assert!(!e.dirty());
+        assert_eq!(e.chain, disk.chain());
+        assert_eq!(e.layout.draws.len(), place(&disk).len());
+        assert_eq!((e.orbit.turn, e.tool), (2, decor_tool("cone", 0.0)));
+        e.apply(EditorCmd::Undo, &models, &assets);
+        assert_eq!(e.draft, disk);
+    }
+
+    #[test]
+    fn draws_tint_piece_breaking_chain() {
+        let (assets, models) = loaded();
+        let start = road("roadStart", IVec2::ZERO, 0, rot(0));
+        let cone = decor("cone", vec3(20.0, 0.0, 20.0));
+        let mut e = Editor::new(draft(vec![start], vec![cone]), &models, &assets);
+        let Err(error) = &e.chain else {
+            panic!("одна деталь — не круг");
+        };
+        assert_eq!(error.entry(), Some(Entry::Road(0)));
+        let draws = e.draws();
+        assert_eq!(draws.len(), e.layout.draws.len());
+        for ((d, plain), (entry, _)) in draws.iter().zip(&e.layout.draws).zip(&e.layout.bounds) {
+            let tint = if *entry == Entry::Road(0) {
+                BLOCKED
+            } else {
+                Color::WHITE
+            };
+            assert_eq!(
+                *d,
+                ModelDraw {
+                    tint,
+                    ..plain.clone()
+                }
+            );
+        }
+        assert!(
+            draws.iter().any(|d| d.tint == Color::WHITE),
+            "декор не подсвечен"
+        );
+        e.replace(draft(Vec::new(), vec![cone]), &models, &assets);
+        assert_eq!(e.chain.as_ref().err().and_then(DraftError::entry), None);
+        assert_eq!(e.draws(), e.layout.draws);
     }
 
     #[test]
