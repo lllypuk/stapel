@@ -1,0 +1,14 @@
+model = "sedan-sports"
+mass = 1200.0
+power = 130000.0
+max_speed = 36.0
+brake = 12000.0
+grip_front = 1.0
+grip_rear = 1.0
+steer_max = 34.0
+steer_at_speed = 0.35
+spring = 35000.0
+damper = 3000.0
+travel = 0.18
+com_offset = [0.0, -0.15, 0.05]
+drive = "rwd"

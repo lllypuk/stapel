@@ -376,13 +376,13 @@
 **Files:**
 - Create: `games/racing/src/car_config.rs`, `games/racing/assets/cars/` (`race.toml`, `race-future.toml`, `sedan-sports.toml`, `hatchback-sports.toml`)
 
-- [ ] тесты:
+- [x] тесты:
   - разбор полей;
   - неизвестный `drive`, отрицательная масса, нулевой ход — ошибка;
   - точки крепления и радиус колёс из `Node::bounds` узлов `wheel-*` у всех четырёх машин;
   - машина без колёс — ошибка.
-- [ ] `car_config.rs`
-- [ ] мутанты по файлу, `make cov`, `make check`
+- [x] `car_config.rs`
+- [x] мутанты по файлу, `make cov`, `make check`
 
 ### Task 14: Динамика машины
 

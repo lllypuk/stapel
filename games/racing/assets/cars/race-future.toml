@@ -1,0 +1,14 @@
+model = "race-future"
+mass = 850.0
+power = 170000.0
+max_speed = 44.0
+brake = 13000.0
+grip_front = 1.25
+grip_rear = 1.2
+steer_max = 30.0
+steer_at_speed = 0.3
+spring = 32000.0
+damper = 2600.0
+travel = 0.14
+com_offset = [0.0, -0.2, 0.0]
+drive = "awd"

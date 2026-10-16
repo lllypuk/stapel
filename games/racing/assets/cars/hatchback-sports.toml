@@ -1,0 +1,14 @@
+model = "hatchback-sports"
+mass = 1000.0
+power = 110000.0
+max_speed = 34.0
+brake = 11000.0
+grip_front = 1.05
+grip_rear = 0.95
+steer_max = 36.0
+steer_at_speed = 0.4
+spring = 30000.0
+damper = 2600.0
+travel = 0.18
+com_offset = [0.0, -0.15, 0.1]
+drive = "fwd"

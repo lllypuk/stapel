@@ -1,0 +1,14 @@
+model = "race"
+mass = 900.0
+power = 150000.0
+max_speed = 40.0
+brake = 12000.0
+grip_front = 1.2
+grip_rear = 1.1
+steer_max = 32.0
+steer_at_speed = 0.3
+spring = 30000.0
+damper = 2500.0
+travel = 0.15
+com_offset = [0.0, -0.2, 0.0]
+drive = "rwd"
