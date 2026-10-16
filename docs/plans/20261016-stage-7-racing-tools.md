@@ -238,12 +238,12 @@
 **Files:**
 - Modify: `engine/src/input.rs`, `engine/src/ui.rs`, `engine/src/app.rs`, `docs/design.md`, `CLAUDE.md`
 
-- [ ] тесты: строки и пиксели складываются в строки за тик; сброс в `end_tick` и при потере фокуса
-- [ ] тест: колесо над панелью по текущему курсору в `Input` не попадает, вне панели — попадает
-- [ ] `Input::on_wheel`, `Input::wheel`, `PIXELS_PER_LINE`; маршрутизация в `ui::to_input` и `app.rs`
-- [ ] `docs/design.md`: «колесо над панелью — только egui» в слой ввода → тест
-- [ ] `CLAUDE.md`, «Архитектура»: колёсико во вводе
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] тесты: строки и пиксели складываются в строки за тик; сброс в `end_tick` и при потере фокуса
+- [x] тест: колесо над панелью по текущему курсору в `Input` не попадает, вне панели — попадает
+- [x] `Input::on_wheel`, `Input::wheel`, `PIXELS_PER_LINE`; маршрутизация в `ui::to_input` и `app.rs`
+- [x] `docs/design.md`: «колесо над панелью — только egui» в слой ввода → тест
+- [x] `CLAUDE.md`, «Архитектура»: колёсико во вводе
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 4: Процедурный звук в `Assets`
 

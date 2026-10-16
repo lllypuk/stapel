@@ -122,6 +122,10 @@ impl<G: Game> ApplicationHandler for App<G> {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => r.ctx.input.on_button(button, state),
+            WindowEvent::MouseWheel { delta, .. } => {
+                #[expect(clippy::cast_possible_truncation, reason = "масштаб окна — 1–4")]
+                r.ctx.input.on_wheel(delta, r.window.scale_factor() as f32);
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 let p = position.cast::<f32>();
                 r.ctx.input.on_cursor(Some(Vec2::new(p.x, p.y)));

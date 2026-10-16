@@ -2,8 +2,11 @@ use std::collections::HashSet;
 use std::hash::Hash;
 
 use glam::Vec2;
-use winit::event::{ElementState, MouseButton};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 use winit::keyboard::KeyCode;
+
+/// Логических пикселей тачпада на строку колеса.
+pub const PIXELS_PER_LINE: f32 = 20.0;
 
 /// Удерживаемые кнопки одного устройства и их фронты с прошлого тика.
 struct Buttons<T> {
@@ -51,6 +54,7 @@ pub struct Input {
     mouse: Buttons<MouseButton>,
     cursor: Option<Vec2>,
     mouse_delta: Vec2,
+    wheel: Vec2,
 }
 
 impl Input {
@@ -76,11 +80,23 @@ impl Input {
         self.mouse_delta += delta;
     }
 
+    /// Прокрутка колеса или тачпада; `scale` — физических пикселей на логический.
+    pub fn on_wheel(&mut self, delta: MouseScrollDelta, scale: f32) {
+        self.wheel += match delta {
+            MouseScrollDelta::LineDelta(x, y) => Vec2::new(x, y),
+            MouseScrollDelta::PixelDelta(p) => {
+                let p = p.cast::<f32>();
+                Vec2::new(p.x, p.y) / (scale * PIXELS_PER_LINE)
+            }
+        };
+    }
+
     /// Окно не получит отпускания клавиш и кнопок, отпущенных вне его.
     pub fn focus_lost(&mut self) {
         self.keys.down.clear();
         self.mouse.down.clear();
         self.mouse_delta = Vec2::ZERO;
+        self.wheel = Vec2::ZERO;
     }
 
     /// Клавиша удерживается.
@@ -118,16 +134,24 @@ impl Input {
         self.mouse_delta
     }
 
-    /// Сбрасывает нажатия, отпускания и сдвиг мыши тика.
+    /// Прокрутка с прошлого тика в строках; Y > 0 — от себя.
+    pub fn wheel(&self) -> Vec2 {
+        self.wheel
+    }
+
+    /// Сбрасывает нажатия, отпускания, сдвиг мыши и прокрутку тика.
     pub fn end_tick(&mut self) {
         self.keys.end_tick();
         self.mouse.end_tick();
         self.mouse_delta = Vec2::ZERO;
+        self.wheel = Vec2::ZERO;
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use winit::dpi::PhysicalPosition;
+
     use super::*;
     use ElementState::{Pressed, Released};
 
@@ -239,5 +263,29 @@ mod tests {
         i.on_mouse_motion(Vec2::new(1.0, 2.0));
         i.focus_lost();
         assert_eq!(i.mouse_delta(), Vec2::ZERO);
+    }
+
+    #[test]
+    fn wheel_sums_lines_and_pixels_until_end_tick() {
+        let mut i = Input::default();
+        i.on_wheel(MouseScrollDelta::LineDelta(1.0, -2.0), 2.0);
+        i.on_wheel(
+            MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+                f64::from(4.0 * PIXELS_PER_LINE),
+                f64::from(PIXELS_PER_LINE),
+            )),
+            2.0,
+        );
+        assert_eq!(i.wheel(), Vec2::new(3.0, -1.5));
+        i.end_tick();
+        assert_eq!(i.wheel(), Vec2::ZERO);
+    }
+
+    #[test]
+    fn focus_lost_clears_wheel() {
+        let mut i = Input::default();
+        i.on_wheel(MouseScrollDelta::LineDelta(0.0, 1.0), 1.0);
+        i.focus_lost();
+        assert_eq!(i.wheel(), Vec2::ZERO);
     }
 }

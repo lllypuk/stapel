@@ -17,14 +17,14 @@ pub struct UiFrame {
 /// Идёт ли событие окна в `Input`; egui получает все события независимо от ответа.
 /// Отпускание кнопки идёт всегда: иначе нажатая в мире кнопка, отпущенная над панелью, залипнет.
 pub(crate) fn to_input(event: &WindowEvent, wants_pointer: bool) -> bool {
-    let press = matches!(
+    let pointer = matches!(
         event,
         WindowEvent::MouseInput {
             state: ElementState::Pressed,
             ..
-        }
+        } | WindowEvent::MouseWheel { .. }
     );
-    !(press && wants_pointer)
+    !(pointer && wants_pointer)
 }
 
 /// Занят ли указатель egui при курсоре `cursor` в физических пикселях.
@@ -77,7 +77,7 @@ pub fn set_font(ctx: &egui::Context, path: impl AsRef<Path>) {
 #[cfg(test)]
 mod tests {
     use winit::dpi::PhysicalPosition;
-    use winit::event::{DeviceId, MouseButton};
+    use winit::event::{DeviceId, MouseButton, MouseScrollDelta, TouchPhase};
 
     use super::*;
 
@@ -93,6 +93,17 @@ mod tests {
     fn press_over_ui_does_not_reach_input() {
         assert!(!to_input(&button(ElementState::Pressed), true));
         assert!(to_input(&button(ElementState::Pressed), false));
+    }
+
+    #[test]
+    fn wheel_over_ui_does_not_reach_input() {
+        let wheel = WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta: MouseScrollDelta::LineDelta(0.0, 1.0),
+            phase: TouchPhase::Moved,
+        };
+        assert!(!to_input(&wheel, true));
+        assert!(to_input(&wheel, false));
     }
 
     #[test]
