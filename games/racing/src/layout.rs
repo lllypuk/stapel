@@ -208,6 +208,7 @@ mod tests {
                     cell: ivec2(3, -2),
                     level: 0,
                     rot,
+                    line: 0,
                 };
                 let cells: Vec<_> = piece.cells(rot).map(|c| road.cell + c).collect();
                 for (node, global) in model.nodes.iter().zip(&model.rest.globals) {
@@ -354,6 +355,7 @@ pos = [20.0, 0.0, 20.0]
             cell: ivec2(1, 1),
             level: 0,
             rot,
+            line: 0,
         };
         let frame = road.frame();
         let world = Layout::new(&track(vec![road]), models, assets).world;
@@ -411,6 +413,7 @@ pos = [20.0, 0.0, 20.0]
             cell: IVec2::ZERO,
             level: 0,
             rot: Rot::default(),
+            line: 0,
         }]);
         assert_eq!(place(&flat).len(), 1);
     }

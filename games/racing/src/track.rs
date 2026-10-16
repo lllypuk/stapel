@@ -5,7 +5,7 @@ use engine::{IVec2, Mat4, Vec3, vec3};
 use serde::Deserialize;
 use toml::Spanned;
 
-use crate::pieces::{DecorPiece, KIT_SCALE, LEVEL, Piece, Rot, decor_piece, piece};
+use crate::pieces::{DecorPiece, End, KIT_SCALE, LEVEL, Piece, Rot, decor_piece, piece};
 
 /// Ошибка разбора трассы; `line` — с единицы, строка поля `piece`.
 #[derive(Debug, PartialEq)]
@@ -24,6 +24,20 @@ pub(crate) enum TrackError {
         cell: IVec2,
         level: u32,
     },
+    Start {
+        count: usize,
+    },
+    Gap {
+        line: usize,
+    },
+    Branch {
+        line: usize,
+    },
+    Level {
+        line: usize,
+        level: u32,
+        found: u32,
+    },
 }
 
 impl fmt::Display for TrackError {
@@ -37,6 +51,13 @@ impl fmt::Display for TrackError {
             Self::Overlap { line, cell, level } => {
                 write!(f, "строка {line}: клетка {cell} уровня {level} уже занята")
             }
+            Self::Start { count } => write!(f, "нужен один roadStart, а их {count}"),
+            Self::Gap { line } => write!(f, "строка {line}: за выходом детали нет дороги"),
+            Self::Branch { line } => write!(f, "строка {line}: деталь вне цепочки от старта"),
+            Self::Level { line, level, found } => write!(
+                f,
+                "строка {line}: выход на уровне {level}, а дорога за ним — на уровне {found}"
+            ),
         }
     }
 }
@@ -47,9 +68,19 @@ pub(crate) struct Road {
     pub(crate) cell: IVec2,
     pub(crate) level: u32,
     pub(crate) rot: Rot,
+    pub(crate) line: usize,
 }
 
 impl Road {
+    /// Стыки в клетках и уровнях трассы.
+    fn ends(&self) -> [End; 2] {
+        self.piece.ends(self.rot).map(|e| End {
+            cell: self.cell + e.cell,
+            side: e.side,
+            level: self.level + e.level,
+        })
+    }
+
     /// Клетки детали → мир: клетки трассы по 4 м, поворот вокруг центра якорной клетки.
     pub(crate) fn frame(&self) -> Mat4 {
         let anchor = vec3(
@@ -85,6 +116,43 @@ impl Decor {
             * Mat4::from_rotation_y(self.yaw)
             * Mat4::from_scale(Vec3::splat(self.piece.scale))
             * Mat4::from_translation(self.piece.offset)
+    }
+}
+
+/// Прямоугольник поперёк дороги на выходе детали: ширина клетки, высота — полоса уровня.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Checkpoint {
+    pub(crate) road: usize,
+    /// Середина нижнего края, м.
+    pub(crate) origin: Vec3,
+    /// Горизонтальное направление цепочки.
+    pub(crate) normal: Vec3,
+}
+
+impl Checkpoint {
+    fn new(road: usize, exit: End) -> Self {
+        let step = exit.side.step().as_vec2();
+        let center = exit.cell.as_vec2() + 0.5 + step / 2.0;
+        Self {
+            road,
+            origin: vec3(center.x, exit.level as f32 * LEVEL, center.y) * KIT_SCALE,
+            normal: vec3(step.x, 0.0, step.y),
+        }
+    }
+
+    /// Отрезок движения `from → to` пересёк прямоугольник по направлению цепочки.
+    #[cfg_attr(not(test), expect(dead_code, reason = "круги считает Task 16"))]
+    pub(crate) fn crossed(&self, from: Vec3, to: Vec3) -> bool {
+        let (a, b) = (
+            (from - self.origin).dot(self.normal),
+            (to - self.origin).dot(self.normal),
+        );
+        if a >= 0.0 || b < 0.0 {
+            return false;
+        }
+        let p = from.lerp(to, a / (a - b)) - self.origin;
+        let across = self.normal.cross(Vec3::Y);
+        p.dot(across).abs() <= KIT_SCALE / 2.0 && (0.0..=LEVEL * KIT_SCALE).contains(&p.y)
     }
 }
 
@@ -160,6 +228,7 @@ impl Track {
                 cell,
                 level: r.level,
                 rot,
+                line: line(&r.piece),
             });
         }
         let decor = file
@@ -178,6 +247,50 @@ impl Track {
             road,
             decor,
         })
+    }
+
+    /// Чекпоинты на выходах деталей по цепочке от `roadStart`, первый — у старта.
+    /// Повториться может только старт: стык в занятой клетке уже отсечён `Overlap`.
+    pub(crate) fn chain(&self) -> Result<Vec<Checkpoint>, TrackError> {
+        let starts: Vec<usize> = (0..self.road.len())
+            .filter(|&i| self.road[i].piece.name == "roadStart")
+            .collect();
+        let &[start] = &starts[..] else {
+            return Err(TrackError::Start {
+                count: starts.len(),
+            });
+        };
+        let mut checkpoints = Vec::with_capacity(self.road.len());
+        let (mut road, mut exit) = (start, self.road[start].ends()[1]);
+        loop {
+            checkpoints.push(Checkpoint::new(road, exit));
+            let (cell, side) = (exit.cell + exit.side.step(), exit.side.opposite());
+            let next = (self.road.iter().enumerate())
+                .flat_map(|(i, r)| r.ends().into_iter().enumerate().map(move |e| (i, e)))
+                .filter(|(_, (_, e))| e.cell == cell && e.side == side)
+                .min_by_key(|(_, (_, e))| e.level != exit.level);
+            let line = self.road[road].line;
+            let Some((i, (entry, e))) = next else {
+                return Err(TrackError::Gap { line });
+            };
+            if e.level != exit.level {
+                return Err(TrackError::Level {
+                    line,
+                    level: exit.level,
+                    found: e.level,
+                });
+            }
+            if checkpoints.iter().any(|c| c.road == i) {
+                break;
+            }
+            (road, exit) = (i, self.road[i].ends()[1 - entry]);
+        }
+        if let Some(r) = (0..self.road.len()).find(|i| checkpoints.iter().all(|c| c.road != *i)) {
+            return Err(TrackError::Branch {
+                line: self.road[r].line,
+            });
+        }
+        Ok(checkpoints)
     }
 }
 
@@ -348,5 +461,183 @@ mod tests {
             1
         );
         assert!(!track.decor.is_empty());
+    }
+
+    fn chain(text: &str) -> Result<Vec<Checkpoint>, TrackError> {
+        Track::parse(text).expect("трасса").chain()
+    }
+
+    /// Строка `cell = …` за строкой ошибки.
+    fn cell_after(text: &str, line: usize) -> &str {
+        text.lines().nth(line).expect("строка")
+    }
+
+    #[test]
+    fn oval_chains_every_road_from_start_in_its_direction() {
+        let oval = Track::parse(include_str!("testdata/oval.toml")).expect("овал");
+        let checkpoints = oval.chain().expect("цепочка");
+        assert_eq!(
+            checkpoints.iter().map(|c| c.road).collect::<Vec<_>>(),
+            [1, 0, 9, 8, 7, 6, 5, 4, 3, 2]
+        );
+        // Старт — клетки [2, 0] и [3, 0], выход к −X.
+        assert_eq!(
+            checkpoints[0],
+            Checkpoint {
+                road: 1,
+                origin: vec3(8.0, 0.0, 2.0),
+                normal: vec3(-1.0, 0.0, 0.0),
+            }
+        );
+        // Угол [0, 0] выводит к +Z из клетки [0, 1].
+        assert_eq!(checkpoints[1].origin, vec3(2.0, 0.0, 8.0));
+        assert_eq!(checkpoints[1].normal, vec3(0.0, 0.0, 1.0));
+        for (c, next) in checkpoints.iter().zip(checkpoints.iter().cycle().skip(1)) {
+            let road = &oval.road[next.road];
+            let ahead = ((c.origin + c.normal * 2.0) / KIT_SCALE).floor().as_ivec3();
+            assert!(
+                road.piece
+                    .cells(road.rot)
+                    .any(|cell| road.cell + cell == ivec2(ahead.x, ahead.z)),
+                "{c:?} → {}",
+                road.piece.name
+            );
+        }
+    }
+
+    #[test]
+    fn gap_names_last_piece_before_it() {
+        let text = include_str!("testdata/gap.toml");
+        let e = chain(text).expect_err("цепочка с дырой");
+        let TrackError::Gap { line } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(cell_after(text, line), "cell = [6, 4]");
+        assert_eq!(
+            e.to_string(),
+            format!("строка {line}: за выходом детали нет дороги")
+        );
+    }
+
+    #[test]
+    fn branch_off_the_loop_fails() {
+        let text = include_str!("testdata/branch.toml");
+        let e = chain(text).expect_err("цепочка с веткой");
+        let TrackError::Branch { line } = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(cell_after(text, line), "cell = [3, -1]");
+        assert_eq!(
+            e.to_string(),
+            format!("строка {line}: деталь вне цепочки от старта")
+        );
+    }
+
+    #[test]
+    fn level_mismatch_fails_but_road_on_matching_level_wins() {
+        // Выход старта [0, 0] к −Z на уровне 0, мост за ним — на уровне 1.
+        let e = chain(&roads(&[
+            ("roadStart", [0, 0], 0, 0),
+            ("roadStraightBridge", [0, -1], 0, 0),
+        ]))
+        .expect_err("уровни не совпали");
+        assert_eq!(
+            e,
+            TrackError::Level {
+                line: 3,
+                level: 0,
+                found: 1
+            }
+        );
+        assert_eq!(
+            e.to_string(),
+            "строка 3: выход на уровне 0, а дорога за ним — на уровне 1"
+        );
+        assert_eq!(
+            chain(&roads(&[
+                ("roadStart", [0, 0], 0, 0),
+                ("roadStraightBridgeMid", [0, -1], 0, 0),
+                ("roadStraight", [0, -1], 0, 0),
+            ])),
+            Err(TrackError::Gap { line: 13 })
+        );
+    }
+
+    #[test]
+    fn exactly_one_start() {
+        let e = chain(&roads(&[("roadStraight", [0, 0], 0, 0)])).expect_err("без старта");
+        assert_eq!(e, TrackError::Start { count: 0 });
+        assert_eq!(e.to_string(), "нужен один roadStart, а их 0");
+        assert_eq!(
+            chain(&roads(&[
+                ("roadStart", [0, 0], 0, 0),
+                ("roadStart", [1, 0], 0, 0)
+            ])),
+            Err(TrackError::Start { count: 2 })
+        );
+    }
+
+    #[test]
+    fn figure_eight_passes_both_pieces_under_bridge_in_order() {
+        let track = Track::parse(include_str!("testdata/bridge8.toml")).expect("восьмёрка");
+        let checkpoints = track.chain().expect("цепочка");
+        assert_eq!(
+            checkpoints.iter().map(|c| c.road).collect::<Vec<_>>(),
+            (0..track.road.len()).collect::<Vec<_>>()
+        );
+        let [under, over] = [3, 12].map(|i| &track.road[i]);
+        assert_eq!((under.cell, under.level), (IVec2::ZERO, 0));
+        assert_eq!(over.cell, IVec2::ZERO);
+        assert_eq!(over.piece.name, "roadStraightBridgeMid");
+        assert_eq!(checkpoints[3].origin, vec3(0.0, 0.0, 2.0));
+        assert_eq!(checkpoints[12].origin, vec3(2.0, 2.0, 4.0));
+    }
+
+    /// Выход клетки [0, 0] к +X: плоскость x = 4, z в 0..4, y в 0..2.
+    fn exit_pos_x(level: u32) -> Checkpoint {
+        Checkpoint::new(
+            0,
+            End {
+                cell: IVec2::ZERO,
+                side: crate::pieces::Side::PosX,
+                level,
+            },
+        )
+    }
+
+    #[test]
+    fn checkpoint_counts_crossing_in_chain_direction() {
+        let c = exit_pos_x(0);
+        assert_eq!(c.origin, vec3(4.0, 0.0, 2.0));
+        assert!(c.crossed(vec3(3.5, 0.5, 2.0), vec3(4.5, 0.5, 2.5)));
+        assert!(c.crossed(vec3(3.5, 0.5, 3.9), vec3(4.5, 0.5, 3.9)));
+        assert!(c.crossed(vec3(3.5, 1.9, 0.1), vec3(4.5, 1.9, 0.1)));
+        // Пересечение на середине косого отрезка, концы — за краем прямоугольника.
+        assert!(c.crossed(vec3(3.0, 0.5, -1.0), vec3(5.0, 0.5, 5.0)));
+        // Ровно на плоскости — засчитан конец, а не начало следующего отрезка.
+        assert!(c.crossed(vec3(3.5, 0.5, 2.0), vec3(4.0, 0.5, 2.0)));
+        assert!(!c.crossed(vec3(4.0, 0.5, 2.0), vec3(4.5, 0.5, 2.0)));
+        let up = exit_pos_x(1);
+        assert!(up.crossed(vec3(3.5, 2.5, 2.0), vec3(4.5, 2.5, 2.0)));
+        assert!(!up.crossed(vec3(3.5, 0.5, 2.0), vec3(4.5, 0.5, 2.0)));
+    }
+
+    #[test]
+    fn checkpoint_ignores_reverse_crossing() {
+        let c = exit_pos_x(0);
+        assert!(!c.crossed(vec3(4.5, 0.5, 2.0), vec3(3.5, 0.5, 2.0)));
+        assert!(!c.crossed(vec3(3.0, 0.5, 2.0), vec3(3.5, 0.5, 2.0)));
+        assert!(!c.crossed(vec3(4.5, 0.5, 2.0), vec3(5.0, 0.5, 2.0)));
+    }
+
+    #[test]
+    fn parallel_road_outside_rectangle_does_not_count() {
+        let c = exit_pos_x(0);
+        for z in [4.1, 6.0, -0.1, -2.0] {
+            assert!(!c.crossed(vec3(3.5, 0.5, z), vec3(4.5, 0.5, z)), "{z}");
+        }
+        for y in [2.1, -0.1] {
+            assert!(!c.crossed(vec3(3.5, y, 2.0), vec3(4.5, y, 2.0)), "{y}");
+        }
     }
 }

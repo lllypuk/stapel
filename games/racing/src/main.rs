@@ -58,6 +58,7 @@ impl Game for Racing {
     fn init(ctx: &mut Context) -> Self {
         let text = fs::read_to_string(TRACK).unwrap_or_else(|e| panic!("{TRACK}: {e}"));
         let track = Track::parse(&text).unwrap_or_else(|e| panic!("{TRACK}: {e}"));
+        track.chain().unwrap_or_else(|e| panic!("{TRACK}: {e}"));
         Self::new(&track, &mut ctx.assets)
     }
 

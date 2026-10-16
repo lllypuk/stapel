@@ -13,10 +13,6 @@ pub(crate) const LEVEL: f32 = 0.5;
 pub(crate) const CARS: [&str; 4] = ["race", "race-future", "sedan-sports", "hatchback-sports"];
 
 /// Сторона клетки; +X и +Z — рост индексов клетки.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "стыки обходит цепочка трассы, Task 12")
-)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Side {
     PosX,
@@ -25,10 +21,6 @@ pub(crate) enum Side {
     NegZ,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "стыки обходит цепочка трассы, Task 12")
-)]
 impl Side {
     pub(crate) fn step(self) -> IVec2 {
         match self {
@@ -36,6 +28,15 @@ impl Side {
             Self::NegX => ivec2(-1, 0),
             Self::PosZ => ivec2(0, 1),
             Self::NegZ => ivec2(0, -1),
+        }
+    }
+
+    pub(crate) fn opposite(self) -> Self {
+        match self {
+            Self::PosX => Self::NegX,
+            Self::NegX => Self::PosX,
+            Self::PosZ => Self::NegZ,
+            Self::NegZ => Self::PosZ,
         }
     }
 
@@ -105,10 +106,6 @@ impl Piece {
         (0..size.x).flat_map(move |x| (0..size.y).map(move |z| rot.cell(ivec2(x, z))))
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "стыки обходит цепочка трассы, Task 12")
-    )]
     pub(crate) fn ends(&self, rot: Rot) -> [End; 2] {
         self.ends.map(|end| End {
             cell: rot.cell(end.cell),
@@ -308,6 +305,7 @@ mod tests {
                     rot.cell(side.step()),
                     "{side:?} {rot:?}"
                 );
+                assert_eq!(side.opposite().step(), -side.step(), "{side:?}");
             }
         }
     }

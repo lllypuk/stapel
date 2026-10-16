@@ -1,0 +1,104 @@
+# Восьмёрка: старт в столбце x = 3 едет к −Z, ряд z = 0 проходит под мостом столбца x = 0.
+car = "race"
+
+[[road]]
+piece = "roadStart"
+cell = [3, 2]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [3, 0]
+level = 0
+rot = 270
+
+[[road]]
+piece = "roadStraight"
+cell = [1, 0]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraight"
+cell = [0, 0]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraight"
+cell = [-1, 0]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [-3, 0]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadStraight"
+cell = [-3, -2]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadStraight"
+cell = [-3, -3]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [-3, -5]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [0, -5]
+level = 0
+rot = 270
+
+[[road]]
+piece = "roadRampLong"
+cell = [0, -2]
+level = 0
+rot = 180
+
+[[road]]
+piece = "roadStraightBridgeStart"
+cell = [0, -1]
+level = 0
+rot = 180
+
+[[road]]
+piece = "roadStraightBridgeMid"
+cell = [0, 0]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadStraightBridgeStart"
+cell = [0, 1]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadRampLong"
+cell = [0, 2]
+level = 0
+rot = 0
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [0, 5]
+level = 0
+rot = 90
+
+[[road]]
+piece = "roadCornerLarge"
+cell = [3, 5]
+level = 0
+rot = 180
