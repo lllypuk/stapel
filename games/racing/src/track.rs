@@ -67,7 +67,7 @@ impl fmt::Display for TrackError {
             ),
             Self::Bounds { line } => write!(
                 f,
-                "строка {line}: клетка вне ±{MAX_CELL}, уровень больше {MAX_LEVEL} или позиция не число"
+                "строка {line}: клетка вне ±{MAX_CELL}, уровень больше {MAX_LEVEL} или позиция не число либо вне трассы"
             ),
         }
     }
@@ -137,7 +137,7 @@ impl Decor {
     }
 }
 
-/// Прямоугольник поперёк дороги на выходе детали: ширина клетки, высота — полоса уровня.
+/// Прямоугольник поперёк дороги на выходе детали: ширина клетки, высота — до дороги выше.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Checkpoint {
     pub(crate) road: usize,
@@ -145,16 +145,22 @@ pub(crate) struct Checkpoint {
     pub(crate) origin: Vec3,
     /// Горизонтальное направление цепочки.
     pub(crate) normal: Vec3,
+    /// Над выходом без дороги выше — бесконечность, м.
+    pub(crate) height: f32,
 }
 
 impl Checkpoint {
-    fn new(road: usize, exit: End) -> Self {
+    /// `ceiling` — нижний занятый уровень над выходом в клетках по обе стороны стыка.
+    fn new(road: usize, exit: End, ceiling: Option<u32>) -> Self {
         let step = exit.side.step().as_vec2();
         let center = exit.cell.as_vec2() + 0.5 + step / 2.0;
         Self {
             road,
             origin: vec3(center.x, exit.level as f32 * LEVEL, center.y) * KIT_SCALE,
             normal: vec3(step.x, 0.0, step.y),
+            height: ceiling.map_or(f32::INFINITY, |l| {
+                (l - exit.level) as f32 * LEVEL * KIT_SCALE
+            }),
         }
     }
 
@@ -169,7 +175,7 @@ impl Checkpoint {
         }
         let p = from.lerp(to, a / (a - b)) - self.origin;
         let across = self.normal.cross(Vec3::Y);
-        p.dot(across).abs() <= KIT_SCALE / 2.0 && (0.0..=LEVEL * KIT_SCALE).contains(&p.y)
+        p.dot(across).abs() <= KIT_SCALE / 2.0 && (0.0..=self.height).contains(&p.y)
     }
 }
 
@@ -266,7 +272,8 @@ impl Track {
             .iter()
             .map(|d| {
                 let pos = Vec3::from(d.pos);
-                if !pos.is_finite() || !d.yaw.is_finite() {
+                let limit = (MAX_CELL + 1) as f32 * KIT_SCALE;
+                if !pos.is_finite() || pos.abs().max_element() > limit || !d.yaw.is_finite() {
                     return Err(TrackError::Bounds {
                         line: line(&d.piece),
                     });
@@ -301,11 +308,16 @@ impl Track {
                 count: starts.len(),
             });
         };
+        let taken = self.road_cells();
         let mut checkpoints = Vec::with_capacity(self.road.len());
         let (mut road, mut exit) = (start, self.road[start].ends()[1]);
         loop {
-            checkpoints.push(Checkpoint::new(road, exit));
             let (cell, side) = (exit.cell + exit.side.step(), exit.side.opposite());
+            let ceiling = (taken.iter())
+                .filter(|&&(c, l)| (c == exit.cell || c == cell) && l > exit.level)
+                .map(|&(_, l)| l)
+                .min();
+            checkpoints.push(Checkpoint::new(road, exit, ceiling));
             let next = (self.road.iter().enumerate())
                 .flat_map(|(i, r)| r.ends().into_iter().enumerate().map(move |e| (i, e)))
                 .filter(|(_, (_, e))| e.cell == cell && e.side == side)
@@ -416,12 +428,17 @@ mod tests {
         assert_eq!(e, TrackError::Bounds { line: 3 });
         assert_eq!(
             e.to_string(),
-            "строка 3: клетка вне ±1000, уровень больше 16 или позиция не число"
+            "строка 3: клетка вне ±1000, уровень больше 16 или позиция не число либо вне трассы"
         );
         assert_eq!(road("[0, -1001]", 0), TrackError::Bounds { line: 3 });
         assert_eq!(road("[-2147483648, 0]", 0), TrackError::Bounds { line: 3 });
         assert_eq!(road("[0, 0]", 17), TrackError::Bounds { line: 3 });
-        for (pos, yaw) in [("[nan, 0, 0]", "0"), ("[0, 0, 0]", "inf")] {
+        for (pos, yaw) in [
+            ("[nan, 0, 0]", "0"),
+            ("[0, 0, 0]", "inf"),
+            ("[3000000, 0, 0]", "0"),
+            ("[0, -4005, 0]", "0"),
+        ] {
             let e = err(&format!(
                 "car = \"race\"\n[[decor]]\npiece = \"cone\"\npos = {pos}\nyaw = {yaw}\n"
             ));
@@ -562,6 +579,7 @@ mod tests {
                 road: 1,
                 origin: vec3(8.0, 0.0, 2.0),
                 normal: vec3(-1.0, 0.0, 0.0),
+                height: f32::INFINITY,
             }
         );
         // Угол [0, 0] выводит к +Z из клетки [0, 1].
@@ -689,7 +707,7 @@ mod tests {
         assert_eq!(cell_at(vec3(0.0, -0.01, 0.0)), None);
     }
 
-    /// Выход клетки [0, 0] к +X: плоскость x = 4, z в 0..4, y в 0..2.
+    /// Выход клетки [0, 0] к +X под дорогой уровнем выше: плоскость x = 4, z в 0..4, y в 0..2.
     fn exit_pos_x(level: u32) -> Checkpoint {
         Checkpoint::new(
             0,
@@ -698,6 +716,7 @@ mod tests {
                 side: crate::pieces::Side::PosX,
                 level,
             },
+            Some(level + 1),
         )
     }
 
@@ -735,5 +754,26 @@ mod tests {
         for y in [2.1, -0.1] {
             assert!(!c.crossed(vec3(3.5, y, 2.0), vec3(4.5, y, 2.0)), "{y}");
         }
+    }
+
+    #[test]
+    fn checkpoint_without_road_above_counts_any_jump_height() {
+        let c = Checkpoint {
+            height: f32::INFINITY,
+            ..exit_pos_x(0)
+        };
+        assert!(c.crossed(vec3(3.5, 9.0, 2.0), vec3(4.5, 9.0, 2.0)));
+        assert!(!c.crossed(vec3(3.5, -0.1, 2.0), vec3(4.5, -0.1, 2.0)));
+    }
+
+    #[test]
+    fn bridge8_checkpoints_stop_under_bridge_deck() {
+        let track = Track::parse(include_str!("testdata/bridge8.toml")).expect("восьмёрка");
+        let checkpoints = track.chain().expect("цепочка");
+        let under: Vec<_> = (checkpoints.iter())
+            .filter(|c| c.height.is_finite())
+            .map(|c| (c.origin.y, c.height))
+            .collect();
+        assert_eq!(under, [(0.0, LEVEL * KIT_SCALE); 4]);
     }
 }

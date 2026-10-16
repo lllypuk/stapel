@@ -264,7 +264,7 @@ impl Welder {
         for dx in -1..=1 {
             for dy in -1..=1 {
                 for dz in -1..=1 {
-                    let near = self.grid.get(&(key + IVec3::new(dx, dy, dz)));
+                    let near = self.grid.get(&key.saturating_add(IVec3::new(dx, dy, dz)));
                     if let Some(&id) = near
                         .into_iter()
                         .flatten()
@@ -795,5 +795,12 @@ mod tests {
         welder.id(Vec3::new(1.0, -0.5, 0.25));
         let keys: Vec<_> = welder.grid.keys().copied().collect();
         assert_eq!(keys, [IVec3::new(1024, -512, 256)]);
+    }
+
+    #[test]
+    fn welder_beyond_i32_keys_saturates_without_overflow() {
+        let mut welder = Welder::default();
+        let far = Vec3::new(3.0e6, -3.0e6, 0.0);
+        assert_eq!(welder.id(far), welder.id(far));
     }
 }
