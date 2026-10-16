@@ -7,6 +7,10 @@ use rtrb::Consumer;
 
 /// Голосов эффектов; музыка — отдельный слот сверх них.
 const VOICES: usize = 32;
+/// Длящихся голосов, отдельно от эффектов.
+pub(crate) const LOOPS: usize = 4;
+/// Предел скорости проигрывания длящегося голоса.
+pub(crate) const MAX_RATE: f32 = 4.0;
 /// Длина fade-in и fade-out в аудиофреймах.
 const FADE: usize = 64;
 /// Команд из очереди за один `render`.
@@ -19,6 +23,34 @@ pub(crate) enum Command {
     Play { frames: Arc<[f32]>, volume: f32 },
     /// Музыка по кругу вместо играющей.
     Music { frames: Arc<[f32]>, volume: f32 },
+    /// Длящийся голос в `slot` вместо прежнего.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "API `Audio` — следующая задача этапа")
+    )]
+    LoopStart {
+        slot: usize,
+        generation: u32,
+        frames: Arc<[f32]>,
+        volume: f32,
+    },
+    /// Новые скорость и громкость голоса `slot` поколения `generation`.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "API `Audio` — следующая задача этапа")
+    )]
+    LoopSet {
+        slot: usize,
+        generation: u32,
+        rate: f32,
+        volume: f32,
+    },
+    /// Затухание и освобождение голоса `slot` поколения `generation`.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "API `Audio` — следующая задача этапа")
+    )]
+    LoopStop { slot: usize, generation: u32 },
 }
 
 /// Счётчики, общие для игры и аудиопотока.
@@ -90,11 +122,89 @@ impl Voice {
     }
 }
 
+/// Голос по кругу с живыми скоростью и громкостью; играет до `LoopStop`.
+struct LoopVoice {
+    frames: Arc<[f32]>,
+    generation: u32,
+    /// Дробный фрейм в `[0, len)`.
+    phase: f64,
+    rate: f32,
+    volume: f32,
+    target_rate: f32,
+    target_volume: f32,
+    /// Огибающая в фреймах, `0..=FADE`.
+    fade: usize,
+    stopping: bool,
+}
+
+impl LoopVoice {
+    fn new(frames: Arc<[f32]>, generation: u32, volume: f32) -> Option<Self> {
+        (!frames.is_empty()).then_some(Self {
+            frames,
+            generation,
+            phase: 0.0,
+            rate: 1.0,
+            volume,
+            target_rate: 1.0,
+            target_volume: volume,
+            fade: 0,
+            stopping: false,
+        })
+    }
+
+    /// Подмешивает себя в `out`, ведя скорость и громкость к целевым за буфер; `true` — затих после стопа.
+    fn mix(&mut self, out: &mut [f32]) -> bool {
+        let len = self.frames.len() / 2;
+        let frames = out.as_chunks_mut::<2>().0;
+        let count = frames.len() as f32;
+        let (rate, volume) = (self.rate, self.volume);
+        for (k, frame) in frames.iter_mut().enumerate() {
+            let along = (k + 1) as f32 / count;
+            self.rate = rate + (self.target_rate - rate) * along;
+            self.volume = volume + (self.target_volume - volume) * along;
+            if self.stopping {
+                self.fade = self.fade.saturating_sub(1);
+            }
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "phase в [0, len)"
+            )]
+            let (i, frac) = (self.phase as usize, self.phase.fract() as f32);
+            let j = if i + 1 == len { 0 } else { i + 1 };
+            let gain = self.volume * self.fade as f32 / FADE as f32;
+            let here = &self.frames[2 * i..2 * i + 2];
+            let next = &self.frames[2 * j..2 * j + 2];
+            for ((out, here), next) in frame.iter_mut().zip(here).zip(next) {
+                *out += (here + (next - here) * frac) * gain;
+            }
+            if self.stopping {
+                if self.fade == 0 {
+                    return true;
+                }
+            } else {
+                self.fade = (self.fade + 1).min(FADE);
+            }
+            self.phase = (self.phase + f64::from(self.rate)) % len as f64;
+        }
+        false
+    }
+
+    /// Голос `slot`, если он поколения `generation`.
+    fn find(loops: &mut [Option<Self>], slot: usize, generation: u32) -> Option<&mut Self> {
+        loops
+            .get_mut(slot)?
+            .as_mut()
+            .filter(|voice| voice.generation == generation)
+    }
+}
+
 /// Микс голосов аудиопотока; команды берёт из очереди `Audio`.
 pub(crate) struct Mixer {
     queue: Consumer<Command>,
     voices: [Option<Voice>; VOICES],
     music: Option<Voice>,
+    loops: [Option<LoopVoice>; LOOPS],
     counters: Arc<Counters>,
 }
 
@@ -104,6 +214,7 @@ impl Mixer {
             queue,
             voices: [const { None }; VOICES],
             music: None,
+            loops: [const { None }; LOOPS],
             counters,
         }
     }
@@ -118,6 +229,11 @@ impl Mixer {
         }
         out.fill(0.0);
         for slot in self.voices.iter_mut().chain(iter::once(&mut self.music)) {
+            if slot.as_mut().is_some_and(|voice| voice.mix(out)) {
+                *slot = None;
+            }
+        }
+        for slot in &mut self.loops {
             if slot.as_mut().is_some_and(|voice| voice.mix(out)) {
                 *slot = None;
             }
@@ -144,6 +260,40 @@ impl Mixer {
             Command::Music { frames, volume } => {
                 if let Some(voice) = Voice::new(frames, volume, true) {
                     self.music = Some(voice);
+                }
+            }
+            Command::LoopStart {
+                slot,
+                generation,
+                frames,
+                volume,
+            } => {
+                if let (Some(slot), Some(voice)) = (
+                    self.loops.get_mut(slot),
+                    LoopVoice::new(frames, generation, volume),
+                ) {
+                    *slot = Some(voice);
+                }
+            }
+            Command::LoopSet {
+                slot,
+                generation,
+                rate,
+                volume,
+            } => {
+                if let Some(voice) = LoopVoice::find(&mut self.loops, slot, generation) {
+                    // NaN в фазе — вечный NaN на выходе.
+                    voice.target_rate = if rate.is_nan() {
+                        0.0
+                    } else {
+                        rate.clamp(0.0, MAX_RATE)
+                    };
+                    voice.target_volume = volume;
+                }
+            }
+            Command::LoopStop { slot, generation } => {
+                if let Some(voice) = LoopVoice::find(&mut self.loops, slot, generation) {
+                    voice.stopping = true;
                 }
             }
         }
@@ -332,6 +482,166 @@ mod tests {
         play(&mut tx, &sound, 1.0);
         assert_eq!(render(&mut mixer, 128), [0.25; 256]);
         assert_eq!(mixer.counters.dropped.load(Ordering::Relaxed), 1);
+    }
+
+    fn loop_start(tx: &mut Producer<Command>, slot: usize, generation: u32, frames: &Arc<[f32]>) {
+        let frames = frames.clone();
+        let command = Command::LoopStart {
+            slot,
+            generation,
+            frames,
+            volume: 1.0,
+        };
+        assert!(tx.push(command).is_ok());
+    }
+
+    fn loop_set(tx: &mut Producer<Command>, slot: usize, generation: u32, rate: f32, volume: f32) {
+        let command = Command::LoopSet {
+            slot,
+            generation,
+            rate,
+            volume,
+        };
+        assert!(tx.push(command).is_ok());
+    }
+
+    fn loop_stop(tx: &mut Producer<Command>, slot: usize, generation: u32) {
+        assert!(tx.push(Command::LoopStop { slot, generation }).is_ok());
+    }
+
+    /// Голос поколения 1 в слоте 0 на скорости `rate` после fade-in; фаза — `rate · (FADE + 1) mod len`.
+    fn steady_loop(frames: &Arc<[f32]>, rate: f32) -> (Producer<Command>, Mixer) {
+        let (mut tx, mut mixer) = setup();
+        loop_start(&mut tx, 0, 1, frames);
+        loop_set(&mut tx, 0, 1, rate, 1.0);
+        render(&mut mixer, 1);
+        render(&mut mixer, FADE);
+        (tx, mixer)
+    }
+
+    fn left(out: &[f32]) -> Vec<f32> {
+        out.iter().step_by(2).copied().collect()
+    }
+
+    fn assert_near(actual: &[f32], expected: &[f32]) {
+        assert_eq!(actual.len(), expected.len());
+        for (i, (a, e)) in actual.iter().zip(expected).enumerate() {
+            assert!((a - e).abs() < 1e-6, "frame {i}: {a} != {e}");
+        }
+    }
+
+    #[test]
+    fn loop_at_rate_two_runs_cycle_twice_as_fast() {
+        let sound = ramp(100);
+        let (_tx, mut mixer) = steady_loop(&sound, 2.0);
+        let out = render(&mut mixer, 100);
+        for k in 0..100 {
+            let j = (30 + 2 * k) % 100;
+            let expected = [sound[2 * j] * 0.5, sound[2 * j + 1] * 0.5];
+            assert_eq!(&out[2 * k..2 * k + 2], expected, "frame {k}");
+        }
+    }
+
+    #[test]
+    fn loop_interpolates_fractional_phase_and_stitches_last_frame_to_first() {
+        let sound: Arc<[f32]> = [0.1, 0.2, 0.3, 0.9].iter().flat_map(|&s| [s, -s]).collect();
+        let (_tx, mut mixer) = steady_loop(&sound, 0.5);
+        let out = render(&mut mixer, 8);
+        let expected = [0.15, 0.2, 0.25, 0.3, 0.6, 0.9, 0.5, 0.1].map(|s| s * 0.5);
+        assert_near(&left(&out), &expected);
+        let right: Vec<f32> = out.iter().skip(1).step_by(2).map(|s| -s).collect();
+        assert_near(&right, &expected);
+    }
+
+    #[test]
+    fn loop_volume_ramps_linearly_across_buffer() {
+        let (mut tx, mut mixer) = steady_loop(&constant(10, 1.0, -1.0), 1.0);
+        loop_set(&mut tx, 0, 1, 1.0, 0.0);
+        let out = render(&mut mixer, 100);
+        let expected: Vec<f32> = (0..100)
+            .map(|k| 0.5 - 0.5 * (k + 1) as f32 / 100.0)
+            .collect();
+        assert_near(&left(&out), &expected);
+        assert_eq!(render(&mut mixer, 10), [0.0; 20]);
+        assert!(mixer.loops[0].is_some());
+    }
+
+    #[test]
+    fn loop_rate_ramps_linearly_across_buffer() {
+        let (mut tx, mut mixer) = steady_loop(&ramp(1000), 1.0);
+        loop_set(&mut tx, 0, 1, 3.0, 1.0);
+        let mut out = left(&render(&mut mixer, 100));
+        out.extend(left(&render(&mut mixer, 10)));
+        // Звук линеен по фазе: шаг выхода — скорость × 0,5 / 1000.
+        for (k, step) in out.windows(2).map(|w| (w[1] - w[0]) / 0.0005).enumerate() {
+            let rate = 1.0 + 2.0 * ((k + 1) as f32 / 100.0).min(1.0);
+            assert!((step - rate).abs() < 1e-2, "frame {k}: {step} != {rate}");
+        }
+    }
+
+    #[test]
+    fn loop_fades_in_on_start_and_frees_slot_after_stop_fade() {
+        let (mut tx, mut mixer) = setup();
+        loop_start(&mut tx, 0, 1, &constant(10, 1.0, -1.0));
+        let out = render(&mut mixer, FADE);
+        let fade_in: Vec<f32> = (0..FADE).map(|k| k as f32 / FADE as f32 * 0.5).collect();
+        assert_eq!(left(&out), fade_in);
+
+        loop_stop(&mut tx, 0, 1);
+        let out = render(&mut mixer, FADE - 1);
+        let fade_out: Vec<f32> = (1..FADE)
+            .rev()
+            .map(|k| k as f32 / FADE as f32 * 0.5)
+            .collect();
+        assert_eq!(left(&out), fade_out);
+        assert!(mixer.loops[0].is_some());
+        assert_eq!(render(&mut mixer, 1), [0.0, 0.0]);
+        assert!(mixer.loops[0].is_none());
+        assert_eq!(render(&mut mixer, 4), [0.0; 8]);
+    }
+
+    #[test]
+    fn loop_commands_of_other_generation_or_slot_are_ignored() {
+        let (mut tx, mut mixer) = steady_loop(&constant(10, 1.0, -1.0), 1.0);
+        loop_set(&mut tx, 0, 2, 1.0, 0.0);
+        loop_stop(&mut tx, 0, 2);
+        loop_set(&mut tx, 1, 1, 1.0, 0.0);
+        loop_stop(&mut tx, LOOPS, 1);
+        loop_set(&mut tx, LOOPS, 1, 1.0, 0.0);
+        assert_eq!(render(&mut mixer, 100), [0.5, -0.5].repeat(100));
+        assert!(mixer.loops[0].is_some());
+        assert!(mixer.loops[1..].iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn loop_start_into_taken_slot_replaces_voice() {
+        let (mut tx, mut mixer) = steady_loop(&constant(10, 1.0, -1.0), 1.0);
+        let empty: Arc<[f32]> = Arc::new([]);
+        loop_start(&mut tx, 0, 2, &empty);
+        loop_start(&mut tx, LOOPS, 2, &constant(10, 1.0, -1.0));
+        assert_eq!(render(&mut mixer, 2), [0.5, -0.5, 0.5, -0.5]);
+
+        loop_start(&mut tx, 0, 3, &constant(10, 0.2, -0.2));
+        loop_set(&mut tx, 0, 1, 1.0, 0.0);
+        assert_eq!(render(&mut mixer, 1), [0.0, 0.0]);
+        render(&mut mixer, FADE);
+        assert_eq!(render(&mut mixer, 2), [0.1, -0.1, 0.1, -0.1]);
+        assert_eq!(mixer.loops[0].as_ref().map(|v| v.generation), Some(3));
+    }
+
+    #[test]
+    fn loop_rate_is_clamped_to_zero_and_max() {
+        let (mut tx, mut mixer) = setup();
+        loop_start(&mut tx, 0, 1, &ramp(10));
+        for (rate, expected) in [(10.0, MAX_RATE), (-1.0, 0.0), (f32::NAN, 0.0), (2.5, 2.5)] {
+            loop_set(&mut tx, 0, 1, rate, 1.0);
+            render(&mut mixer, 1);
+            assert_eq!(
+                mixer.loops[0].as_ref().map(|v| v.rate),
+                Some(expected),
+                "{rate}"
+            );
+        }
     }
 
     #[test]

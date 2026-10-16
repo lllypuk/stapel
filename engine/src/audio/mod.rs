@@ -235,16 +235,44 @@ mod tests {
         let long = ramp(4096);
         let music = ramp(10);
         let next_music = ramp(20);
+        let motor = ramp(30);
+        let next_motor = ramp(40);
         let mut scratch = [0.0; 256];
         let mut out = [0.0_f32; 1024];
         let info = allocation_counter::measure(|| {
             audio.play(&short, 1.0);
             audio.play_music(&music, 1.0);
             audio.play_music(&next_music, 1.0);
+            for slot in 0..mixer::LOOPS {
+                let frames = motor.frames.clone();
+                audio.send(Command::LoopStart {
+                    slot,
+                    generation: 1,
+                    frames,
+                    volume: 1.0,
+                });
+            }
+            audio.send(Command::LoopSet {
+                slot: 0,
+                generation: 1,
+                rate: 1.7,
+                volume: 0.5,
+            });
             fill(&mut mixer, &mut scratch, &mut out, 2);
             for _ in 0..33 {
                 audio.play(&long, 1.0);
             }
+            audio.send(Command::LoopStop {
+                slot: 0,
+                generation: 1,
+            });
+            let frames = next_motor.frames.clone();
+            audio.send(Command::LoopStart {
+                slot: 1,
+                generation: 2,
+                frames,
+                volume: 1.0,
+            });
             fill(&mut mixer, &mut scratch, &mut out, 2);
             audio
                 .counters
