@@ -4,6 +4,7 @@ mod camera;
 mod car;
 mod car_config;
 mod garage;
+mod ghost;
 mod layout;
 mod pieces;
 mod race;
@@ -25,9 +26,10 @@ use crate::camera::Chase;
 use crate::car::{Car, Controls, SUBSTEP, SUBSTEPS};
 use crate::car_config::{CarConfig, TUNING};
 use crate::garage::{Garage, GarageCmd};
+use crate::ghost::{Ghost, Recorder};
 use crate::layout::{Layout, Models};
 use crate::pieces::KIT_SCALE;
-use crate::race::{Race, lap_time};
+use crate::race::{Pass, Race, lap_time};
 use crate::track::{Checkpoint, TrackDraft, cell_at};
 use crate::tuning_panel::{TuneCmd, TuningPanel};
 
@@ -187,6 +189,8 @@ struct Racing {
     pose: Pose,
     chase: Chase,
     race: Race,
+    recorder: Recorder,
+    ghost: Ghost,
     road_cells: HashSet<(IVec2, u32)>,
     /// Посреди последней клетки `roadStart` носом по цепочке.
     start: Spawn,
@@ -228,6 +232,8 @@ impl Racing {
             pose: Pose::default(),
             road_cells: track.road_cells(),
             race: Race::new(&track, checkpoints),
+            recorder: Recorder::default(),
+            ghost: Ghost::default(),
             start,
             respawn: start,
             upside_down: 0,
@@ -264,6 +270,7 @@ impl Racing {
         self.road_cells = track.road_cells();
         self.start = Spawn::start(&checkpoints);
         self.race = Race::new(&track, checkpoints);
+        self.ghost = Ghost::default();
         self.restart();
     }
 
@@ -277,12 +284,14 @@ impl Racing {
         self.car
             .place(at.pos + Vec3::Y * SPAWN_LIFT, at.dir.x.atan2(at.dir.z));
         self.chase = Chase::new(self.car.body.pos, self.car.body.rot);
+        self.recorder.cut();
         self.upside_down = 0;
         self.off_road = 0;
     }
 
     fn restart(&mut self) {
         self.race.restart();
+        self.recorder.restart();
         self.respawn = self.start;
         self.spawn(self.start);
     }
@@ -406,6 +415,9 @@ impl Racing {
         self.car.pose(ctx.assets.model(model), &mut self.pose);
         let (pos, rot) = self.car.lerp(alpha);
         let mut models = self.layout.draws.clone();
+        if self.race.started {
+            models.extend(self.ghost.draw(self.race.ticks, alpha, &self.models));
+        }
         models.push(ModelDraw {
             model,
             transform: self.car.transform(alpha),
@@ -416,11 +428,13 @@ impl Racing {
         self.scene(self.chase.camera(alpha, pos, rot), models)
     }
 
-    fn pass_checkpoint(&mut self) {
+    fn pass_checkpoint(&mut self) -> Option<Pass> {
         let body = &self.car.body;
-        if let Some(i) = self.race.tick(self.car.prev.0, body.pos, body.vel) {
-            self.respawn = Spawn::at(&self.race.checkpoints[i], &self.layout.world);
+        let pass = self.race.tick(self.car.prev.0, body.pos, body.vel);
+        if let Some(p) = pass {
+            self.respawn = Spawn::at(&self.race.checkpoints[p.checkpoint], &self.layout.world);
         }
+        pass
     }
 
     fn status(&self) -> String {
@@ -460,11 +474,16 @@ impl Racing {
         }
     }
 
-    /// Тик машины с управлением `controls`: чекпоинты, респаун, камера.
+    /// Тик машины с управлением `controls`: чекпоинты, респаун, запись круга, камера.
     fn drive(&mut self, controls: Controls) {
         self.car.tick(&self.layout.world, controls);
-        self.pass_checkpoint();
+        let pass = self.pass_checkpoint();
         self.auto_respawn();
+        // Сэмпл — после респауна: в кадре машина уже на новом месте.
+        let origin = self.car.transform(1.0);
+        if let Some(lap) = self.recorder.tick(&self.car.config.model, origin, pass) {
+            self.ghost.offer(lap);
+        }
         let tick = SUBSTEPS as f32 * SUBSTEP;
         self.chase.tick(self.car.body.pos, self.car.body.rot, tick);
     }
@@ -557,6 +576,7 @@ mod tests {
     use engine::{Mat4, Quat, Sprite, Triangle, text};
 
     use super::*;
+    use crate::ghost::{Lap, Sample};
     use crate::layout::{self, ROAD};
     use crate::pieces::LEVEL;
 
@@ -722,6 +742,105 @@ mod tests {
         assert!(eye < 0.5, "{eye}");
     }
 
+    /// Законченный записью круг; конец — подставной.
+    fn finish_lap(g: &mut Racing) -> Lap {
+        let end = Some(Pass {
+            checkpoint: 0,
+            lap: Some(0),
+        });
+        (g.recorder.tick("", Mat4::IDENTITY, end)).expect("круг пишется")
+    }
+
+    #[test]
+    fn ghost_replays_model_origin_like_car_transform() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        cross_start_line(&mut g, &mut ctx);
+        let at_start = g.car.transform(1.0);
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+        ctx.input.on_key(KeyCode::KeyD, Pressed, false);
+        let mut want = Vec::new();
+        for _ in 0..60 {
+            tick(&mut g, &mut ctx);
+            want.push((g.race.ticks, g.car.transform(0.3)));
+        }
+        let lap = finish_lap(&mut g);
+        assert_eq!(lap.car, "race");
+        assert_eq!(lap.transform(0, 0.3), Some(at_start));
+        assert!(
+            (g.car.body.rot * Vec3::Z).dot(Vec3::Z).abs() < 0.99,
+            "не повернула"
+        );
+        for (t, want) in want {
+            let got = lap.transform(t, 0.3).expect("сэмпл");
+            assert!(got.abs_diff_eq(want, 1e-3), "тик {t}: {got} != {want}");
+        }
+    }
+
+    #[test]
+    fn respawn_cuts_ghost_interpolation() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        cross_start_line(&mut g, &mut ctx);
+        ticks(&mut g, &mut ctx, 10);
+        tap(&mut g, &mut ctx, KeyCode::KeyR);
+        tick(&mut g, &mut ctx);
+        let cuts: Vec<usize> = (finish_lap(&mut g).samples.iter())
+            .enumerate()
+            .filter_map(|(k, s)| s.cut.then_some(k))
+            .collect();
+        assert_eq!(cuts, [11]);
+    }
+
+    /// Круг из трёх одинаковых сэмплов `transform` машины `car`.
+    fn still_lap(car: &str, transform: Mat4) -> Lap {
+        let sample = Sample {
+            transform,
+            cut: false,
+        };
+        Lap {
+            car: car.into(),
+            samples: vec![sample; 3],
+        }
+    }
+
+    fn ghosts(ctx: &mut Context) -> Vec<ModelDraw> {
+        let scene = ctx.gfx.scene.take().expect("сцена");
+        scene
+            .models
+            .into_iter()
+            .filter(|m| m.tint == ghost::TINT)
+            .collect()
+    }
+
+    #[test]
+    fn ghost_of_other_car_drawn_by_its_model_during_lap_only() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        let at = Mat4::from_translation(vec3(1.0, 2.0, 3.0));
+        g.ghost.best = Some(still_lap("sedan-sports", at));
+        g.draw(&mut ctx, 0.5);
+        assert_eq!(ghosts(&mut ctx), [], "до старта");
+        cross_start_line(&mut g, &mut ctx);
+        tick(&mut g, &mut ctx);
+        g.draw(&mut ctx, 0.5);
+        let want = ModelDraw {
+            model: g.models.get("sedan-sports"),
+            transform: at,
+            pose: None,
+            tint: ghost::TINT,
+        };
+        assert_eq!(ghosts(&mut ctx), [want]);
+        assert_eq!(g.car.config.model, "race");
+        ticks(&mut g, &mut ctx, 2);
+        g.draw(&mut ctx, 0.5);
+        assert_eq!(ghosts(&mut ctx), [], "после конца круга");
+        g.race.ticks = 1;
+        g.mode = Mode::Garage;
+        g.draw(&mut ctx, 0.5);
+        assert_eq!(ghosts(&mut ctx), [], "в гараже");
+    }
+
     fn car_index(g: &Racing, model: &str) -> usize {
         (g.cars.iter().position(|c| c.model == model)).expect("машина")
     }
@@ -779,11 +898,13 @@ mod tests {
         cross_start_line(&mut g, &mut ctx);
         ticks(&mut g, &mut ctx, 20);
         g.race.best = Some(500);
+        g.ghost.best = Some(still_lap("race", Mat4::IDENTITY));
         tap(&mut g, &mut ctx, KeyCode::KeyG);
         assert_eq!(g.mode, Mode::Garage);
         assert!(placed_at(&g, g.start));
         assert_eq!((g.respawn, g.race.next, g.race.ticks), (g.start, 0, 0));
         assert_eq!(g.race.best, Some(500), "лучший круг трассы не сбрасывается");
+        assert!(g.ghost.best.is_some());
         assert_eq!(g.garage.selected, car_index(&g, "race"));
         tap(&mut g, &mut ctx, KeyCode::Enter);
         assert_eq!(g.mode, Mode::Race);
@@ -1264,6 +1385,7 @@ mod tests {
         assert_eq!(ground(&g, 2.0, 2.0), None);
         g.error = Some("прежняя".into());
         g.race.best = Some(100);
+        g.ghost.best = Some(still_lap("race", Mat4::IDENTITY));
         drive_off(&mut g, &mut ctx);
         let text = include_str!("testdata/bridge8.toml");
         fs::write(&path, text).expect("запись");
@@ -1274,6 +1396,7 @@ mod tests {
         assert_eq!(g.start, start);
         assert!(placed_at(&g, start));
         assert_eq!((g.respawn, g.race.next, g.race.best), (start, 0, None));
+        assert_eq!(g.ghost.best, None);
         assert_eq!(g.road_cells, track.road_cells());
         assert_eq!(g.error, None);
         assert_eq!(g.layout.draws.len(), layout::place(&track).len());

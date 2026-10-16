@@ -10,6 +10,14 @@ const WRONG_WAY_TICKS: u32 = TICK_HZ;
 /// Медленнее этого против цепочки — не «не туда»: откат от барьера, разворот, м/с.
 const WRONG_WAY_SPEED: f32 = 1.0;
 
+/// Пройденный за тик чекпоинт.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Pass {
+    pub(crate) checkpoint: usize,
+    /// Тиков законченного круга; `None` — круг не кончился.
+    pub(crate) lap: Option<u64>,
+}
+
 /// Круги по чекпоинтам, время по тикам и «не туда».
 pub(crate) struct Race {
     pub(crate) checkpoints: Vec<Checkpoint>,
@@ -59,8 +67,8 @@ impl Race {
         self.wrong = 0;
     }
 
-    /// Тик центра масс `from → to` со скоростью `vel`; `Some` — индекс пройденного чекпоинта.
-    pub(crate) fn tick(&mut self, from: Vec3, to: Vec3, vel: Vec3) -> Option<usize> {
+    /// Тик центра масс `from → to` со скоростью `vel`.
+    pub(crate) fn tick(&mut self, from: Vec3, to: Vec3, vel: Vec3) -> Option<Pass> {
         let dir = cell_at(to).and_then(|c| self.dirs.get(&c));
         let against = dir.is_some_and(|d| vel.dot(*d) < -WRONG_WAY_SPEED);
         self.wrong = if against { self.wrong + 1 } else { 0 };
@@ -71,16 +79,18 @@ impl Race {
         if !self.checkpoints[i].crossed(from, to) {
             return None;
         }
+        let mut lap = None;
         if i == 0 {
             if self.started {
                 self.laps += 1;
                 self.best = Some(self.best.map_or(self.ticks, |b| b.min(self.ticks)));
+                lap = Some(self.ticks);
             }
             self.started = true;
             self.ticks = 0;
         }
         self.next = (i + 1) % self.checkpoints.len();
-        Some(i)
+        Some(Pass { checkpoint: i, lap })
     }
 
     pub(crate) fn wrong_way(&self) -> bool {
@@ -108,12 +118,16 @@ mod tests {
     }
 
     /// Тик через чекпоинт `i` по направлению цепочки.
-    fn cross(r: &mut Race, i: usize) -> Option<usize> {
+    fn pass_through(r: &mut Race, i: usize) -> Option<Pass> {
         let (at, n) = (
             r.checkpoints[i].origin + Vec3::Y * 0.5,
             r.checkpoints[i].normal,
         );
         r.tick(at - n * 0.5, at + n * 0.5, n * 30.0)
+    }
+
+    fn cross(r: &mut Race, i: usize) -> Option<usize> {
+        pass_through(r, i).map(|p| p.checkpoint)
     }
 
     /// `n` тиков стоя у старта.
@@ -188,6 +202,23 @@ mod tests {
         assert_eq!(r.ticks, 7);
         lap(&mut r, 300 - 7);
         assert_eq!((r.laps, r.best, r.ticks), (1, Some(300), 0));
+    }
+
+    #[test]
+    fn tick_reports_finished_lap_at_start_line_only() {
+        let mut r = oval();
+        let pass = |checkpoint, lap| Some(Pass { checkpoint, lap });
+        assert_eq!(
+            pass_through(&mut r, 0),
+            pass(0, None),
+            "старт — не конец круга"
+        );
+        let n = r.checkpoints.len();
+        idle(&mut r, 300 - n as u64);
+        for i in 1..n {
+            assert_eq!(pass_through(&mut r, i), pass(i, None));
+        }
+        assert_eq!(pass_through(&mut r, 0), pass(0, Some(300)));
     }
 
     #[test]
