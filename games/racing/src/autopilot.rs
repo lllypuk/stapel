@@ -174,15 +174,15 @@ fn lap(track: &str, car: &str) {
     );
 }
 
-/// Машины по трассам так, чтобы были все приводы: `race` — RWD, `sedan-sports` — AWD, `race-future` — FWD.
+/// Машины по трассам так, чтобы были все приводы: `race` — RWD, `hatchback-sports` — FWD, `race-future` — AWD.
 #[test]
 fn race_laps_oval() {
     lap("track01", "race");
 }
 
 #[test]
-fn sedan_laps_ramp_jump() {
-    lap("track02", "sedan-sports");
+fn hatchback_laps_ramp_jump() {
+    lap("track02", "hatchback-sports");
 }
 
 #[test]
