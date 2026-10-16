@@ -75,6 +75,8 @@ pub struct StaticWorld {
     cell: f32,
     tris: Vec<Tri>,
     grid: HashMap<IVec2, Vec<u32>>,
+    /// Занятые ячейки `lo..=hi`: запрос шире перебирает только их.
+    extent: (IVec2, IVec2),
 }
 
 impl StaticWorld {
@@ -86,6 +88,7 @@ impl StaticWorld {
             cell,
             tris: Vec::new(),
             grid: HashMap::new(),
+            extent: (IVec2::MAX, IVec2::MIN),
         };
         let mut welder = Welder::default();
         let mut ids = Vec::new();
@@ -113,6 +116,7 @@ impl StaticWorld {
             }
             ids.push((i, tri_ids));
             let (lo, hi) = world.cells(a.min(b).min(c), a.max(b).max(c));
+            world.extent = (world.extent.0.min(lo), world.extent.1.max(hi));
             for x in lo.x..=hi.x {
                 for z in lo.y..=hi.y {
                     world.grid.entry(IVec2::new(x, z)).or_default().push(i);
@@ -216,6 +220,7 @@ impl StaticWorld {
     /// Треугольники ячеек под AABB `min..max`, по возрастанию индекса без повторов.
     fn ids_in(&self, min: Vec3, max: Vec3) -> Vec<u32> {
         let (lo, hi) = self.cells(min, max);
+        let (lo, hi) = (lo.max(self.extent.0), hi.min(self.extent.1));
         let mut ids = Vec::new();
         for x in lo.x..=hi.x {
             for z in lo.y..=hi.y {
@@ -508,6 +513,16 @@ mod tests {
             let hit = world.raycast(Vec3::new(x, 1.0, z), DOWN, 2.0, any);
             assert!(hit.is_some(), "({x}, {z})");
         }
+    }
+
+    /// Без обрезки по занятым ячейкам бесконечный AABB перебирал бы 2³² × 2³² ячеек.
+    #[test]
+    fn infinite_query_visits_only_occupied_cells() {
+        let tris = [quad(0.5, 0.5, 3.0, 0.0, 0), quad(-3.5, 8.5, 3.0, 0.0, 0)];
+        let world = StaticWorld::new(4.0, tris.concat());
+        let inf = Vec3::splat(f32::INFINITY);
+        assert_eq!(world.ids_in(-inf, inf), [0, 1, 2, 3]);
+        assert_eq!(StaticWorld::new(4.0, []).ids_in(-inf, inf), [] as [u32; 0]);
     }
 
     #[test]

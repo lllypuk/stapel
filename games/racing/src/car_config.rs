@@ -51,6 +51,7 @@ pub(crate) enum CarError {
     Toml(String),
     Field { field: &'static str, value: f32 },
     Wheel { node: &'static str },
+    WheelRadius { node: &'static str, radius: f32 },
 }
 
 impl fmt::Display for CarError {
@@ -59,6 +60,9 @@ impl fmt::Display for CarError {
             Self::Toml(msg) => f.write_str(msg),
             Self::Field { field, value } => write!(f, "{field} = {value} вне допустимых"),
             Self::Wheel { node } => write!(f, "у модели нет колеса {node} с мешем"),
+            Self::WheelRadius { node, radius } => {
+                write!(f, "радиус колеса {node} = {radius} вне допустимых")
+            }
         }
     }
 }
@@ -132,10 +136,14 @@ pub(crate) fn wheels(model: &Model) -> Result<Wheels, CarError> {
             .find(|(_, n)| n.name == name)
             .and_then(|(i, n)| Some((i, n.bounds?.transformed(model.rest.globals[i]))));
         let (node, b) = found.ok_or(CarError::Wheel { node: name })?;
+        let radius = (b.max.y - b.min.y) / 2.0;
+        if !(radius.is_finite() && radius > 0.0) {
+            return Err(CarError::WheelRadius { node: name, radius });
+        }
         *wheel = Wheel {
             node,
             mount: (b.min + b.max) / 2.0,
-            radius: (b.max.y - b.min.y) / 2.0,
+            radius,
         };
     }
     Ok(out)
@@ -337,6 +345,34 @@ drive = "rwd"
         model.rest.globals = vec![Mat4::IDENTITY; nodes.len()];
         model.nodes = nodes;
         model
+    }
+
+    #[test]
+    fn flat_or_infinite_wheel_is_error() {
+        // f32::MAX − (−f32::MAX) переполняется в +inf; inf в габарите дал бы NaN после преобразования.
+        for (min_y, max_y, radius) in [(0.0, 0.0, 0.0), (-f32::MAX, f32::MAX, f32::INFINITY)] {
+            let bounds = Some(Aabb3 {
+                min: Vec3::splat(-0.3).with_y(min_y),
+                max: Vec3::splat(0.3).with_y(max_y),
+            });
+            let nodes = WHEELS.iter().map(|n| wheel_node(n, bounds)).collect();
+            let err = wheels(&model(nodes)).expect_err("радиус");
+            assert_eq!(
+                err,
+                CarError::WheelRadius {
+                    node: WHEELS[0],
+                    radius
+                }
+            );
+        }
+        let err = CarError::WheelRadius {
+            node: WHEELS[2],
+            radius: 0.0,
+        };
+        assert_eq!(
+            err.to_string(),
+            "радиус колеса wheel-back-left = 0 вне допустимых"
+        );
     }
 
     #[test]
