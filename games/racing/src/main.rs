@@ -1,4 +1,6 @@
-#[cfg_attr(not(test), expect(dead_code, reason = "машину строит Task 14"))]
+#[cfg_attr(not(test), expect(dead_code, reason = "езду собирает Task 15"))]
+mod car;
+#[cfg_attr(not(test), expect(dead_code, reason = "езду собирает Task 15"))]
 mod car_config;
 mod layout;
 mod pieces;
