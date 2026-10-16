@@ -78,6 +78,17 @@ impl Camera3D {
         )
     }
 
+    /// Ставит глаз в `pos` взглядом на `target`; цель строго сверху или снизу оставляет `yaw`.
+    pub fn look_at(&mut self, pos: Vec3, target: Vec3) {
+        self.pos = pos;
+        let d = target - pos;
+        let flat = d.x.hypot(d.z);
+        if flat > 0.0 {
+            self.yaw = (-d.x).atan2(-d.z);
+        }
+        self.pitch = d.y.atan2(flat);
+    }
+
     /// Мир → NDC с глубиной `near` → 0, `far` → 1.
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         directx::perspective(self.fov_y, aspect, self.near, self.far)
@@ -477,6 +488,44 @@ mod tests {
             );
             assert!(cam.view_proj(1.0).is_finite(), "{pitch}");
         }
+    }
+
+    #[test]
+    fn look_at_faces_target() {
+        let mut cam = eye();
+        for target in [
+            vec3(5.0, -1.0, 3.0),
+            vec3(-2.0, 4.0, -7.0),
+            vec3(1.0, 0.7, 9.0),
+            vec3(-3.0, 0.7, 2.0),
+        ] {
+            cam.look_at(vec3(1.0, 0.7, 2.0), target);
+            let to = (target - cam.pos).normalize();
+            assert!(
+                cam.forward().abs_diff_eq(to, EPS),
+                "{target}: {}",
+                cam.forward()
+            );
+        }
+    }
+
+    #[test]
+    fn look_at_straight_up_or_down_keeps_yaw_and_clamps_pitch() {
+        for (dy, y) in [(3.0, MAX_PITCH.sin()), (-3.0, -MAX_PITCH.sin())] {
+            let mut cam = eye();
+            cam.look_at(Vec3::ONE, Vec3::ONE + vec3(0.0, dy, 0.0));
+            assert_eq!(cam.yaw, eye().yaw, "{dy}");
+            assert!((cam.forward().y - y).abs() < EPS, "{dy}");
+            assert!(cam.view_proj(1.0).is_finite(), "{dy}");
+        }
+    }
+
+    #[test]
+    fn look_at_own_position_is_finite() {
+        let mut cam = eye();
+        cam.look_at(Vec3::ONE, Vec3::ONE);
+        assert_eq!(cam.pos, Vec3::ONE);
+        assert!(cam.view_proj(1.0).is_finite(), "{cam:?}");
     }
 
     #[test]

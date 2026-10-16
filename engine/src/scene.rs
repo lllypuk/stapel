@@ -21,12 +21,23 @@ pub struct Scene {
     pub ambient: Color,
     /// Туман по расстоянию от камеры.
     pub fog: Fog,
+    /// Направленный свет; `None` — без него.
+    pub sun: Option<DirectionalLight>,
     /// Точечные источники; рисуются первые `MAX_LIGHTS`.
     pub lights: Vec<PointLight>,
     /// Меши кадра.
     pub meshes: Vec<MeshDraw>,
     /// Модели кадра.
     pub models: Vec<ModelDraw>,
+}
+
+/// Свет из бесконечности без затухания, Ламберт; теней нет.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DirectionalLight {
+    /// Куда идут лучи, в мире; длина не важна, нулевой — без света.
+    pub dir: Vec3,
+    /// Линейный цвет.
+    pub color: Color,
 }
 
 /// Точечный источник с затуханием `max(1 - d / range, 0)²` и Ламбертом.

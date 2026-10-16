@@ -8,8 +8,11 @@ struct SceneUniform {
     view_proj: mat4x4<f32>,
     ambient: vec4<f32>,
     fog_color: vec4<f32>,
+    sun_color: vec4<f32>,
     eye: vec3<f32>,
     fog_start: f32,
+    // Нормирован на CPU; нулевой при `sun: None`.
+    sun_dir: vec3<f32>,
     fog_end: f32,
     light_count: u32,
     lights: array<Light, 16>,
@@ -81,7 +84,7 @@ fn vs_skinned(v: VertexIn, s: SkinIn, inst: InstanceIn) -> VsOut {
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let t = textureSample(tex, samp, in.uv) * in.tint;
     let n = normalize(in.normal);
-    var light = scene.ambient.rgb;
+    var light = scene.ambient.rgb + scene.sun_color.rgb * max(dot(n, -scene.sun_dir), 0.0);
     for (var i = 0u; i < scene.light_count; i++) {
         let l = scene.lights[i];
         let to = l.pos - in.world;

@@ -391,6 +391,7 @@ impl Maze {
                 end: self.fog_end,
                 ..FOG
             },
+            sun: None,
             lights,
             models,
             meshes: Vec::new(),

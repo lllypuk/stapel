@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
 use crate::gpu_textures::DEPTH_FORMAT;
@@ -31,12 +31,14 @@ struct SceneUniform {
     view_proj: [[f32; 4]; 4],
     ambient: [f32; 4],
     fog_color: [f32; 4],
+    sun_color: [f32; 4],
     eye: [f32; 3],
     fog_start: f32,
+    sun_dir: [f32; 3],
     fog_end: f32,
     light_count: u32,
     /// WGSL выравнивает массив структур по 16 байт.
-    _pad: [u32; 2],
+    _pad: [u32; 3],
     lights: [LightUniform; MAX_LIGHTS],
 }
 
@@ -49,15 +51,20 @@ impl SceneUniform {
         }
         #[expect(clippy::cast_possible_truncation, reason = "не больше MAX_LIGHTS")]
         let light_count = scene.lights.len().min(MAX_LIGHTS) as u32;
+        let (sun_dir, sun_color) = scene.sun.map_or((Vec3::ZERO, [0.0; 4]), |s| {
+            (s.dir.normalize_or_zero(), rgba(s.color))
+        });
         Self {
             view_proj: scene.camera.view_proj(aspect).to_cols_array_2d(),
             ambient: rgba(scene.ambient),
             fog_color: rgba(scene.fog.color),
+            sun_color,
             eye: scene.camera.pos.into(),
             fog_start: scene.fog.start,
+            sun_dir: sun_dir.into(),
             fog_end: scene.fog.end,
             light_count,
-            _pad: [0; 2],
+            _pad: [0; 3],
             lights,
         }
     }
@@ -488,9 +495,10 @@ mod tests {
     use crate::gpu_test::{SIZE, assert_pixel, gpu, load_png, offscreen};
     use crate::gpu_textures::depth_texture;
     use crate::{
-        Camera2D, Camera3D, Fog, Gfx, Handle, Mesh, MeshDraw, SkinnedDraw, Sprite, SpritePipeline,
-        Texture, Vec2, Vec3, Viewport, vec2, vec3,
+        Camera2D, Camera3D, DirectionalLight, Fog, Gfx, Handle, Mesh, MeshDraw, SkinnedDraw,
+        Sprite, SpritePipeline, Texture, Vec2, Vec3, Viewport, vec2, vec3,
     };
+    use std::f64::consts::FRAC_1_SQRT_2;
     use std::mem::offset_of;
     use wgpu::naga::TypeInner;
 
@@ -552,8 +560,10 @@ mod tests {
             ("view_proj", offset_of!(SceneUniform, view_proj)),
             ("ambient", offset_of!(SceneUniform, ambient)),
             ("fog_color", offset_of!(SceneUniform, fog_color)),
+            ("sun_color", offset_of!(SceneUniform, sun_color)),
             ("eye", offset_of!(SceneUniform, eye)),
             ("fog_start", offset_of!(SceneUniform, fog_start)),
+            ("sun_dir", offset_of!(SceneUniform, sun_dir)),
             ("fog_end", offset_of!(SceneUniform, fog_end)),
             ("light_count", offset_of!(SceneUniform, light_count)),
             ("lights", offset_of!(SceneUniform, lights)),
@@ -611,6 +621,22 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(SceneUniform::new(&few, 1.0).light_count, 3);
+    }
+
+    #[test]
+    fn uniform_sun_is_normalized_and_none_is_dark() {
+        let sun = Scene {
+            sun: Some(DirectionalLight {
+                dir: vec3(0.0, -3.0, 4.0),
+                color: gray(0.5),
+            }),
+            ..Default::default()
+        };
+        let u = SceneUniform::new(&sun, 1.0);
+        assert_eq!(u.sun_dir, [0.0, -0.6, 0.8]);
+        assert_eq!(u.sun_color, [0.5, 0.5, 0.5, 1.0]);
+        let none = SceneUniform::new(&Scene::default(), 1.0);
+        assert_eq!((none.sun_dir, none.sun_color), ([0.0; 3], [0.0; 4]));
     }
 
     #[test]
@@ -829,7 +855,13 @@ mod tests {
 
     /// Центр кадра — передняя грань куба на `z = -3`, в 4 м от камеры на `z = 1`.
     /// `test` — имя временного PNG: у параллельных тестов оно разное.
-    fn render_face(test: &str, ambient: f64, lights: Vec<PointLight>, fog: Fog) -> Vec<u8> {
+    fn render_face(
+        test: &str,
+        ambient: f64,
+        sun: Option<DirectionalLight>,
+        lights: Vec<PointLight>,
+        fog: Fog,
+    ) -> Vec<u8> {
         let (device, queue) = gpu().unwrap();
         let mut assets = Assets::default();
         let cube = cube(&mut assets);
@@ -838,6 +870,7 @@ mod tests {
         let scene = Scene {
             ambient: gray(ambient),
             fog,
+            sun,
             lights,
             meshes: vec![at(cube, tex, -4.0, 2.0)],
             camera: Camera3D {
@@ -863,6 +896,7 @@ mod tests {
         let toward = render_face(
             "mesh-falloff",
             0.2,
+            None,
             vec![light(0.0, -1.0, Color::WHITE, 4.0)],
             Fog::default(),
         );
@@ -870,6 +904,7 @@ mod tests {
         let away = render_face(
             "mesh-falloff",
             0.2,
+            None,
             vec![light(0.0, -6.0, Color::WHITE, 10.0)],
             Fog::default(),
         );
@@ -877,10 +912,36 @@ mod tests {
         let beyond = render_face(
             "mesh-falloff",
             0.2,
+            None,
             vec![light(0.0, -1.0, Color::WHITE, 0.5)],
             Fog::default(),
         );
         assert_pixel(&beyond, "beyond range", CENTER, lit(0.2));
+    }
+
+    #[test]
+    fn sun_lambert_without_falloff() {
+        if gpu().is_none() {
+            return;
+        }
+        let sun = |dir| {
+            let sun = DirectionalLight {
+                dir,
+                color: gray(0.5),
+            };
+            render_face("mesh-sun", 0.2, Some(sun), Vec::new(), Fog::default())
+        };
+        // Грань смотрит на +Z, лучи под 45° к ней: 0,5·cos 45° поверх ambient 0,2.
+        let toward = sun(vec3(0.0, -1.0, -1.0));
+        assert_pixel(
+            &toward,
+            "face toward sun",
+            CENTER,
+            lit(0.2 + 0.5 * FRAC_1_SQRT_2),
+        );
+        assert_pixel(&sun(Vec3::Z), "face away from sun", CENTER, lit(0.2));
+        let none = render_face("mesh-sun", 0.2, None, Vec::new(), Fog::default());
+        assert_pixel(&none, "no sun", CENTER, lit(0.2));
     }
 
     #[test]
@@ -896,6 +957,7 @@ mod tests {
         let sixteenth = render_face(
             "mesh-max-lights",
             0.2,
+            None,
             with_white_at(MAX_LIGHTS - 1),
             Fog::default(),
         );
@@ -903,6 +965,7 @@ mod tests {
         let seventeenth = render_face(
             "mesh-max-lights",
             0.2,
+            None,
             with_white_at(MAX_LIGHTS),
             Fog::default(),
         );
@@ -920,7 +983,7 @@ mod tests {
                 start,
                 end,
             };
-            render_face("mesh-fog", 1.0, Vec::new(), fog)
+            render_face("mesh-fog", 1.0, None, Vec::new(), fog)
         };
         assert_pixel(&fogged(5.0, 10.0), "before start", CENTER, lit(1.0));
         let fog_rgb = [linear_to_srgb(0.5); 3];

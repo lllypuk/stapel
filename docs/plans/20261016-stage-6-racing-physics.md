@@ -215,10 +215,10 @@
 **Files:**
 - Modify: `engine/src/scene.rs`, `engine/src/mesh_pipeline.rs`, `engine/src/mesh.wgsl`, `engine/src/camera.rs`, `engine/src/lib.rs`
 
-- [ ] тесты: раскладка uniform с солнцем совпадает с WGSL; `look_at` — `forward` смотрит на цель, цель строго сверху или снизу зажата по pitch, `pos == target` без NaN
-- [ ] офскрин: грань к солнцу ярче грани от него; `sun: None` — прежний результат
-- [ ] `DirectionalLight`, `Scene::sun`, `Camera3D::look_at`
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] тесты: раскладка uniform с солнцем совпадает с WGSL; `look_at` — `forward` смотрит на цель, цель строго сверху или снизу зажата по pitch, `pos == target` без NaN
+- [x] офскрин: грань к солнцу ярче грани от него; `sun: None` — прежний результат
+- [x] `DirectionalLight`, `Scene::sun`, `Camera3D::look_at`
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 3: Ручная поза узлов
 
