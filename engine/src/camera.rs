@@ -94,6 +94,26 @@ impl Camera3D {
         directx::perspective(self.fov_y, aspect, self.near, self.far)
             * look_to_mat4(self.pos, self.forward(), Vec3::Y)
     }
+
+    /// Луч из точки `ndc` экрана (Y вверх) от ближней плоскости вглубь.
+    pub fn ray(&self, ndc: Vec2, aspect: f32) -> Ray {
+        let inv = self.view_proj(aspect).inverse();
+        let near = inv.project_point3(ndc.extend(0.0));
+        let far = inv.project_point3(ndc.extend(1.0));
+        Ray {
+            origin: near,
+            dir: (far - near).normalize(),
+        }
+    }
+}
+
+/// Луч `origin + dir · t`, `dir` единичный.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ray {
+    /// Начало.
+    pub origin: Vec3,
+    /// Направление.
+    pub dir: Vec3,
 }
 
 /// Прямоугольник кадра в пикселях, начало — левый верхний угол.
@@ -471,6 +491,38 @@ mod tests {
         ] {
             let got = at(yaw, pitch);
             assert!(got.abs_diff_eq(expected, EPS), "{yaw} {pitch} → {got}");
+        }
+    }
+
+    #[test]
+    fn center_ray_goes_along_forward_from_near_plane() {
+        let cam = eye();
+        let ray = cam.ray(Vec2::ZERO, 1.5);
+        assert!(ray.dir.abs_diff_eq(cam.forward(), 1e-4), "{ray:?}");
+        let near = cam.pos + cam.forward() * cam.near;
+        assert!(ray.origin.abs_diff_eq(near, 1e-4), "{ray:?}");
+    }
+
+    #[test]
+    fn corner_rays_follow_fov_and_aspect() {
+        let cam = Camera3D::default();
+        let aspect = 1.6;
+        let t = (cam.fov_y / 2.0).tan();
+        for corner in [vec2(1.0, 1.0), vec2(-1.0, -1.0), vec2(1.0, -1.0)] {
+            let expected = vec3(corner.x * aspect * t, corner.y * t, -1.0).normalize();
+            let got = cam.ray(corner, aspect).dir;
+            assert!(got.abs_diff_eq(expected, 1e-4), "{corner} → {got}");
+        }
+    }
+
+    #[test]
+    fn ray_points_project_back_to_their_ndc() {
+        let cam = eye();
+        for ndc in [vec2(0.3, -0.7), vec2(-0.9, 0.5), vec2(0.0, 1.0)] {
+            let ray = cam.ray(ndc, 1.5);
+            let back = ndc3(&cam, 1.5, ray.origin + ray.dir * 7.0);
+            assert!(back.truncate().abs_diff_eq(ndc, 1e-4), "{ndc} → {back}");
+            assert!((ray.dir.length() - 1.0).abs() < EPS, "{ray:?}");
         }
     }
 

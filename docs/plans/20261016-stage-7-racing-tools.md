@@ -226,12 +226,12 @@
 **Files:**
 - Modify: `engine/src/camera.rs`, `engine/src/frame.rs`, `engine/src/app.rs`, `engine/src/renderer.rs`, `engine/src/lib.rs`, `games/platformer/src/main.rs`, `docs/design.md`, `CLAUDE.md`
 
-- [ ] тесты `Camera3D::ray`: центр — вдоль `forward`; угол экрана — по `fov` и аспекту; верх экрана — вверх (перевёрнутый Y)
-- [ ] тесты `cursor_ray`: берёт камеру `shown`, а не `gfx.scene`; `None` без показа, без курсора, без 3D и при нулевом размере
-- [ ] `Ray`, `Camera3D::ray`, `ShownScene`, `Shown::scene`, экспорт в `lib.rs`; renderer отдаёт камеру и размер показанного кадра; литералы `Shown`
-- [ ] `docs/design.md`: «луч из курсора по показанному кадру и полной поверхности, не по вьюпорту спрайтов» → тесты
-- [ ] `CLAUDE.md`, «Архитектура»: `cursor_ray`
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] тесты `Camera3D::ray`: центр — вдоль `forward`; угол экрана — по `fov` и аспекту; верх экрана — вверх (перевёрнутый Y)
+- [x] тесты `cursor_ray`: берёт камеру `shown`, а не `gfx.scene`; `None` без показа, без курсора, без 3D и при нулевом размере
+- [x] `Ray`, `Camera3D::ray`, `ShownScene`, `Shown::scene`, экспорт в `lib.rs`; renderer отдаёт камеру и размер показанного кадра; литералы `Shown`
+- [x] `docs/design.md`: «луч из курсора по показанному кадру и полной поверхности, не по вьюпорту спрайтов» → тесты
+- [x] `CLAUDE.md`, «Архитектура»: `cursor_ray`
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 3: Колёсико мыши
 

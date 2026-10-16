@@ -51,13 +51,14 @@ pub mod watch;
 pub use assets::{Assets, Font, Handle, MeshGeometry, PendingTexture, Texture, TextureKind};
 pub use audio::{Audio, Sound};
 pub use camera::{
-    Camera2D, Camera3D, MAX_PITCH, Viewport, letterbox, letterbox_pixel, screen_to_world, viewport,
+    Camera2D, Camera3D, MAX_PITCH, Ray, Viewport, letterbox, letterbox_pixel, screen_to_world,
+    viewport,
 };
 pub use clock::FixedClock;
 pub use ecs::{Commands, Entity, SparseSet, World};
 pub use egui;
-pub use frame::{Color, Context, Game, Gfx, Shown, Time, step_frame};
-pub use glam::{IVec2, Mat3, Mat4, Quat, Vec2, Vec3, ivec2, vec2, vec3};
+pub use frame::{Color, Context, Game, Gfx, Shown, ShownScene, Time, step_frame};
+pub use glam::{IVec2, Mat3, Mat4, Quat, UVec2, Vec2, Vec3, ivec2, vec2, vec3};
 pub use gpu_textures::GpuTextures;
 pub use input::Input;
 pub use mesh::{Mesh, PendingMesh, Vertex};

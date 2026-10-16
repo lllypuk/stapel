@@ -7,8 +7,8 @@ use winit::window::Window;
 use crate::gpu_textures::depth_texture;
 use crate::surface::{Action, action, pick_format, pick_present_mode, split, surface_size};
 use crate::{
-    Assets, ExpandedModels, Gfx, GpuTextures, MeshPipeline, SpritePipeline, UiFrame, Viewport,
-    viewport,
+    Assets, ExpandedModels, Gfx, GpuTextures, MeshPipeline, Shown, ShownScene, SpritePipeline,
+    UVec2, UiFrame, viewport,
 };
 
 /// Поверхность окна и GPU-устройство; кадр: 3D на всю поверхность, спрайты во вписанный вьюпорт, egui — поверх.
@@ -139,7 +139,7 @@ impl Renderer {
         }
     }
 
-    /// Вьюпорт показанного кадра; `None` — кадр не показан.
+    /// Что показано; `None` — кадр не показан.
     ///
     /// # Errors
     /// Ошибка валидации поверхности.
@@ -151,7 +151,7 @@ impl Renderer {
         gfx: &Gfx,
         assets: &mut Assets,
         mut ui: UiFrame,
-    ) -> Result<Option<Viewport>, RenderError> {
+    ) -> Result<Option<Shown>, RenderError> {
         // До проверки поверхности: иначе текстуры, загруженные при свёрнутом окне, ждали бы его показа,
         // а атлас шрифта egui присылает один раз и потерялся бы.
         self.textures.upload(assets);
@@ -177,18 +177,18 @@ impl Renderer {
         gfx: &Gfx,
         assets: &Assets,
         ui: &UiFrame,
-    ) -> Result<Option<Viewport>, RenderError> {
+    ) -> Result<Option<Shown>, RenderError> {
         if !self.is_available() {
             return Ok(None);
         }
         let (frame, status) = split(self.surface.get_current_texture());
         match (action(&status), frame) {
             (Action::Draw { reconfigure }, Some(frame)) => {
-                let viewport = self.draw(frame, gfx, assets, ui);
+                let shown = self.draw(frame, gfx, assets, ui);
                 if reconfigure {
                     self.surface.configure(&self.device, &self.config);
                 }
-                Ok(Some(viewport))
+                Ok(Some(shown))
             }
             (Action::Reconfigure, _) => {
                 self.surface.configure(&self.device, &self.config);
@@ -213,7 +213,7 @@ impl Renderer {
         gfx: &Gfx,
         assets: &Assets,
         ui: &UiFrame,
-    ) -> Viewport {
+    ) -> Shown {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -286,7 +286,14 @@ impl Renderer {
             self.window.pre_present_notify();
         }
         self.queue.present(frame);
-        viewport
+        Shown {
+            camera: gfx.camera,
+            viewport,
+            scene: gfx.scene.as_ref().map(|scene| ShownScene {
+                camera: scene.camera,
+                size: UVec2::new(self.config.width, self.config.height),
+            }),
+        }
     }
 }
 

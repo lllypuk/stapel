@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use crate::{
-    Assets, Audio, Camera2D, FixedClock, Font, Handle, Input, Scene, Sprite, Vec2, Viewport,
-    screen_to_world, text,
+    Assets, Audio, Camera2D, Camera3D, FixedClock, Font, Handle, Input, Ray, Scene, Sprite, UVec2,
+    Vec2, Viewport, screen_to_world, text,
 };
 
 /// Линейный RGBA.
@@ -136,6 +136,17 @@ pub struct Shown {
     pub camera: Camera2D,
     /// Куда на поверхности лёг кадр, в физических пикселях.
     pub viewport: Viewport,
+    /// 3D-часть кадра; `None` — кадр без сцены.
+    pub scene: Option<ShownScene>,
+}
+
+/// 3D-часть показанного кадра.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShownScene {
+    /// Камера сцены.
+    pub camera: Camera3D,
+    /// Размер поверхности в физических пикселях: 3D рисуется на всю.
+    pub size: UVec2,
 }
 
 #[derive(Default)]
@@ -177,6 +188,18 @@ impl Context {
     pub fn cursor_world(&self) -> Option<Vec2> {
         let shown = self.shown?;
         screen_to_world(shown.viewport, &shown.camera, self.input.cursor()?)
+    }
+
+    /// Луч из курсора по 3D-камере показанного кадра и всей поверхности, не по вьюпорту спрайтов.
+    pub fn cursor_ray(&self) -> Option<Ray> {
+        let scene = self.shown?.scene?;
+        let cursor = self.input.cursor()?;
+        if scene.size.min_element() == 0 {
+            return None;
+        }
+        let size = scene.size.as_vec2();
+        let ndc = Vec2::new(cursor.x / size.x * 2.0 - 1.0, 1.0 - cursor.y / size.y * 2.0);
+        Some(scene.camera.ray(ndc, size.x / size.y))
     }
 
     /// Без захвата сдвиг — движение курсора по другим окнам и панелям, не обзор.
@@ -232,7 +255,7 @@ pub fn step_frame<G: Game>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{KeyCode, Vec2};
+    use crate::{KeyCode, Vec2, Vec3};
     use winit::event::ElementState::Pressed;
 
     const K: KeyCode = KeyCode::Space;
@@ -389,6 +412,7 @@ mod tests {
                     w: 200.0,
                     h: 100.0,
                 },
+                scene: None,
             }),
             ..Context::default()
         }
@@ -409,6 +433,71 @@ mod tests {
         ctx.input.on_cursor(Some(Vec2::new(100.0, 50.0)));
         ctx.shown = None;
         assert_eq!(ctx.cursor_world(), None);
+    }
+
+    /// Сцена на поверхности 400×100 при вьюпорте спрайтов 200×100.
+    fn scene_ctx() -> (Context, Camera3D) {
+        let camera = Camera3D {
+            pos: Vec3::new(1.0, 2.0, 3.0),
+            yaw: 0.4,
+            pitch: -0.2,
+            ..Camera3D::default()
+        };
+        let mut ctx = shown_ctx();
+        if let Some(shown) = &mut ctx.shown {
+            shown.scene = Some(ShownScene {
+                camera,
+                size: UVec2::new(400, 100),
+            });
+        }
+        (ctx, camera)
+    }
+
+    #[test]
+    fn cursor_ray_uses_shown_camera_and_full_surface() {
+        let (mut ctx, camera) = scene_ctx();
+        ctx.gfx.scene = Some(Scene {
+            camera: Camera3D::default(),
+            ..Scene::default()
+        });
+        for (cursor, ndc) in [
+            (Vec2::new(200.0, 50.0), Vec2::ZERO),
+            (Vec2::new(0.0, 0.0), Vec2::new(-1.0, 1.0)),
+            (Vec2::new(300.0, 100.0), Vec2::new(0.5, -1.0)),
+        ] {
+            ctx.input.on_cursor(Some(cursor));
+            assert_eq!(ctx.cursor_ray(), Some(camera.ray(ndc, 4.0)), "{cursor}");
+        }
+    }
+
+    #[test]
+    fn cursor_ray_top_of_screen_looks_up() {
+        let (mut ctx, camera) = scene_ctx();
+        ctx.input.on_cursor(Some(Vec2::new(200.0, 0.0)));
+        let ray = ctx.cursor_ray().expect("луч");
+        assert!(ray.dir.y > camera.forward().y, "{ray:?}");
+    }
+
+    #[test]
+    fn cursor_ray_needs_shown_scene_cursor_and_size() {
+        let (mut ctx, _) = scene_ctx();
+        assert_eq!(ctx.cursor_ray(), None);
+        ctx.input.on_cursor(Some(Vec2::new(100.0, 50.0)));
+        assert!(ctx.cursor_ray().is_some());
+        for size in [UVec2::new(0, 100), UVec2::new(400, 0)] {
+            let mut zero = scene_ctx().0;
+            zero.input.on_cursor(Some(Vec2::new(100.0, 50.0)));
+            if let Some(shown) = &mut zero.shown {
+                shown.scene.as_mut().expect("сцена").size = size;
+            }
+            assert_eq!(zero.cursor_ray(), None, "{size}");
+        }
+        if let Some(shown) = &mut ctx.shown {
+            shown.scene = None;
+        }
+        assert_eq!(ctx.cursor_ray(), None);
+        ctx.shown = None;
+        assert_eq!(ctx.cursor_ray(), None);
     }
 
     const D: Vec2 = Vec2::new(3.0, -2.0);

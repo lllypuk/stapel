@@ -2614,6 +2614,7 @@ mod tests {
                     w: 320.0,
                     h: 180.0,
                 },
+                scene: None,
             }),
             ..Context::default()
         }

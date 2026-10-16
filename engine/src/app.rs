@@ -10,7 +10,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::audio::device;
 use crate::{
-    Config, Context, FixedClock, FrameStats, Game, RateCounter, Renderer, Shown, UiFrame, Vec2,
+    Config, Context, FixedClock, FrameStats, Game, RateCounter, Renderer, UiFrame, Vec2,
     step_frame, ui,
 };
 
@@ -196,11 +196,8 @@ impl<G: Game> Running<G> {
             .renderer
             .render(&self.ctx.gfx, &mut self.ctx.assets, ui)
         {
-            Ok(Some(viewport)) => {
-                self.ctx.shown = Some(Shown {
-                    camera: self.ctx.gfx.camera,
-                    viewport,
-                });
+            Ok(Some(shown)) => {
+                self.ctx.shown = Some(shown);
                 self.frames
                     .record(Instant::now(), self.ctx.gfx.sprites.len());
             }
