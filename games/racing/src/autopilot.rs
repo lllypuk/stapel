@@ -9,7 +9,7 @@ use engine::{Context, Game, Vec2, Vec3};
 use crate::car::{Car, Controls, steer_angle};
 use crate::garage::GarageCmd;
 use crate::race::lap_time;
-use crate::track::{Checkpoint, TrackDraft, cell_at};
+use crate::track::{Checkpoint, cell_at};
 use crate::{CARS_DIR, Dirs, Racing, TICK_HZ, TRACKS_DIR, load_cars};
 
 /// Точек средней линии на деталь.
@@ -118,7 +118,7 @@ impl Autopilot {
 }
 
 /// Эталон круга, с: время автопилота на машине `race`, округлённое вверх.
-fn reference(track: &str) -> u64 {
+pub(crate) fn reference(track: &str) -> u64 {
     match track {
         "track01" => 10,
         "track02" => 14,
@@ -131,46 +131,43 @@ fn reference(track: &str) -> u64 {
 fn lap(track: &str, car: &str) {
     let path = PathBuf::from(format!("{TRACKS_DIR}{track}.toml"));
     let text = fs::read_to_string(&path).expect("трасса");
-    let parsed = TrackDraft::parse(&text).expect("разбор");
     let mut ctx = Context::default();
     let mut g = Racing::new(path, text, Dirs::assets(), &mut ctx.assets);
     let i = (g.cars.iter().position(|c| c.model == car)).expect("машина");
     g.garage.queue.extend([GarageCmd::Select(i), GarageCmd::Go]);
     g.update(&mut ctx);
     assert_eq!(g.car.config.model, car);
+    lap_on(&mut g, &format!("{track} {car}"), reference(track));
+}
+
+/// Круг заезда `g` от старта не дольше 2× эталона `reference`, с; паника при съезде или падении.
+pub(crate) fn lap_on(g: &mut Racing, name: &str, reference: u64) {
     let mut pilot = Autopilot::new(&g.race.checkpoints);
     let n = g.race.checkpoints.len();
     // Секунда сверху — доехать от старта до линии.
-    let limit = 2 * reference(track) * u64::from(TICK_HZ);
+    let limit = 2 * reference * u64::from(TICK_HZ);
     let clock = Instant::now();
     for t in 0..limit + u64::from(TICK_HZ) {
         g.drive(pilot.controls(&g.car));
         let body = &g.car.body;
-        assert!(
-            body.pos.y > 0.0,
-            "{track} {car}: тик {t}, упала: {}",
-            body.pos
-        );
+        assert!(body.pos.y > 0.0, "{name}: тик {t}, упала: {}", body.pos);
         let last = &g.race.checkpoints[(g.race.next + n - 1) % n];
-        let flying = parsed.roads[last.road].piece.name == "roadRamp"
+        let flying = g.track.roads[last.road].piece.name == "roadRamp"
             && g.car.wheels.iter().all(|w| w.ground.is_none());
         let on_road = cell_at(body.pos).is_some_and(|c| g.road_cells.contains(&c));
         assert!(
             on_road || flying,
-            "{track} {car}: тик {t}, вне дороги: {}",
+            "{name}: тик {t}, вне дороги: {}",
             body.pos
         );
         if let Some(best) = g.race.best {
             let time = lap_time(best);
-            eprintln!("{track} {car}: круг {time}, счёт {:.2?}", clock.elapsed());
-            assert!(best <= limit, "{track} {car}: {time}");
+            eprintln!("{name}: круг {time}, счёт {:.2?}", clock.elapsed());
+            assert!(best <= limit, "{name}: {time}");
             return;
         }
     }
-    panic!(
-        "{track} {car}: круга нет за {limit} тиков, next {}",
-        g.race.next
-    );
+    panic!("{name}: круга нет за {limit} тиков, next {}", g.race.next);
 }
 
 /// Машины по трассам так, чтобы были все приводы: `race` — RWD, `hatchback-sports` — FWD, `race-future` — AWD.

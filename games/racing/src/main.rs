@@ -1608,6 +1608,30 @@ mod tests {
     }
 
     #[test]
+    fn max_speed_slider_mid_race_caps_speed_without_restart() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        flat(&mut g, 0.0);
+        g.road_cells = (-50..50)
+            .flat_map(|x| (-50..50).map(move |z| (IVec2::new(x, z), 0)))
+            .collect();
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+        ticks(&mut g, &mut ctx, 60);
+        let (pos, speed) = (g.car.body.pos, g.car.forward_speed());
+        let cap = speed + 3.0;
+        assert!(cap < g.car.config.max_speed - 10.0, "{speed}");
+        g.tuning.queue.push(TuneCmd::Set(field("max_speed"), cap));
+        tick(&mut g, &mut ctx);
+        assert!(across(g.car.body.pos, pos) < 1.0, "рестартовала");
+        let mut top = 0.0f32;
+        for _ in 0..5 * 60 {
+            tick(&mut g, &mut ctx);
+            top = top.max(g.car.forward_speed());
+        }
+        assert!(top > cap - 0.5 && top < cap + 0.1, "{top} при {cap}");
+    }
+
+    #[test]
     fn restart_field_rebuilds_car_at_last_checkpoint() {
         let mut ctx = Context::default();
         let mut g = racing(&mut ctx);
@@ -1992,6 +2016,65 @@ mod tests {
         let scene = ctx.gfx.scene.take().expect("сцена");
         assert_eq!(scene.models, g.editor.draws());
         assert!(scene.models.iter().any(|m| m.tint == editor::BLOCKED));
+    }
+
+    /// Курсор на пиксель, где показанный 3D-кадр видит точку `p`.
+    fn point_at(ctx: &mut Context, p: Vec3) {
+        let scene = ctx.shown.and_then(|s| s.scene).expect("3D-кадр");
+        let size = scene.size.as_vec2();
+        let ndc = (scene.camera.view_proj(size.x / size.y)).project_point3(p);
+        let px = vec2(ndc.x + 1.0, 1.0 - ndc.y) * size / 2.0;
+        assert!(
+            px.cmpge(Vec2::ZERO).all() && px.cmplt(size).all(),
+            "{p} вне окна: {px}"
+        );
+        ctx.input.on_cursor(Some(px));
+    }
+
+    #[test]
+    fn oval_built_by_editor_from_scratch_laps_on_autopilot_unsaved() {
+        let mut ctx = Context::default();
+        let mut g = editing("scratch", &mut ctx);
+        g.panel.queue.push(PanelCmd::Switch(Switch::New));
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.editor.draft.roads, []);
+        let file = fs::read_to_string(&g.path).expect("новый файл");
+        let pan = [KeyCode::KeyD, KeyCode::KeyS];
+        for key in pan {
+            ctx.input.on_key(key, Pressed, false);
+        }
+        while g.editor.orbit.focus.x < 12.0 {
+            tick(&mut g, &mut ctx);
+        }
+        for key in pan {
+            ctx.input.on_key(key, Released, false);
+        }
+        let oval = TrackDraft::parse(&fs::read_to_string(OVAL).expect("овал")).expect("разбор");
+        for road in &oval.roads {
+            let tool = Tool::Road {
+                piece: road.piece,
+                rot: road.rot,
+            };
+            (g.panel.queue).extend([
+                PanelCmd::Edit(EditorCmd::Tool(tool)),
+                PanelCmd::Edit(EditorCmd::Level(road.level)),
+            ]);
+            tick(&mut g, &mut ctx);
+            show_editor(&g, &mut ctx);
+            let mid = (road.cell.as_vec2() + 0.5) * KIT_SCALE;
+            point_at(
+                &mut ctx,
+                vec3(mid.x, road.level as f32 * LEVEL * KIT_SCALE, mid.y),
+            );
+            ctx.input.on_button(MouseButton::Left, Pressed);
+            tick(&mut g, &mut ctx);
+            ctx.input.on_button(MouseButton::Left, Released);
+        }
+        assert_eq!(g.editor.draft.roads, oval.roads);
+        tap(&mut g, &mut ctx, KeyCode::F1);
+        assert_eq!(g.mode, Mode::Race);
+        assert_eq!(fs::read_to_string(&g.path).expect("файл"), file);
+        autopilot::lap_on(&mut g, "овал редактора", autopilot::reference("track01"));
     }
 
     fn ctrl(g: &mut Racing, ctx: &mut Context, key: KeyCode) {
