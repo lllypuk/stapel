@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
-use engine::{Assets, Color, Handle, Mat4, Model, ModelDraw, StaticWorld, Triangle, Vec3, vec3};
+use engine::{
+    Aabb3, Assets, Color, Handle, Mat4, Model, ModelDraw, StaticWorld, Triangle, Vec3, vec3,
+};
 
 use crate::ASSETS;
 use crate::pieces::{BARRIER_WALL, CARS, DECOR, KIT_SCALE, PIECES};
-use crate::track::TrackDraft;
+use crate::track::{Entry, TrackDraft};
 
 /// Метки треугольников мира.
 pub(crate) const ROAD: u32 = 0;
@@ -30,6 +32,8 @@ pub(crate) struct Placed {
     pub(crate) name: &'static str,
     pub(crate) transform: Mat4,
     pub(crate) kind: Kind,
+    /// Барьер приподнятой детали — запись её дороги.
+    pub(crate) entry: Entry,
 }
 
 /// Модели деталей, декора и машин по имени.
@@ -72,20 +76,22 @@ fn wall(frame: Mat4, [a, b]: [Vec3; 2]) -> Mat4 {
 /// Дороги с барьерами приподнятых деталей, затем декор.
 pub(crate) fn place(track: &TrackDraft) -> Vec<Placed> {
     let mut out = Vec::new();
-    for r in &track.roads {
+    for (i, r) in track.roads.iter().enumerate() {
         out.push(Placed {
             name: r.piece.name,
             transform: r.transform(),
             kind: Kind::Road,
+            entry: Entry::Road(i),
         });
         let frame = r.frame();
         out.extend(r.piece.walls.iter().map(|&axis| Placed {
             name: BARRIER_WALL.name,
             transform: wall(frame, axis),
             kind: Kind::Barrier,
+            entry: Entry::Road(i),
         }));
     }
-    out.extend(track.decor.iter().map(|d| Placed {
+    out.extend(track.decor.iter().enumerate().map(|(i, d)| Placed {
         name: d.piece.name,
         transform: d.transform(),
         kind: if d.piece.solid {
@@ -93,6 +99,7 @@ pub(crate) fn place(track: &TrackDraft) -> Vec<Placed> {
         } else {
             Kind::Prop
         },
+        entry: Entry::Decor(i),
     }));
     out
 }
@@ -124,6 +131,9 @@ fn triangles(placed: &[Placed], models: &Models, assets: &Assets) -> Vec<Triangl
 pub(crate) struct Layout {
     pub(crate) draws: Vec<ModelDraw>,
     pub(crate) world: StaticWorld,
+    /// Габариты в мире каждой модели в позе покоя, по порядку `draws`.
+    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задачи 15–16"))]
+    pub(crate) bounds: Vec<(Entry, Aabb3)>,
 }
 
 impl Layout {
@@ -140,6 +150,13 @@ impl Layout {
                 })
                 .collect(),
             world: StaticWorld::new(KIT_SCALE, triangles(&placed, models, assets)),
+            bounds: (placed.iter())
+                .map(|p| {
+                    let model = assets.model(models.get(p.name));
+                    let b = model.bounds().expect("модели набора не пусты");
+                    (p.entry, b.transformed(p.transform))
+                })
+                .collect(),
         }
     }
 }

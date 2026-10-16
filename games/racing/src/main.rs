@@ -3,6 +3,8 @@ mod autopilot;
 mod camera;
 mod car;
 mod car_config;
+#[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задачи 15–16"))]
+mod editor;
 mod engine_sound;
 mod garage;
 mod ghost;

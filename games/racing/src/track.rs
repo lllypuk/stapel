@@ -96,7 +96,7 @@ pub(crate) enum TrackError {
 
 /// Клетка по модулю и уровень — не больше: в debug сумма клеток детали иначе паникует переполнением.
 const MAX_CELL: i32 = 1000;
-const MAX_LEVEL: u32 = 16;
+pub(crate) const MAX_LEVEL: u32 = 16;
 
 impl fmt::Display for TrackError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -195,7 +195,7 @@ impl DecorEntry {
             * Mat4::from_translation(self.piece.offset)
     }
 
-    fn in_bounds(&self) -> bool {
+    pub(crate) fn in_bounds(&self) -> bool {
         let limit = (MAX_CELL + 1) as f32 * KIT_SCALE;
         self.pos.is_finite() && self.pos.abs().max_element() <= limit && self.yaw_deg.is_finite()
     }
@@ -373,7 +373,7 @@ impl TrackDraft {
     }
 
     /// Запись дороги на каждой занятой клетке и уровне.
-    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задача 14"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задачи 15–16"))]
     pub(crate) fn occupancy(&self) -> HashMap<(IVec2, u32), usize> {
         (self.roads.iter().enumerate())
             .flat_map(|(i, r)| r.cells().map(move |c| (c, i)))
@@ -381,13 +381,13 @@ impl TrackDraft {
     }
 
     /// Встанет ли `road` следующей записью.
-    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задача 14"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задачи 15–16"))]
     pub(crate) fn can_place(&self, road: &RoadEntry) -> Result<(), DraftError> {
         road.check(self.roads.len(), &self.occupancy())
     }
 
     /// Файл целиком: комментарии прежнего файла пропадают.
-    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задача 14"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "редактор трасс — задачи 15–16"))]
     pub(crate) fn to_toml(&self) -> String {
         let file = TrackFile {
             car: self.car.clone(),

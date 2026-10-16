@@ -213,6 +213,7 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 - «Не туда» в `racing` — по направлению детали под центром масс (от её входа к выходу), не к следующему чекпоинту: машина, задом обогнувшая поворот, ехала бы к нему «правильно». → тест `race::wrong_way_follows_piece_under_car_not_next_checkpoint`
 - Прямоугольник чекпоинта `racing` поднимается до ближайшей дороги выше в клетках стыка, без неё — без предела. С высотой в полосу уровня (2 м) быстрый прыжок с `roadRamp` перелетал чекпоинт за трамплином, и круг молча не засчитывался; без предела под мостом машина сверху засчитала бы чекпоинт нижней дороги. → тесты `track::checkpoint_without_road_above_counts_any_jump_height`, `track::bridge8_checkpoints_stop_under_bridge_deck`, `autopilot::hatchback_laps_ramp_jump`
 - Торец барьера `roadRampLong` прямо за поворотом ловит машину, срезавшую поворот, и она стоит у него без ошибки. На стартовых трассах между поворотом и рампой — прямая. → тест `autopilot::race_future_laps_bridge_eight`, `autopilot::every_car_laps_every_track`
+- Редактор `racing` перестраивает `Layout` после каждой правки и отмены: пикинг декора идёт лучом по его `StaticWorld`, и по старому `Layout` декор вставал бы на прежнюю трассу — на снятую дорогу или сквозь новую. → тест `editor::picking_follows_layout_after_edit_and_undo`
 
 ## Этапы
 
