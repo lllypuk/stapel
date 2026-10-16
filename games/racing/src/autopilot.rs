@@ -4,9 +4,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use engine::{Context, Vec2, Vec3};
+use engine::{Context, Game, Vec2, Vec3};
 
 use crate::car::{Car, Controls, steer_angle};
+use crate::garage::GarageCmd;
 use crate::race::lap_time;
 use crate::track::{Checkpoint, TrackDraft, cell_at};
 use crate::{CARS_DIR, Racing, TICK_HZ, TRACKS_DIR, load_cars};
@@ -133,11 +134,9 @@ fn lap(track: &str, car: &str) {
     let parsed = TrackDraft::parse(&text).expect("разбор");
     let mut ctx = Context::default();
     let mut g = Racing::new(path, text, load_cars(CARS_DIR), &mut ctx.assets);
-    for _ in 0..g.cars.len() {
-        if g.car.config.model != car {
-            g.next_car(&ctx.assets);
-        }
-    }
+    let i = (g.cars.iter().position(|c| c.model == car)).expect("машина");
+    g.garage.queue.extend([GarageCmd::Select(i), GarageCmd::Go]);
+    g.update(&mut ctx);
     assert_eq!(g.car.config.model, car);
     let mut pilot = Autopilot::new(&g.race.checkpoints);
     let n = g.race.checkpoints.len();

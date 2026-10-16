@@ -3,6 +3,7 @@ mod autopilot;
 mod camera;
 mod car;
 mod car_config;
+mod garage;
 mod layout;
 mod pieces;
 mod race;
@@ -10,17 +11,19 @@ mod track;
 
 use std::collections::HashSet;
 use std::fs;
+use std::mem;
 use std::path::PathBuf;
 
 use engine::{
-    Assets, Camera2D, Color, Config, Context, DirectionalLight, Fog, Font, FontData, Game, Gfx,
-    Handle, IVec2, Input, KeyCode, ModelDraw, Pose, Scene, StaticWorld, Vec2, Vec3, Watcher, egui,
-    vec2, vec3,
+    Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Fog, Font, FontData,
+    Game, Gfx, Handle, IVec2, Input, KeyCode, ModelDraw, Pose, Scene, StaticWorld, Vec2, Vec3,
+    Watcher, egui, vec2, vec3,
 };
 
 use crate::camera::Chase;
 use crate::car::{Car, Controls, SUBSTEP, SUBSTEPS};
 use crate::car_config::CarConfig;
+use crate::garage::{Garage, GarageCmd};
 use crate::layout::{Layout, Models};
 use crate::pieces::KIT_SCALE;
 use crate::race::{Race, lap_time};
@@ -125,7 +128,7 @@ impl Spawn {
     /// Посреди клетки за чекпоинтом, на асфальте: на линии выхода `roadRamp` зад машины — под кромкой трамплина.
     fn at(c: &Checkpoint, world: &StaticWorld) -> Self {
         let pos = c.origin + c.normal * KIT_SCALE / 2.0;
-        let ground = world.raycast(pos + Vec3::Y * GROUND_PROBE, Vec3::NEG_Y, KIT_SCALE, |_| {
+        let ground = world.raycast(pos + GROUND_PROBE * Vec3::Y, Vec3::NEG_Y, KIT_SCALE, |_| {
             true
         });
         Self {
@@ -144,12 +147,19 @@ impl Spawn {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    Garage,
+    Race,
+}
+
 struct Racing {
+    mode: Mode,
+    garage: Garage,
     layout: Layout,
     models: Models,
     sky: Color,
     cars: Vec<CarConfig>,
-    car_index: usize,
     car: Car,
     pose: Pose,
     chase: Chase,
@@ -169,7 +179,7 @@ struct Racing {
 }
 
 impl Racing {
-    /// Трасса `text`, прочитанная из `path`; дальше за файлом следит `Watcher`.
+    /// Гараж с предвыбором машины трассы `text`, прочитанной из `path`; дальше за файлом следит `Watcher`.
     ///
     /// # Panics
     /// Если `load_track` не принял трассу.
@@ -177,16 +187,17 @@ impl Racing {
         let (track, checkpoints) =
             load_track(&text, &cars).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let models = Models::load(assets);
-        let car_index = (cars.iter().position(|c| c.model == track.car)).expect("load_track");
+        let selected = (cars.iter().position(|c| c.model == track.car)).expect("load_track");
         let start = Spawn::start(&checkpoints);
-        let car = Self::make_car(&cars[car_index], &models, assets);
+        let car = Self::make_car(&cars[selected], &models, assets);
         let mut racing = Self {
+            mode: Mode::Garage,
+            garage: Garage::new(selected),
             layout: Layout::new(&track, &models, assets),
             models,
             sky: Color::from_srgb8(170, 205, 235),
             chase: Chase::new(car.body.pos, car.body.rot),
             cars,
-            car_index,
             car,
             pose: Pose::default(),
             road_cells: track.road_cells(),
@@ -249,10 +260,102 @@ impl Racing {
         self.spawn(self.start);
     }
 
-    fn next_car(&mut self, assets: &Assets) {
-        self.car_index = (self.car_index + 1) % self.cars.len();
-        self.car = Self::make_car(&self.cars[self.car_index], &self.models, assets);
+    /// Заезд машиной, выбранной в гараже, со старта.
+    fn go(&mut self, assets: &Assets) {
+        self.car = Self::make_car(&self.cars[self.garage.selected], &self.models, assets);
         self.restart();
+        self.mode = Mode::Race;
+    }
+
+    fn update_garage(&mut self, ctx: &Context) {
+        let mut go = ctx.input.just_pressed(KeyCode::Enter);
+        for cmd in mem::take(&mut self.garage.queue) {
+            match cmd {
+                GarageCmd::Select(i) => self.garage.selected = i,
+                GarageCmd::Go => go = true,
+            }
+        }
+        self.garage.tick();
+        if go {
+            self.go(&ctx.assets);
+        }
+    }
+
+    fn update_race(&mut self, ctx: &Context) {
+        if ctx.input.just_pressed(KeyCode::KeyG) {
+            self.restart();
+            self.mode = Mode::Garage;
+            return;
+        }
+        if ctx.input.just_pressed(KeyCode::KeyR) {
+            self.spawn(self.respawn);
+        }
+        self.drive(controls(&ctx.input));
+    }
+
+    /// Свет и туман общие у заезда и гаража.
+    fn scene(&self, camera: Camera3D, models: Vec<ModelDraw>) -> Scene {
+        Scene {
+            camera,
+            ambient: Color {
+                r: 0.35,
+                g: 0.37,
+                b: 0.42,
+                a: 1.0,
+            },
+            fog: Fog {
+                color: self.sky,
+                start: 80.0,
+                end: 320.0,
+            },
+            sun: Some(DirectionalLight {
+                dir: vec3(0.4, -1.0, 0.3),
+                color: Color {
+                    r: 1.0,
+                    g: 0.95,
+                    b: 0.85,
+                    a: 1.0,
+                },
+            }),
+            lights: Vec::new(),
+            meshes: Vec::new(),
+            models,
+        }
+    }
+
+    /// Выбранная машина в позе покоя на подиуме.
+    fn draw_garage(&self, alpha: f32) -> Scene {
+        let model = self.models.get(&self.cars[self.garage.selected].model);
+        let models = vec![
+            ModelDraw {
+                model: self.models.get(garage::PODIUM),
+                transform: self.garage.podium(alpha),
+                pose: None,
+                tint: Color::WHITE,
+            },
+            ModelDraw {
+                model,
+                transform: self.garage.transform(alpha),
+                pose: None,
+                tint: Color::WHITE,
+            },
+        ];
+        self.scene(Garage::camera(), models)
+    }
+
+    fn draw_race(&mut self, ctx: &mut Context, alpha: f32) -> Scene {
+        let model = self.models.get(&self.car.config.model);
+        self.car.pose(ctx.assets.model(model), &mut self.pose);
+        let (pos, rot) = self.car.lerp(alpha);
+        let mut models = self.layout.draws.clone();
+        models.push(ModelDraw {
+            model,
+            transform: self.car.transform(alpha),
+            pose: Some(self.pose.clone()),
+            tint: Color::WHITE,
+        });
+        self.draw_hud(&mut ctx.gfx, &ctx.assets);
+        self.scene(self.chase.camera(alpha, pos, rot), models)
     }
 
     fn pass_checkpoint(&mut self) {
@@ -333,58 +436,26 @@ impl Game for Racing {
 
     fn update(&mut self, ctx: &mut Context) {
         self.reload_changed(&ctx.assets);
-        if ctx.input.just_pressed(KeyCode::Tab) && !self.race.started {
-            self.next_car(&ctx.assets);
+        match self.mode {
+            Mode::Garage => self.update_garage(ctx),
+            Mode::Race => self.update_race(ctx),
         }
-        if ctx.input.just_pressed(KeyCode::KeyR) {
-            self.spawn(self.respawn);
-        }
-        self.drive(controls(&ctx.input));
     }
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
-        let model = self.models.get(&self.car.config.model);
-        self.car.pose(ctx.assets.model(model), &mut self.pose);
-        let (pos, rot) = self.car.lerp(alpha);
-        let mut models = self.layout.draws.clone();
-        models.push(ModelDraw {
-            model,
-            transform: self.car.transform(alpha),
-            pose: Some(self.pose.clone()),
-            tint: Color::WHITE,
-        });
         ctx.gfx.clear_color = self.sky;
-        ctx.gfx.scene = Some(Scene {
-            camera: self.chase.camera(alpha, pos, rot),
-            ambient: Color {
-                r: 0.35,
-                g: 0.37,
-                b: 0.42,
-                a: 1.0,
-            },
-            fog: Fog {
-                color: self.sky,
-                start: 80.0,
-                end: 320.0,
-            },
-            sun: Some(DirectionalLight {
-                dir: vec3(0.4, -1.0, 0.3),
-                color: Color {
-                    r: 1.0,
-                    g: 0.95,
-                    b: 0.85,
-                    a: 1.0,
-                },
-            }),
-            lights: Vec::new(),
-            meshes: Vec::new(),
-            models,
-        });
-        self.draw_hud(&mut ctx.gfx, &ctx.assets);
+        let scene = match self.mode {
+            Mode::Garage => self.draw_garage(alpha),
+            Mode::Race => self.draw_race(ctx, alpha),
+        };
+        ctx.gfx.scene = Some(scene);
     }
 
     fn ui(&mut self, ui: &egui::Context) {
         engine::ui::set_font(ui, FONT_PATH);
+        if self.mode == Mode::Garage {
+            self.garage.ui(ui, &self.cars);
+        }
         let Some(error) = &self.error else {
             return;
         };
@@ -414,7 +485,7 @@ mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
     use engine::ElementState::{Pressed, Released};
-    use engine::{Quat, Sprite, Triangle, text};
+    use engine::{Mat4, Quat, Sprite, Triangle, text};
 
     use super::*;
     use crate::layout::{self, ROAD};
@@ -422,9 +493,12 @@ mod tests {
 
     const OVAL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/testdata/oval.toml");
 
+    /// Сразу в заезде машиной трассы.
     fn open(path: PathBuf, ctx: &mut Context) -> Racing {
         let text = fs::read_to_string(&path).expect("трасса");
-        Racing::new(path, text, load_cars(CARS_DIR), &mut ctx.assets)
+        let mut g = Racing::new(path, text, load_cars(CARS_DIR), &mut ctx.assets);
+        g.go(&ctx.assets);
+        g
     }
 
     fn racing(ctx: &mut Context) -> Racing {
@@ -576,28 +650,108 @@ mod tests {
         assert!(eye < 0.5, "{eye}");
     }
 
+    fn car_index(g: &Racing, model: &str) -> usize {
+        (g.cars.iter().position(|c| c.model == model)).expect("машина")
+    }
+
     #[test]
-    fn tab_switches_car_only_before_start_line() {
+    fn starts_in_garage_with_track_car_preselected() {
+        let mut ctx = Context::default();
+        let path = temp_oval("garage");
+        let oval = fs::read_to_string(&path).expect("овал");
+        let text = oval.replace("car = \"race\"", "car = \"sedan-sports\"");
+        fs::write(&path, &text).expect("запись");
+        let mut g = Racing::new(path, text, load_cars(CARS_DIR), &mut ctx.assets);
+        assert_eq!(g.mode, Mode::Garage);
+        assert_eq!(g.garage.selected, car_index(&g, "sedan-sports"));
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+        ticks(&mut g, &mut ctx, 30);
+        assert!(placed_at(&g, g.start), "машина ехала в гараже");
+        assert_eq!(g.race.ticks, 0);
+    }
+
+    #[test]
+    fn enter_starts_race_with_selected_car() {
+        let mut ctx = Context::default();
+        let path = PathBuf::from(OVAL);
+        let text = fs::read_to_string(&path).expect("овал");
+        let mut g = Racing::new(path, text, load_cars(CARS_DIR), &mut ctx.assets);
+        g.garage
+            .queue
+            .push(GarageCmd::Select(car_index(&g, "race-future")));
+        tick(&mut g, &mut ctx);
+        assert_eq!(
+            (g.mode, g.car.config.model.as_str()),
+            (Mode::Garage, "race")
+        );
+        tap(&mut g, &mut ctx, KeyCode::Enter);
+        assert_eq!(g.mode, Mode::Race);
+        assert_eq!(g.car.config.model, "race-future");
+        assert!(placed_at(&g, g.start));
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+        ticks(&mut g, &mut ctx, 10);
+        assert!(g.car.body.vel.length() > 1.0, "заезд не идёт");
+
+        g.garage
+            .queue
+            .extend([GarageCmd::Select(car_index(&g, "race")), GarageCmd::Go]);
+        g.mode = Mode::Garage;
+        tick(&mut g, &mut ctx);
+        assert_eq!((g.mode, g.car.config.model.as_str()), (Mode::Race, "race"));
+    }
+
+    #[test]
+    fn g_returns_to_garage_and_restarts_race() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        cross_start_line(&mut g, &mut ctx);
+        ticks(&mut g, &mut ctx, 20);
+        g.race.best = Some(500);
+        tap(&mut g, &mut ctx, KeyCode::KeyG);
+        assert_eq!(g.mode, Mode::Garage);
+        assert!(placed_at(&g, g.start));
+        assert_eq!((g.respawn, g.race.next, g.race.ticks), (g.start, 0, 0));
+        assert_eq!(g.race.best, Some(500), "лучший круг трассы не сбрасывается");
+        assert_eq!(g.garage.selected, car_index(&g, "race"));
+        tap(&mut g, &mut ctx, KeyCode::Enter);
+        assert_eq!(g.mode, Mode::Race);
+    }
+
+    #[test]
+    fn tab_no_longer_changes_car() {
         let mut ctx = Context::default();
         let mut g = racing(&mut ctx);
         ctx.input.on_key(KeyCode::KeyW, Pressed, false);
         ticks(&mut g, &mut ctx, 10);
-        ctx.input.on_key(KeyCode::KeyW, Released, false);
-        tap(&mut g, &mut ctx, KeyCode::Tab);
-        assert_eq!(g.car.config.model, "race-future");
-        assert!(placed_at(&g, g.start));
-        assert_eq!(g.car.body.vel.with_y(0.0).length(), 0.0);
-        for _ in 0..3 {
-            tap(&mut g, &mut ctx, KeyCode::Tab);
-        }
-        assert_eq!(g.car.config.model, "race");
-
-        cross_start_line(&mut g, &mut ctx);
-        assert!(g.race.started);
         tap(&mut g, &mut ctx, KeyCode::Tab);
         assert_eq!(g.car.config.model, "race");
         assert!(!placed_at(&g, g.start), "рестартовала");
-        assert_eq!(g.race.next, 1);
+        assert_eq!(g.mode, Mode::Race);
+    }
+
+    #[test]
+    fn garage_draws_selected_car_on_podium_without_hud() {
+        let mut ctx = Context::default();
+        let path = PathBuf::from(OVAL);
+        let text = fs::read_to_string(&path).expect("овал");
+        let mut g = Racing::new(path, text, load_cars(CARS_DIR), &mut ctx.assets);
+        g.garage.selected = car_index(&g, "hatchback-sports");
+        ticks(&mut g, &mut ctx, 3);
+        g.draw(&mut ctx, 0.5);
+        let scene = ctx.gfx.scene.take().expect("сцена");
+        assert_eq!(scene.camera, Garage::camera());
+        let [podium, car] = scene.models.as_slice() else {
+            panic!("{} моделей", scene.models.len());
+        };
+        assert_eq!(podium.model, g.models.get(garage::PODIUM));
+        assert_eq!(podium.transform, g.garage.podium(0.5));
+        assert_eq!(car.model, g.models.get("hatchback-sports"));
+        assert_eq!(car.transform, g.garage.transform(0.5));
+        assert_ne!(car.transform, Mat4::IDENTITY);
+        assert_eq!(car.pose, None);
+        assert!(scene.sun.is_some());
+        assert_eq!(ctx.gfx.clear_color, g.sky);
+        assert_eq!(hud(&ctx), []);
     }
 
     #[test]
@@ -624,6 +778,22 @@ mod tests {
                 ctx.input.on_key(KeyCode::KeyS, Released, false);
             }
         }
+    }
+
+    #[test]
+    fn spawn_stands_mid_cell_past_checkpoint_on_ground_below() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        flat(&mut g, 0.0);
+        let c = Checkpoint {
+            road: 0,
+            origin: vec3(8.0, 0.5, 2.0),
+            normal: Vec3::NEG_X,
+            height: f32::INFINITY,
+        };
+        let at = Spawn::at(&c, &g.layout.world);
+        assert!(at.pos.abs_diff_eq(vec3(6.0, 0.0, 2.0), 1e-5), "{at:?}");
+        assert_eq!(at.dir, Vec3::NEG_X);
     }
 
     #[test]
@@ -693,7 +863,7 @@ mod tests {
         let mut g = racing(&mut ctx);
         ticks(&mut g, &mut ctx, 5);
         g.draw(&mut ctx, 0.5);
-        let scene = ctx.gfx.scene.expect("сцена");
+        let scene = ctx.gfx.scene.take().expect("сцена");
         let (car, track) = scene.models.split_last().expect("машина");
         assert_eq!(track, g.layout.draws.as_slice());
         assert_eq!(car.model, g.models.get("race"));
@@ -771,6 +941,19 @@ mod tests {
             .build_ui_state(|ui, g: &mut Racing| g.ui(ui.ctx()), g);
         h.run();
         h
+    }
+
+    #[test]
+    fn garage_window_only_in_garage() {
+        let mut ctx = Context::default();
+        let h = harness(racing(&mut ctx));
+        assert!(h.query_by_label("Гараж").is_none());
+        let mut g = racing(&mut ctx);
+        g.mode = Mode::Garage;
+        let mut h = harness(g);
+        h.get_by_label("Ехать").click();
+        h.run();
+        assert_eq!(h.state().garage.queue, [GarageCmd::Go]);
     }
 
     #[test]
