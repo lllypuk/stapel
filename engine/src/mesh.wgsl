@@ -34,6 +34,7 @@ struct InstanceIn {
     @location(7) n0: vec3<f32>,
     @location(8) n1: vec3<f32>,
     @location(9) n2: vec3<f32>,
+    @location(12) tint: vec4<f32>,
 }
 
 struct SkinIn {
@@ -46,6 +47,7 @@ struct VsOut {
     @location(0) world: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
+    @location(3) tint: vec4<f32>,
 }
 
 fn vs_out(pos: vec4<f32>, normal: vec3<f32>, uv: vec2<f32>, inst: InstanceIn) -> VsOut {
@@ -56,6 +58,7 @@ fn vs_out(pos: vec4<f32>, normal: vec3<f32>, uv: vec2<f32>, inst: InstanceIn) ->
     out.world = world.xyz;
     out.normal = mat3x3(inst.n0, inst.n1, inst.n2) * normal;
     out.uv = uv;
+    out.tint = inst.tint;
     return out;
 }
 
@@ -76,7 +79,7 @@ fn vs_skinned(v: VertexIn, s: SkinIn, inst: InstanceIn) -> VsOut {
 
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
-    let t = textureSample(tex, samp, in.uv);
+    let t = textureSample(tex, samp, in.uv) * in.tint;
     let n = normalize(in.normal);
     var light = scene.ambient.rgb;
     for (var i = 0u; i < scene.light_count; i++) {

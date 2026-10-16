@@ -197,18 +197,18 @@
 - Create: `engine/src/testdata/racing/` (`roadStraight.glb`, `roadCornerLarge.glb`, `race.glb`, `Textures/colormap.png`, `KENNEY-LICENSE.txt`)
 - Modify: `engine/src/model.rs`, `engine/src/scene.rs`, `engine/src/mesh_pipeline.rs`, `engine/src/mesh.wgsl`, `engine/src/lib.rs`, `docs/design.md`
 
-- [ ] тесты:
+- [x] тесты:
   - материалы `roadStraight.glb` — имена `grass`, `grey`, `road` и цвета `baseColorFactor` без преобразования (`road` = 0,2667);
   - `race.glb` — белый и текстура `colormap`;
   - примитив без материала — белый и пустое имя.
-- [ ] тесты: `color` доходит до `tint` у `MeshDraw` и обеих ветвей раскрытия модели; два инстанса одного меша разных цветов — один батч
-- [ ] офскрин: пиксель = ambient × текстура × tint
-- [ ] `Material`, `Model::materials`, `Primitive::material`, `MeshDraw::color`, `SkinnedDraw::color`, `MeshInstance::tint`, атрибут в WGSL; литералы в тестах и играх — с `color: Color::WHITE`
-- [ ] `docs/design.md`:
+- [x] тесты: `color` доходит до `tint` у `MeshDraw` и обеих ветвей раскрытия модели; два инстанса одного меша разных цветов — один батч
+- [x] офскрин: пиксель = ambient × текстура × tint
+- [x] `Material`, `Model::materials`, `Primitive::material`, `MeshDraw::color`, `SkinnedDraw::color`, `MeshInstance::tint`, атрибут в WGSL; литералы в тестах и играх — с `color: Color::WHITE`
+- [x] `docs/design.md`:
   - строка 6 таблицы «Этапы» — движок и игра этого плана, строка 7 — инструменты гонок;
   - причина `cull_mode: None` уточнена: Racing Kit не `doubleSided`;
   - поломка «`baseColorFactor` пропущен через sRGB» → тест.
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 2: Солнце и `look_at`
 

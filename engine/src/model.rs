@@ -6,6 +6,7 @@ use gltf::animation::{Interpolation, Property};
 use gltf::mesh::Mode;
 use gltf::{Gltf, Semantic};
 
+use crate::Color;
 use crate::assets::{Assets, Handle, Texture};
 use crate::mesh::{Mesh, Vertex};
 
@@ -18,6 +19,8 @@ pub struct Model {
     pub skins: Vec<Skin>,
     /// Анимации.
     pub animations: Vec<Animation>,
+    /// Материалы файла; последний — белый без имени, если он нужен примитиву без материала.
+    pub materials: Vec<Material>,
     /// Поза из TRS узлов без анимации.
     pub rest: Pose,
     /// Индексы узлов, родитель раньше детей: glTF такого порядка не обещает.
@@ -53,13 +56,34 @@ pub struct Node {
     pub skin: Option<usize>,
 }
 
-/// Часть меша со своей текстурой.
+/// Часть меша со своей текстурой и материалом.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Primitive {
     /// Вершины и индексы на GPU.
     pub mesh: Handle<Mesh>,
     /// Базовый цвет; без текстуры в файле — `Handle::WHITE`.
     pub texture: Handle<Texture>,
+    /// Индекс в `Model::materials`.
+    pub material: u32,
+}
+
+/// Материал glTF: цвет умножается на текстуру.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Material {
+    /// Имя из файла, пустое без имени.
+    pub name: String,
+    /// `baseColorFactor` как есть: по спецификации glTF он линейный.
+    pub color: Color,
+}
+
+impl Default for Material {
+    /// Материал glTF по умолчанию: белый.
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            color: Color::WHITE,
+        }
+    }
 }
 
 /// Скин: `Vertex::joints` индексирует `joints`, а не узлы модели.
@@ -125,6 +149,7 @@ impl Model {
             nodes,
             skins,
             animations,
+            materials: Vec::new(),
             rest: Pose::default(),
             order,
         };
@@ -221,6 +246,7 @@ struct RawPrimitive {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     image: Option<String>,
+    material: u32,
 }
 
 /// GLB: буфер — только бинарный блок файла, внешние и `data:` буферы — ошибка.
@@ -233,14 +259,29 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Parsed, String> {
         return Err("external buffers are not supported".into());
     }
     let blob = gltf.blob.as_deref();
+    let mut materials: Vec<Material> = gltf
+        .materials()
+        .map(|m| Material {
+            name: m.name().unwrap_or_default().to_owned(),
+            color: color(m.pbr_metallic_roughness().base_color_factor()),
+        })
+        .collect();
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "в glTF индекс материала — u32"
+    )]
+    let fallback = materials.len() as u32;
     let meshes = gltf
         .meshes()
         .map(|m| {
             m.primitives()
-                .map(|p| read_primitive(&p, blob))
+                .map(|p| read_primitive(&p, blob, fallback))
                 .collect::<Result<Vec<_>, _>>()
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<Vec<_>>, _>>()?;
+    if meshes.iter().flatten().any(|p| p.material == fallback) {
+        materials.push(Material::default());
+    }
 
     let mut parents = vec![None; gltf.nodes().len()];
     for n in gltf.nodes() {
@@ -301,14 +342,30 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Parsed, String> {
         .map(|a| read_animation(&a, blob))
         .collect::<Result<_, _>>()?;
 
+    let mut model = Model::new(nodes, skins, animations)?;
+    model.materials = materials;
     Ok(Parsed {
-        model: Model::new(nodes, skins, animations)?,
+        model,
         node_meshes,
         meshes,
     })
 }
 
-fn read_primitive(p: &gltf::Primitive<'_>, blob: Option<&[u8]>) -> Result<RawPrimitive, String> {
+fn color([r, g, b, a]: [f32; 4]) -> Color {
+    Color {
+        r: r.into(),
+        g: g.into(),
+        b: b.into(),
+        a: a.into(),
+    }
+}
+
+/// `fallback` — индекс материала для примитива без него.
+fn read_primitive(
+    p: &gltf::Primitive<'_>,
+    blob: Option<&[u8]>,
+    fallback: u32,
+) -> Result<RawPrimitive, String> {
     if p.mode() != Mode::Triangles {
         return Err(format!("primitive mode {:?} is not supported", p.mode()));
     }
@@ -356,10 +413,16 @@ fn read_primitive(p: &gltf::Primitive<'_>, blob: Option<&[u8]>) -> Result<RawPri
             _ => return Err("embedded images are not supported".into()),
         },
     };
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "в glTF индекс материала — u32"
+    )]
+    let material = p.material().index().map_or(fallback, |i| i as u32);
     Ok(RawPrimitive {
         vertices,
         indices,
         image,
+        material,
     })
 }
 
@@ -426,6 +489,7 @@ impl Parsed {
                         texture: p
                             .image
                             .map_or(Handle::WHITE, |uri| assets.load_texture(dir.join(uri))),
+                        material: p.material,
                     })
                     .collect()
             })
@@ -897,6 +961,66 @@ pub(crate) mod tests {
         let parsed = parse(&gate).unwrap();
         assert_eq!(parsed.meshes[0][0].indices, (0..132).collect::<Vec<_>>());
         let model = parsed.upload(&mut assets, Path::new(""));
-        assert_eq!(model.nodes[1].primitives[0].texture, Handle::WHITE);
+        let door = model.nodes[1].primitives[0];
+        assert_eq!(door.texture, Handle::WHITE);
+        assert_eq!(door.material, 1);
+        assert_eq!(model.materials[1], Material::default());
+        assert_eq!(Material::default().color, Color::WHITE);
+        assert_eq!(Material::default().name, "");
+    }
+
+    #[test]
+    fn road_materials_keep_linear_base_color() {
+        let road = load("racing/roadStraight.glb");
+        let names: Vec<_> = road.materials.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["grass", "grey", "road"]);
+        let asphalt = &road.materials[2].color;
+        assert!((asphalt.r - 0.2667).abs() < 1e-4, "{asphalt:?}");
+        assert_eq!(
+            [asphalt.g, asphalt.b, asphalt.a],
+            [asphalt.r, asphalt.r, 1.0]
+        );
+        let grass = &road.materials[0].color;
+        assert!((grass.g - 0.5608).abs() < 1e-4, "{grass:?}");
+        assert!((grass.b - 0.4314).abs() < 1e-4, "{grass:?}");
+        let mut assets = Assets::default();
+        let h = assets.load_model(testdata("racing/roadStraight.glb"));
+        let parts: Vec<_> = assets
+            .model(h)
+            .nodes
+            .iter()
+            .flat_map(|n| &n.primitives)
+            .map(|p| (p.material, p.texture))
+            .collect();
+        assert_eq!(
+            parts,
+            [(0, Handle::WHITE), (1, Handle::WHITE), (2, Handle::WHITE)]
+        );
+    }
+
+    #[test]
+    fn car_material_is_white_with_colormap() {
+        let mut assets = Assets::default();
+        let h = assets.load_model(testdata("racing/race.glb"));
+        let colormap = assets.load_texture(testdata("racing/Textures/colormap.png"));
+        assert_ne!(
+            colormap,
+            assets.load_texture(testdata("Textures/colormap.png"))
+        );
+        let car = assets.model(h);
+        assert_eq!(
+            car.materials,
+            [Material {
+                name: "colormap".into(),
+                color: Color::WHITE,
+            }]
+        );
+        let parts: Vec<_> = car.nodes.iter().flat_map(|n| &n.primitives).collect();
+        assert_eq!(parts.len(), 5);
+        assert!(
+            parts
+                .iter()
+                .all(|p| (p.material, p.texture) == (0, colormap))
+        );
     }
 }

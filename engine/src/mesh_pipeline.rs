@@ -3,6 +3,7 @@ use glam::Mat4;
 use wgpu::util::DeviceExt;
 
 use crate::gpu_textures::DEPTH_FORMAT;
+use crate::scene::rgba;
 use crate::sprite_pipeline::{grow_capacity, instance_buffer, wgpu_color};
 use crate::{
     Assets, Color, ExpandedModels, GpuTextures, MAX_JOINTS, MAX_LIGHTS, MeshInstance, PointLight,
@@ -37,11 +38,6 @@ struct SceneUniform {
     /// WGSL выравнивает массив структур по 16 байт.
     _pad: [u32; 2],
     lights: [LightUniform; MAX_LIGHTS],
-}
-
-#[expect(clippy::cast_possible_truncation, reason = "GPU берёт цвет в f32")]
-fn rgba(c: Color) -> [f32; 4] {
-    [c.r as f32, c.g as f32, c.b as f32, c.a as f32]
 }
 
 impl SceneUniform {
@@ -280,7 +276,11 @@ impl MeshPipeline {
             reason = "u32::MAX мешей не поместится в память"
         )]
         let first_skinned = instances.len() as u32;
-        instances.extend(skinned.iter().map(|d| MeshInstance::from(d.transform)));
+        instances.extend(
+            skinned
+                .iter()
+                .map(|d| MeshInstance::new(d.transform, d.color)),
+        );
         self.write_palettes(&models.palettes);
 
         let bytes: &[u8] = bytemuck::cast_slice(&instances);
@@ -451,11 +451,12 @@ fn render_pipeline(
                         7 => Float32x3,
                         8 => Float32x3,
                         9 => Float32x3,
+                        12 => Float32x4,
                     ],
                 }),
             ],
         },
-        // Материалы Kenney двусторонние.
+        // Без отсечения: Racing Kit не `doubleSided`, но Car Kit и Mini Dungeon — да.
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
@@ -671,6 +672,7 @@ mod tests {
         MeshDraw {
             mesh,
             texture,
+            color: Color::WHITE,
             transform: Mat4::from_translation(vec3(0.0, 0.0, z))
                 * Mat4::from_scale(Vec3::splat(size)),
         }
@@ -769,7 +771,7 @@ mod tests {
     }
 
     #[test]
-    fn unlit_color_is_ambient_times_texture_and_sprites_stay_on_top() {
+    fn unlit_color_is_ambient_texture_tint_and_sprites_stay_on_top() {
         let Some((device, queue)) = gpu() else {
             return;
         };
@@ -785,11 +787,20 @@ mod tests {
             b: 1.0,
             a: 1.0,
         };
-        // Заполнитель — за начальной ёмкостью; видимый куб, вокруг которого камера, — последний.
+        let tint = Color {
+            r: 0.5,
+            g: 1.0,
+            b: 0.25,
+            a: 1.0,
+        };
+        // Заполнитель — за начальной ёмкостью и в том же батче, но белый; видимый куб, вокруг которого камера, — последний.
         let filler = 11;
         assert!((filler * size_of::<MeshInstance>()) as u64 > INITIAL_CAPACITY);
         let mut meshes = vec![at(cube, tex, -50.0, 0.1); filler];
-        meshes.push(at(cube, tex, 0.0, 10.0));
+        meshes.push(MeshDraw {
+            color: tint,
+            ..at(cube, tex, 0.0, 10.0)
+        });
         meshes.push(at(no_vertices, tex, -3.0, 1.0));
         meshes.push(at(no_indices, tex, -3.0, 1.0));
         let mut gfx = gfx(Scene {
@@ -806,8 +817,12 @@ mod tests {
         let img = render(&device, &queue, &mut assets, &gfx);
 
         let lit = |c: u8, k: f64| linear_to_srgb(srgb_to_linear(c) * k);
-        let expected = [lit(200, ambient.r), lit(100, ambient.g), lit(50, ambient.b)];
-        assert_pixel(&img, "ambient × texture", (40, 40), expected);
+        let expected = [
+            lit(200, ambient.r * tint.r),
+            lit(100, ambient.g * tint.g),
+            lit(50, ambient.b * tint.b),
+        ];
+        assert_pixel(&img, "ambient × texture × tint", (40, 40), expected);
         assert_pixel(&img, "sprite over 3d", (8, 8), [255, 255, 255]);
         assert_pixel(&img, "3d next to sprite", (16, 8), expected);
     }
@@ -919,6 +934,7 @@ mod tests {
         SkinnedDraw {
             mesh,
             texture,
+            color: Color::WHITE,
             transform: Mat4::from_translation(vec3(0.0, 0.0, -3.0)),
             palette,
         }
@@ -991,9 +1007,8 @@ mod tests {
         let x = |x| Mat4::from_translation(vec3(x, 0.0, -3.0));
         let mut gfx = lit_scene();
         gfx.scene.as_mut().unwrap().meshes = vec![MeshDraw {
-            mesh: rigid,
-            texture: red,
             transform: x(-1.0),
+            ..at(rigid, red, 0.0, 1.0)
         }];
         let models = ExpandedModels {
             skinned: [(green, 0.0), (white, 1.0)]

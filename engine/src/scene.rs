@@ -69,6 +69,8 @@ pub struct MeshDraw {
     pub mesh: Handle<Mesh>,
     /// Текстура по UV меша.
     pub texture: Handle<Texture>,
+    /// Линейный множитель текстуры.
+    pub color: Color,
     /// Меш → мир.
     pub transform: Mat4,
 }
@@ -91,6 +93,8 @@ pub struct SkinnedDraw {
     pub mesh: Handle<Mesh>,
     /// Текстура по UV меша.
     pub texture: Handle<Texture>,
+    /// Линейный множитель текстуры.
+    pub color: Color,
     /// Модель → мир; матрица узла меша не применяется, позу задают суставы.
     pub transform: Mat4,
     /// Индекс в `ExpandedModels::palettes`.
@@ -125,16 +129,19 @@ impl ExpandedModels {
         self.palettes.extend_from_slice(&pose.palettes);
         for (node, global) in model.nodes.iter().zip(&pose.globals) {
             for p in &node.primitives {
+                let color = model.materials[p.material as usize].color;
                 match node.skin {
                     Some(skin) => self.skinned.push(SkinnedDraw {
                         mesh: p.mesh,
                         texture: p.texture,
+                        color,
                         transform: draw.transform,
                         palette: base + skin,
                     }),
                     None => self.meshes.push(MeshDraw {
                         mesh: p.mesh,
                         texture: p.texture,
+                        color,
                         transform: draw.transform * *global,
                     }),
                 }
@@ -151,18 +158,27 @@ pub struct MeshInstance {
     pub model: [[f32; 4]; 4],
     /// Обратная транспонированная к `model` без переноса, по столбцам.
     pub normal: [[f32; 3]; 3],
+    /// Линейный множитель текстуры.
+    pub tint: [f32; 4],
 }
 
-impl From<Mat4> for MeshInstance {
-    fn from(transform: Mat4) -> Self {
+impl MeshInstance {
+    /// Инстанс меша с `transform` и множителем `color`.
+    pub fn new(transform: Mat4, color: Color) -> Self {
         Self {
             model: transform.to_cols_array_2d(),
             normal: Mat3::from_mat4(transform)
                 .inverse()
                 .transpose()
                 .to_cols_array_2d(),
+            tint: rgba(color),
         }
     }
+}
+
+#[expect(clippy::cast_possible_truncation, reason = "GPU берёт цвет в f32")]
+pub(crate) fn rgba(c: Color) -> [f32; 4] {
+    [c.r as f32, c.g as f32, c.b as f32, c.a as f32]
 }
 
 /// Подряд идущие инстансы одного меша с одной текстурой — один draw call.
@@ -176,7 +192,7 @@ pub struct MeshBatch {
     pub range: Range<u32>,
 }
 
-/// Сортирует по `(mesh, texture)` и режет на батчи; порядок внутри 3D решает глубина.
+/// Сортирует по `(mesh, texture)` и режет на батчи; цвет в ключ не входит — он в инстансе.
 pub fn batch_meshes<'a>(
     draws: impl IntoIterator<Item = &'a MeshDraw>,
 ) -> (Vec<MeshInstance>, Vec<MeshBatch>) {
@@ -199,7 +215,7 @@ pub fn batch_meshes<'a>(
                 range: n..n + 1,
             }),
         }
-        instances.push(MeshInstance::from(d.transform));
+        instances.push(MeshInstance::new(d.transform, d.color));
     }
     (instances, batches)
 }
@@ -214,6 +230,7 @@ mod tests {
         MeshDraw {
             mesh: Handle::new(mesh),
             texture: Handle::new(texture),
+            color: Color::WHITE,
             transform: Mat4::from_translation(vec3(x, 0.0, 0.0)),
         }
     }
@@ -223,7 +240,7 @@ mod tests {
         let transform = Mat4::from_translation(vec3(5.0, 6.0, 7.0))
             * Mat4::from_rotation_y(0.7)
             * Mat4::from_scale(vec3(4.0, 1.0, 0.5));
-        let inst = MeshInstance::from(transform);
+        let inst = MeshInstance::new(transform, Color::WHITE);
         assert_eq!(inst.model, transform.to_cols_array_2d());
 
         // Грань наклонена 45° в плоскости XY; растяжение по X её поворачивает, нормаль должна остаться перпендикулярной.
@@ -241,7 +258,7 @@ mod tests {
 
     #[test]
     fn translation_does_not_reach_normal() {
-        let inst = MeshInstance::from(draw(0, 0, 9.0).transform);
+        let inst = MeshInstance::new(draw(0, 0, 9.0).transform, Color::WHITE);
         assert_eq!(Mat3::from_cols_array_2d(&inst.normal) * Vec3::Y, Vec3::Y);
     }
 
@@ -262,6 +279,28 @@ mod tests {
         assert_eq!(keys, [(0, 1, 0..1), (0, 2, 1..3), (1, 0, 3..5)]);
         let xs: Vec<f32> = instances.iter().map(|i| i.model[3][0]).collect();
         assert_eq!(xs, [2.0, 1.0, 4.0, 0.0, 3.0]);
+    }
+
+    #[test]
+    fn colors_share_a_batch_and_reach_tint() {
+        let red = Color {
+            r: 0.5,
+            g: 0.25,
+            b: 0.125,
+            a: 0.75,
+        };
+        let draws = [
+            MeshDraw {
+                color: red,
+                ..draw(0, 0, 0.0)
+            },
+            draw(0, 0, 1.0),
+        ];
+        let (instances, batches) = batch_meshes(&draws);
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].range, 0..2);
+        let tints: Vec<_> = instances.iter().map(|i| i.tint).collect();
+        assert_eq!(tints, [[0.5, 0.25, 0.125, 0.75], [1.0; 4]]);
     }
 
     #[test]
@@ -293,7 +332,10 @@ mod tests {
         let [rest, opened] = &out.meshes[..] else {
             panic!("{:?}", out.meshes)
         };
-        assert_eq!((rest.mesh, rest.texture), (door.mesh, door.texture));
+        assert_eq!(
+            (rest.mesh, rest.texture, rest.color),
+            (door.mesh, door.texture, Color::WHITE)
+        );
         assert_eq!(rest.transform, at * gate.rest.globals[1]);
         let lift = opened.transform.w_axis - rest.transform.w_axis;
         assert!((lift.y - 0.75).abs() < 1e-3, "{lift}");
@@ -305,10 +347,16 @@ mod tests {
     fn skinned_mesh_ignores_its_node_transform() {
         let bytes = patched(
             "character-orc.glb",
-            &[(
-                r#""skin":0,"mesh":0,"#,
-                r#""skin":0,"mesh":0,"translation":[0,5,0],"#,
-            )],
+            &[
+                (
+                    r#""skin":0,"mesh":0,"#,
+                    r#""skin":0,"mesh":0,"translation":[0,5,0],"#,
+                ),
+                (
+                    r#""metallicFactor":0.0"#,
+                    r#""baseColorFactor":[0.5,0.25,1,1]"#,
+                ),
+            ],
         );
         let mut assets = Assets::default();
         let orc = crate::model::parse(&bytes)
@@ -325,11 +373,29 @@ mod tests {
             SkinnedDraw {
                 mesh: body.mesh,
                 texture: body.texture,
+                color: Color {
+                    r: 0.5,
+                    g: 0.25,
+                    b: 1.0,
+                    a: 1.0,
+                },
                 transform: at,
                 palette: 0,
             }
         );
         assert_eq!(out.palettes, orc.rest.palettes);
+    }
+
+    #[test]
+    fn rigid_mesh_takes_its_material_color() {
+        let mut assets = Assets::default();
+        let h = assets.load_model(testdata("racing/roadStraight.glb"));
+        let road = assets.model(h);
+        let out = ExpandedModels::new(&[model_draw(h, Mat4::IDENTITY, None)], &assets);
+        let colors: Vec<_> = out.meshes.iter().map(|d| d.color).collect();
+        let materials: Vec<_> = road.materials.iter().map(|m| m.color).collect();
+        assert_eq!(colors, materials);
+        assert_ne!(colors[0], colors[2]);
     }
 
     #[test]

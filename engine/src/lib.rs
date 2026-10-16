@@ -58,7 +58,7 @@ pub use gpu_textures::GpuTextures;
 pub use input::Input;
 pub use mesh::{Mesh, PendingMesh, Vertex};
 pub use mesh_pipeline::MeshPipeline;
-pub use model::{Animation, Channel, Model, Node, Pose, Primitive, Skin, Values};
+pub use model::{Animation, Channel, Material, Model, Node, Pose, Primitive, Skin, Values};
 pub use physics::{
     Aabb, Actor, Axis, Contact, Hits, Solid, Tilemap, grounded, move_actor, move_solid,
 };
