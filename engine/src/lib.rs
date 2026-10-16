@@ -45,6 +45,8 @@ mod surface;
 pub mod text;
 /// egui поверх кадра: маршрутизация ввода и вывод кадра.
 pub mod ui;
+/// Перечитывание текстового файла по содержимому.
+pub mod watch;
 
 pub use assets::{Assets, Font, Handle, MeshGeometry, PendingTexture, Texture, TextureKind};
 pub use audio::{Audio, Sound};
@@ -79,6 +81,7 @@ pub use sprite_pipeline::SpritePipeline;
 pub use stats::{FrameReport, FrameStats, RateCounter};
 pub use text::{FontData, Glyph};
 pub use ui::UiFrame;
+pub use watch::{WATCH_TICKS, Watcher};
 pub use winit::event::{ElementState, MouseButton};
 pub use winit::keyboard::KeyCode;
 

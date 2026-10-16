@@ -12,10 +12,9 @@ use editor::{Editor, EditorCmd};
 use engine::{
     Aabb, Actor, Assets, Axis, Camera2D, Color, Commands, Config, Contact, Context, Entity, Font,
     FontData, Game, Gfx, Handle, IVec2, Input, KeyCode, Rect, Solid, Sound, SparseSet, Sprite,
-    Texture, Tilemap, Vec2, World, egui, grounded, ivec2, move_actor, move_solid, vec2,
+    Texture, Tilemap, Vec2, Watcher, World, egui, grounded, ivec2, move_actor, move_solid, vec2,
 };
 use level::{Level, LevelError, PlatformSpawn};
-use levels::Watcher;
 
 const TICK_HZ: u32 = 60;
 /// Сторона тайла в мировых пикселях.
@@ -2534,7 +2533,7 @@ mod tests {
     fn changed_level_file_restarts_with_new_map() {
         let (mut g, mut ctx) = edited("reload", CLEAR);
         g.deaths = 1;
-        for _ in 1..levels::WATCH_TICKS {
+        for _ in 1..engine::WATCH_TICKS {
             g.update(&mut ctx);
         }
         assert_eq!(g.level, parse(SECOND));
@@ -2549,13 +2548,13 @@ mod tests {
     #[test]
     fn unparsable_level_file_opens_editor_and_freezes_world() {
         let (mut g, mut ctx) = edited("reload-broken", "P?\n");
-        for _ in 0..levels::WATCH_TICKS {
+        for _ in 0..engine::WATCH_TICKS {
             g.update(&mut ctx);
         }
         assert_broken(&g, &g.levels_dir.join("level01.txt"), "P?\n");
         assert_eq!(g.level, parse(SECOND));
         g.update(&mut ctx);
-        assert_eq!(g.ticks, levels::WATCH_TICKS);
+        assert_eq!(g.ticks, engine::WATCH_TICKS);
     }
 
     #[test]
@@ -2790,7 +2789,7 @@ mod tests {
 
     /// `WATCH_TICKS` тиков: наблюдатель перечитывает файл ровно один раз.
     fn watch_once(g: &mut Platformer, ctx: &mut Context) {
-        for _ in 0..levels::WATCH_TICKS {
+        for _ in 0..engine::WATCH_TICKS {
             g.update(ctx);
         }
     }

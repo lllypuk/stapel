@@ -322,9 +322,9 @@
 - Create: `engine/src/watch.rs`
 - Modify: `engine/src/lib.rs`, `games/platformer/src/levels.rs`, `games/platformer/src/main.rs`, `docs/design.md`
 
-- [ ] тесты `Watcher` переезжают вместе с ним, тесты платформера не меняются
-- [ ] перенос, платформер на движковом `Watcher`; пометка в `docs/design.md` — на новый путь теста
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] тесты `Watcher` переезжают вместе с ним, тесты платформера не меняются
+- [x] перенос, платформер на движковом `Watcher`; пометка в `docs/design.md` — на новый путь теста
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 10: Игра `racing` — таблица деталей и разбор трассы
 
