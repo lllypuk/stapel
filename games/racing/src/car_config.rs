@@ -86,10 +86,6 @@ pub(crate) struct Tuning {
     /// Имя поля в TOML.
     pub(crate) label: &'static str,
     pub(crate) range: RangeInclusive<f32>,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "панель характеристик — задача 11")
-    )]
     pub(crate) apply: Apply,
     pub(crate) field: fn(&mut CarConfig) -> &mut f32,
 }
@@ -204,10 +200,6 @@ impl CarConfig {
     }
 
     /// Файл целиком, поля в порядке структуры.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "панель характеристик — задача 11")
-    )]
     pub(crate) fn to_toml(&self) -> String {
         toml::to_string(self).expect("строки и конечные числа пишутся в TOML")
     }

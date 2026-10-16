@@ -164,7 +164,7 @@ mod tests {
     }
 
     fn harness(selected: usize) -> Harness<'static, Garage> {
-        let cars = load_cars(CARS_DIR);
+        let cars = load_cars(CARS_DIR.as_ref());
         let mut h = Harness::builder()
             .with_size(egui::vec2(800.0, 400.0))
             .build_ui_state(

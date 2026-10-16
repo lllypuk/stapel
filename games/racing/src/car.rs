@@ -174,10 +174,6 @@ impl Car {
     }
 
     /// Берёт `Live`-поля `config` на ходу; движение и `Restart`-поля не трогает.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "панель характеристик — задача 11")
-    )]
     pub(crate) fn retune(&mut self, config: &CarConfig) {
         let mut config = config.clone();
         for t in TUNING.iter().filter(|t| t.apply == Apply::Live) {

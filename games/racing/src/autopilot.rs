@@ -10,7 +10,7 @@ use crate::car::{Car, Controls, steer_angle};
 use crate::garage::GarageCmd;
 use crate::race::lap_time;
 use crate::track::{Checkpoint, TrackDraft, cell_at};
-use crate::{CARS_DIR, Racing, TICK_HZ, TRACKS_DIR, load_cars};
+use crate::{CARS_DIR, Dirs, Racing, TICK_HZ, TRACKS_DIR, load_cars};
 
 /// Точек средней линии на деталь.
 const SAMPLES: usize = 16;
@@ -133,7 +133,7 @@ fn lap(track: &str, car: &str) {
     let text = fs::read_to_string(&path).expect("трасса");
     let parsed = TrackDraft::parse(&text).expect("разбор");
     let mut ctx = Context::default();
-    let mut g = Racing::new(path, text, load_cars(CARS_DIR), &mut ctx.assets);
+    let mut g = Racing::new(path, text, Dirs::assets(), &mut ctx.assets);
     let i = (g.cars.iter().position(|c| c.model == car)).expect("машина");
     g.garage.queue.extend([GarageCmd::Select(i), GarageCmd::Go]);
     g.update(&mut ctx);
@@ -206,7 +206,7 @@ fn every_car_laps_every_track() {
     tracks.sort();
     assert_eq!(tracks, ["track01", "track02", "track03"]);
     for track in &tracks {
-        for car in load_cars(CARS_DIR) {
+        for car in load_cars(CARS_DIR.as_ref()) {
             lap(track, &car.model);
         }
     }

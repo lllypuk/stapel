@@ -8,11 +8,12 @@ mod layout;
 mod pieces;
 mod race;
 mod track;
+mod tuning_panel;
 
 use std::collections::HashSet;
 use std::fs;
 use std::mem;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use engine::{
     Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Fog, Font, FontData,
@@ -22,12 +23,13 @@ use engine::{
 
 use crate::camera::Chase;
 use crate::car::{Car, Controls, SUBSTEP, SUBSTEPS};
-use crate::car_config::CarConfig;
+use crate::car_config::{CarConfig, TUNING};
 use crate::garage::{Garage, GarageCmd};
 use crate::layout::{Layout, Models};
 use crate::pieces::KIT_SCALE;
 use crate::race::{Race, lap_time};
 use crate::track::{Checkpoint, TrackDraft, cell_at};
+use crate::tuning_panel::{TuneCmd, TuningPanel};
 
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
 const TRACKS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/tracks/");
@@ -65,19 +67,39 @@ const SPAWN_LIFT: f32 = 0.1;
 /// Луч к асфальту респауна — от стольких метров над уровнем: ниже настила моста (1,5 м), выше середины рампы.
 const GROUND_PROBE: f32 = 1.0;
 
-/// Трасса `name` из `assets/tracks/`, без имени — `DEFAULT_TRACK`.
-fn track_path(name: Option<&str>) -> PathBuf {
-    PathBuf::from(format!(
-        "{TRACKS_DIR}{}.toml",
-        name.unwrap_or(DEFAULT_TRACK)
-    ))
+/// Каталоги трасс и машин; тесты, которые пишут файлы, подменяют их временными.
+#[derive(Clone, Debug, PartialEq)]
+struct Dirs {
+    tracks: PathBuf,
+    cars: PathBuf,
+}
+
+impl Dirs {
+    fn assets() -> Self {
+        Self {
+            tracks: TRACKS_DIR.into(),
+            cars: CARS_DIR.into(),
+        }
+    }
+
+    /// Трасса `name`, без имени — `DEFAULT_TRACK`.
+    fn track(&self, name: Option<&str>) -> PathBuf {
+        (self.tracks).join(format!("{}.toml", name.unwrap_or(DEFAULT_TRACK)))
+    }
+
+    fn car(&self, model: &str) -> PathBuf {
+        self.cars.join(format!("{model}.toml"))
+    }
 }
 
 /// Характеристики машин из `dir` по имени файла без `.toml`: `race` раньше `race-future`.
-fn load_cars(dir: &str) -> Vec<CarConfig> {
+fn load_cars(dir: &Path) -> Vec<CarConfig> {
     let mut paths: Vec<_> = fs::read_dir(dir)
-        .unwrap_or_else(|e| panic!("{dir}: {e}"))
-        .map(|e| e.unwrap_or_else(|e| panic!("{dir}: {e}")).path())
+        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+        .map(|e| {
+            e.unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+                .path()
+        })
         .filter(|p| p.extension().is_some_and(|e| e == "toml"))
         .collect();
     paths.sort_by(|a, b| a.file_stem().cmp(&b.file_stem()));
@@ -156,6 +178,7 @@ enum Mode {
 struct Racing {
     mode: Mode,
     garage: Garage,
+    tuning: TuningPanel,
     layout: Layout,
     models: Models,
     sky: Color,
@@ -176,6 +199,7 @@ struct Racing {
     error: Option<String>,
     path: PathBuf,
     watch: Watcher,
+    dirs: Dirs,
 }
 
 impl Racing {
@@ -183,7 +207,8 @@ impl Racing {
     ///
     /// # Panics
     /// Если `load_track` не принял трассу.
-    fn new(path: PathBuf, text: String, cars: Vec<CarConfig>, assets: &mut Assets) -> Self {
+    fn new(path: PathBuf, text: String, dirs: Dirs, assets: &mut Assets) -> Self {
+        let cars = load_cars(&dirs.cars);
         let (track, checkpoints) =
             load_track(&text, &cars).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let models = Models::load(assets);
@@ -193,6 +218,7 @@ impl Racing {
         let mut racing = Self {
             mode: Mode::Garage,
             garage: Garage::new(selected),
+            tuning: TuningPanel::default(),
             layout: Layout::new(&track, &models, assets),
             models,
             sky: Color::from_srgb8(170, 205, 235),
@@ -210,6 +236,7 @@ impl Racing {
             error: None,
             path,
             watch: Watcher::new(text),
+            dirs,
         };
         racing.restart();
         racing
@@ -267,6 +294,34 @@ impl Racing {
         self.mode = Mode::Race;
     }
 
+    /// Команды панели — правка выбранной машины; в заезде `Restart`-поле ставит её заново на последний чекпоинт.
+    fn update_tuning(&mut self, assets: &Assets) {
+        let config = &mut self.cars[self.garage.selected];
+        for cmd in mem::take(&mut self.tuning.queue) {
+            let path = self.dirs.car(&config.model);
+            let done = match cmd {
+                TuneCmd::Set(i, value) => {
+                    *(TUNING[i].field)(config) = value;
+                    continue;
+                }
+                TuneCmd::Save => fs::write(&path, config.to_toml()).map_err(|e| e.to_string()),
+                TuneCmd::Reset => fs::read_to_string(&path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|text| CarConfig::parse(&text).map_err(|e| e.to_string()))
+                    .map(|c| *config = c),
+            };
+            self.tuning.error = done.err().map(|e| format!("{}: {e}", path.display()));
+        }
+        if self.mode != Mode::Race || self.car.config == *config {
+            return;
+        }
+        self.car.retune(config);
+        if self.car.config != *config {
+            self.car = Self::make_car(config, &self.models, assets);
+            self.spawn(self.respawn);
+        }
+    }
+
     fn update_garage(&mut self, ctx: &Context) {
         let mut go = ctx.input.just_pressed(KeyCode::Enter);
         for cmd in mem::take(&mut self.garage.queue) {
@@ -289,6 +344,9 @@ impl Racing {
         }
         if ctx.input.just_pressed(KeyCode::KeyR) {
             self.spawn(self.respawn);
+        }
+        if ctx.input.just_pressed(KeyCode::F2) {
+            self.tuning.open = !self.tuning.open;
         }
         self.drive(controls(&ctx.input));
     }
@@ -429,13 +487,15 @@ impl Racing {
 
 impl Game for Racing {
     fn init(ctx: &mut Context) -> Self {
-        let path = track_path(std::env::var("TRACK").ok().as_deref());
+        let dirs = Dirs::assets();
+        let path = dirs.track(std::env::var("TRACK").ok().as_deref());
         let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        Self::new(path, text, load_cars(CARS_DIR), &mut ctx.assets)
+        Self::new(path, text, dirs, &mut ctx.assets)
     }
 
     fn update(&mut self, ctx: &mut Context) {
         self.reload_changed(&ctx.assets);
+        self.update_tuning(&ctx.assets);
         match self.mode {
             Mode::Garage => self.update_garage(ctx),
             Mode::Race => self.update_race(ctx),
@@ -453,8 +513,16 @@ impl Game for Racing {
 
     fn ui(&mut self, ui: &egui::Context) {
         engine::ui::set_font(ui, FONT_PATH);
-        if self.mode == Mode::Garage {
-            self.garage.ui(ui, &self.cars);
+        let config = &self.cars[self.garage.selected];
+        match self.mode {
+            Mode::Garage => {
+                self.garage.ui(ui, &self.cars);
+                self.tuning.ui(ui, config, egui::Align2::LEFT_TOP);
+            }
+            Mode::Race if self.tuning.open => {
+                self.tuning.ui(ui, config, egui::Align2::RIGHT_TOP);
+            }
+            Mode::Race => {}
         }
         let Some(error) = &self.error else {
             return;
@@ -485,6 +553,7 @@ mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
     use engine::ElementState::{Pressed, Released};
+    use engine::egui::accesskit::Role;
     use engine::{Mat4, Quat, Sprite, Triangle, text};
 
     use super::*;
@@ -496,7 +565,7 @@ mod tests {
     /// Сразу в заезде машиной трассы.
     fn open(path: PathBuf, ctx: &mut Context) -> Racing {
         let text = fs::read_to_string(&path).expect("трасса");
-        let mut g = Racing::new(path, text, load_cars(CARS_DIR), &mut ctx.assets);
+        let mut g = Racing::new(path, text, Dirs::assets(), &mut ctx.assets);
         g.go(&ctx.assets);
         g
     }
@@ -584,7 +653,10 @@ mod tests {
 
     #[test]
     fn load_cars_reads_every_file_sorted() {
-        let names: Vec<String> = load_cars(CARS_DIR).into_iter().map(|c| c.model).collect();
+        let names: Vec<String> = load_cars(CARS_DIR.as_ref())
+            .into_iter()
+            .map(|c| c.model)
+            .collect();
         assert_eq!(
             names,
             ["hatchback-sports", "race", "race-future", "sedan-sports"]
@@ -661,7 +733,7 @@ mod tests {
         let oval = fs::read_to_string(&path).expect("овал");
         let text = oval.replace("car = \"race\"", "car = \"sedan-sports\"");
         fs::write(&path, &text).expect("запись");
-        let mut g = Racing::new(path, text, load_cars(CARS_DIR), &mut ctx.assets);
+        let mut g = Racing::new(path, text, Dirs::assets(), &mut ctx.assets);
         assert_eq!(g.mode, Mode::Garage);
         assert_eq!(g.garage.selected, car_index(&g, "sedan-sports"));
         ctx.input.on_key(KeyCode::KeyW, Pressed, false);
@@ -675,7 +747,7 @@ mod tests {
         let mut ctx = Context::default();
         let path = PathBuf::from(OVAL);
         let text = fs::read_to_string(&path).expect("овал");
-        let mut g = Racing::new(path, text, load_cars(CARS_DIR), &mut ctx.assets);
+        let mut g = Racing::new(path, text, Dirs::assets(), &mut ctx.assets);
         g.garage
             .queue
             .push(GarageCmd::Select(car_index(&g, "race-future")));
@@ -734,7 +806,7 @@ mod tests {
         let mut ctx = Context::default();
         let path = PathBuf::from(OVAL);
         let text = fs::read_to_string(&path).expect("овал");
-        let mut g = Racing::new(path, text, load_cars(CARS_DIR), &mut ctx.assets);
+        let mut g = Racing::new(path, text, Dirs::assets(), &mut ctx.assets);
         g.garage.selected = car_index(&g, "hatchback-sports");
         ticks(&mut g, &mut ctx, 3);
         g.draw(&mut ctx, 0.5);
@@ -973,8 +1045,8 @@ mod tests {
         );
     }
 
-    /// Овал в пустом каталоге теста в `target/` копии дерева: файл можно переписывать.
-    fn temp_oval(name: &str) -> PathBuf {
+    /// Пустой каталог теста в `target/` копии дерева: файлы в нём можно переписывать.
+    fn temp_dir(name: &str) -> PathBuf {
         let dir = PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../target/test-dirs"
@@ -984,9 +1056,184 @@ mod tests {
             fs::remove_dir_all(&dir).expect("старый каталог");
         }
         fs::create_dir_all(&dir).expect("каталог");
-        let path = dir.join("track.toml");
+        dir
+    }
+
+    fn temp_oval(name: &str) -> PathBuf {
+        let path = temp_dir(name).join("track.toml");
         fs::copy(OVAL, &path).expect("копия");
         path
+    }
+
+    /// Трассы из `assets/`, машины — копии в каталоге теста.
+    fn temp_cars(name: &str) -> Dirs {
+        let cars = temp_dir(name);
+        for entry in fs::read_dir(CARS_DIR).expect("машины") {
+            let from = entry.expect("машина").path();
+            fs::copy(&from, cars.join(from.file_name().expect("имя"))).expect("копия");
+        }
+        Dirs {
+            tracks: TRACKS_DIR.into(),
+            cars,
+        }
+    }
+
+    fn field(label: &str) -> usize {
+        (TUNING.iter().position(|t| t.label == label)).expect("поле")
+    }
+
+    #[test]
+    fn live_field_retunes_car_on_the_go() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+        ticks(&mut g, &mut ctx, 10);
+        let body = g.car.body;
+        g.tuning.queue.push(TuneCmd::Set(field("mass"), 2000.0));
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.tuning.queue, []);
+        assert_eq!(g.cars[g.garage.selected].mass, 2000.0);
+        assert_eq!(g.car.config, g.cars[g.garage.selected]);
+        assert_eq!(g.car.body.inv_mass, 2000.0_f32.recip());
+        assert_eq!(g.car.prev, (body.pos, body.rot), "рестартовала");
+        assert!(g.car.body.vel.length() > body.vel.length());
+    }
+
+    #[test]
+    fn restart_field_rebuilds_car_at_last_checkpoint() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        cross_start_line(&mut g, &mut ctx);
+        ticks(&mut g, &mut ctx, 30);
+        let first = Spawn::at(&g.race.checkpoints[0], &g.layout.world);
+        for (label, value) in [("travel", 0.3), ("com_offset.y", -0.1)] {
+            g.tuning.queue.push(TuneCmd::Set(field(label), value));
+            tick(&mut g, &mut ctx);
+            assert_eq!(g.car.config, g.cars[g.garage.selected]);
+            assert_eq!(*(TUNING[field(label)].field)(&mut g.car.config), value);
+            assert!(placed_at(&g, first), "{label}");
+            assert_eq!(g.race.next, 1, "заезд рестартовал");
+            ticks(&mut g, &mut ctx, 10);
+        }
+    }
+
+    #[test]
+    fn garage_tuning_changes_selected_car_for_next_race() {
+        let mut ctx = Context::default();
+        let path = PathBuf::from(OVAL);
+        let text = fs::read_to_string(&path).expect("овал");
+        let mut g = Racing::new(path, text, Dirs::assets(), &mut ctx.assets);
+        let (speed, travel) = (field("max_speed"), field("travel"));
+        let before = g.car.config.clone();
+        g.tuning
+            .queue
+            .extend([TuneCmd::Set(speed, 20.0), TuneCmd::Set(travel, 0.3)]);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.car.config, before, "машина гаража не едет");
+        tap(&mut g, &mut ctx, KeyCode::Enter);
+        assert_eq!((g.car.config.max_speed, g.car.config.travel), (20.0, 0.3));
+        assert!(placed_at(&g, g.start));
+    }
+
+    #[test]
+    fn save_writes_car_file_and_reset_reads_it() {
+        let mut ctx = Context::default();
+        let dirs = temp_cars("tuning");
+        let file = dirs.car("race");
+        let text = fs::read_to_string(OVAL).expect("овал");
+        let mut g = Racing::new(OVAL.into(), text, dirs, &mut ctx.assets);
+        g.go(&ctx.assets);
+        let mass = field("mass");
+        g.tuning
+            .queue
+            .extend([TuneCmd::Set(mass, 1234.5), TuneCmd::Save]);
+        tick(&mut g, &mut ctx);
+        let saved = CarConfig::parse(&fs::read_to_string(&file).expect("файл")).expect("разбор");
+        assert_eq!(saved, g.cars[g.garage.selected]);
+        assert_eq!(saved.mass, 1234.5);
+        assert_eq!(g.tuning.error, None);
+
+        g.tuning
+            .queue
+            .extend([TuneCmd::Set(mass, 999.0), TuneCmd::Reset]);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.cars[g.garage.selected], saved);
+        assert_eq!(g.car.config, saved);
+
+        fs::remove_file(&file).expect("удаление");
+        g.tuning
+            .queue
+            .extend([TuneCmd::Set(mass, 999.0), TuneCmd::Reset]);
+        tick(&mut g, &mut ctx);
+        let error = g.tuning.error.clone().expect("ошибка");
+        assert!(
+            error.starts_with(&format!("{}: ", file.display())),
+            "{error}"
+        );
+        assert_eq!(g.car.config.mass, 999.0, "сброс без файла");
+
+        fs::write(&file, "model = 1").expect("запись");
+        g.tuning.queue.push(TuneCmd::Reset);
+        tick(&mut g, &mut ctx);
+        assert_ne!(g.tuning.error.as_deref(), Some(error.as_str()));
+        assert!(g.tuning.error.is_some());
+        assert_eq!(g.car.config.mass, 999.0);
+
+        g.tuning.queue.push(TuneCmd::Save);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.tuning.error, None);
+        let saved = CarConfig::parse(&fs::read_to_string(&file).expect("файл")).expect("разбор");
+        assert_eq!(saved.mass, 999.0);
+    }
+
+    #[test]
+    fn save_into_missing_dir_shows_error() {
+        let mut ctx = Context::default();
+        let dirs = temp_cars("tuning-missing");
+        let text = fs::read_to_string(OVAL).expect("овал");
+        let mut g = Racing::new(OVAL.into(), text, dirs.clone(), &mut ctx.assets);
+        fs::remove_dir_all(&dirs.cars).expect("удаление");
+        g.tuning.queue.push(TuneCmd::Save);
+        tick(&mut g, &mut ctx);
+        let error = g.tuning.error.expect("ошибка");
+        assert!(
+            error.starts_with(&dirs.car("race").display().to_string()),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn tuning_panel_by_f2_in_race_and_always_in_garage() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        tap(&mut g, &mut ctx, KeyCode::F2);
+        assert!(g.tuning.open);
+        let mut h = harness(g);
+        assert!(h.query_by_label("Характеристики").is_some());
+        let speed = h.get_by_role_and_label(Role::Slider, "max_speed").rect();
+        assert!(speed.max.x > 400.0, "не справа: {speed:?}");
+        h.state_mut().tuning.open = false;
+        h.run();
+        assert!(h.query_by_label("Характеристики").is_none());
+        h.state_mut().mode = Mode::Garage;
+        h.run();
+        assert!(h.query_by_label("Характеристики").is_some());
+        assert!(
+            h.get_by_role_and_label(Role::Slider, "max_speed")
+                .rect()
+                .min
+                .x
+                < 400.0,
+            "не слева"
+        );
+
+        let mut g = racing(&mut ctx);
+        tap(&mut g, &mut ctx, KeyCode::F2);
+        tap(&mut g, &mut ctx, KeyCode::F2);
+        assert!(!g.tuning.open);
+        g.mode = Mode::Garage;
+        tap(&mut g, &mut ctx, KeyCode::F2);
+        assert!(!g.tuning.open, "F2 в гараже");
     }
 
     /// Отъехала от старта и смотрит на файл трассы ещё раз через `WATCH_TICKS`.
@@ -1093,17 +1340,23 @@ mod tests {
 
     #[test]
     fn init_opens_track_from_env_or_default() {
+        let dirs = Dirs::assets();
         assert_eq!(
-            track_path(None),
+            dirs.track(None),
             PathBuf::from(format!("{TRACKS_DIR}track01.toml"))
         );
         assert_eq!(
-            track_path(Some("track02")),
+            dirs.track(Some("track02")),
             PathBuf::from(format!("{TRACKS_DIR}track02.toml"))
+        );
+        assert_eq!(
+            dirs.car("race"),
+            PathBuf::from(format!("{CARS_DIR}race.toml"))
         );
         let mut ctx = Context::default();
         let g = Racing::init(&mut ctx);
-        let path = track_path(std::env::var("TRACK").ok().as_deref());
+        assert_eq!(g.dirs, dirs);
+        let path = dirs.track(std::env::var("TRACK").ok().as_deref());
         let text = fs::read_to_string(&path).expect("трасса");
         let (track, checkpoints) = load_track(&text, &g.cars).expect("трасса");
         assert_eq!(g.path, path);
