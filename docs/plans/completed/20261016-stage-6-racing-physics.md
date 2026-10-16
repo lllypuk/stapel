@@ -455,10 +455,11 @@
 - [x] CI зелёный, офскрин-тесты на lavapipe без SKIPPED (пропущено: ветка не запушена, пуш — за пользователем; локально `REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine` на GPU — 345 тестов, lavapipe в системе нет)
 
 ### Task 19: Документация
-- [ ] `games/racing/README.md` — управление, форматы трасс и машин; ссылка из корневого `README.md`
-- [ ] `CLAUDE.md`: `make racing`; «Архитектура» — `physics3d`, цвет материала, солнце, ручная поза, `Watcher`
-- [ ] `docs/design.md`: таблица «Этапы» — строка 6 готова
-- [ ] `make check`; план — в `docs/plans/completed/`
+- [x] `games/racing/README.md` — управление, форматы трасс и машин; ссылка из корневого `README.md`
+- [x] `CLAUDE.md`: `make racing`; «Архитектура» — `physics3d`, цвет материала, солнце, ручная поза, `Watcher`
+- [x] `docs/design.md`: таблица «Этапы» — строка 6 готова
+  - таблица целиком пропала в `0898d3a`, восстановлена
+- [x] `make check`; план — в `docs/plans/completed/`
 
 ## Post-Completion
 **Проверка запуском** (`make racing`):

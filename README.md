@@ -7,6 +7,7 @@
 ```sh
 cargo test --workspace
 make platformer                                   # платформер: A/D или ←/→ — бег, Space/W — прыжок, Enter — следующий уровень после финиша, F1 — редактор
+make racing                                       # гонки на время: WASD или стрелки, Space — ручник, R — на чекпоинт, Tab до старта — машина; TRACK=track02 — другая трасса
 make maze                                         # лабиринт от первого лица: WASD — ходьба, мышь — обзор, клик — захват мыши, Esc — отпустить, Enter — заново после выхода, F1 — панель света и тумана
 make asteroids                                    # Asteroids: A/D — поворот, W — тяга, Space — огонь, Enter — рестарт
 RUST_LOG=info cargo run -p pong                   # Pong на двоих: W/S — левая ракетка, O/L — правая
@@ -18,9 +19,9 @@ NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color # без vsync
 
 Платформа — Linux (Wayland, X11), нужен Vulkan. Для сборки нужны `alsa-lib` и `pkg-config` (в Debian — `libasound2-dev pkg-config`): их требует `cpal`.
 
-Уровни и редактор уровней платформера (F1) — [games/platformer/README.md](games/platformer/README.md); формат карты лабиринта — [games/maze/README.md](games/maze/README.md).
+Уровни и редактор уровней платформера (F1) — [games/platformer/README.md](games/platformer/README.md); формат карты лабиринта — [games/maze/README.md](games/maze/README.md); трассы и машины гонок — [games/racing/README.md](games/racing/README.md).
 
-Ассеты платформера — CC0 (Kenney, Juhani Junkala), источники и команды конвертации — в [games/platformer/assets/CREDITS.md](games/platformer/assets/CREDITS.md); ассеты `maze` — CC0 (Kenney Mini Dungeon), [games/maze/assets/CREDITS.md](games/maze/assets/CREDITS.md).
+Ассеты платформера — CC0 (Kenney, Juhani Junkala), источники и команды конвертации — в [games/platformer/assets/CREDITS.md](games/platformer/assets/CREDITS.md); ассеты `maze` — CC0 (Kenney Mini Dungeon), [games/maze/assets/CREDITS.md](games/maze/assets/CREDITS.md); ассеты `racing` — CC0 (Kenney Racing Kit, Car Kit), [games/racing/assets/CREDITS.md](games/racing/assets/CREDITS.md).
 
 ## Проверки
 
