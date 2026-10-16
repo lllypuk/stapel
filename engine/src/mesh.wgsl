@@ -80,9 +80,16 @@ fn vs_skinned(v: VertexIn, s: SkinIn, inst: InstanceIn) -> VsOut {
     return vs_out(skin * vec4(v.pos, 1.0), normal, v.uv, inst);
 }
 
+// Порог Байера 4×4: при `a = k/16` остаётся ровно k пикселей блока.
+const BAYER = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let t = textureSample(tex, samp, in.uv) * in.tint;
+    let px = vec2<u32>(in.clip.xy) % 4u;
+    if t.a <= (BAYER[px.y * 4u + px.x] + 0.5) / 16.0 {
+        discard;
+    }
     let n = normalize(in.normal);
     var light = scene.ambient.rgb + scene.sun_color.rgb * max(dot(n, -scene.sun_dir), 0.0);
     for (var i = 0u; i < scene.light_count; i++) {
@@ -96,5 +103,5 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // max: `start == end` (туман по умолчанию) не делит на ноль.
     let span = max(scene.fog_end - scene.fog_start, 1e-6);
     let fog = clamp((distance(in.world, scene.eye) - scene.fog_start) / span, 0.0, 1.0);
-    return vec4(mix(t.rgb * light, scene.fog_color.rgb, fog), t.a);
+    return vec4(mix(t.rgb * light, scene.fog_color.rgb, fog), 1.0);
 }

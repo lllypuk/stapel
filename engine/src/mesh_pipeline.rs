@@ -1154,6 +1154,65 @@ mod tests {
     }
 
     #[test]
+    fn translucent_is_dithered_without_depth() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        for skin in [false, true] {
+            for (a, kept) in [(0.5, 8), (1.0, 16)] {
+                let mut assets = Assets::default();
+                let rigid = cube(&mut assets);
+                let skinned_mesh = skinned_cube(&mut assets, [0; 4], [1.0, 0.0, 0.0, 0.0]);
+                // `red` загружен первым: батч ближнего куба рисуется раньше дальнего.
+                let red = load_png(
+                    &mut assets,
+                    &format!("dither-red-{skin}-{a}"),
+                    1,
+                    1,
+                    &[255, 0, 0, 255],
+                );
+                let green = load_png(
+                    &mut assets,
+                    &format!("dither-green-{skin}-{a}"),
+                    1,
+                    1,
+                    &[0, 255, 0, 255],
+                );
+                let color = Color { a, ..Color::WHITE };
+                let mut gfx = lit_scene();
+                let scene = gfx.scene.as_mut().unwrap();
+                scene.meshes.push(at(rigid, green, -10.0, 8.0));
+                let mut models = ExpandedModels::default();
+                if skin {
+                    models.skinned.push(SkinnedDraw {
+                        color,
+                        ..skinned(skinned_mesh, red, 0)
+                    });
+                    models.palettes.push(vec![Mat4::IDENTITY]);
+                } else {
+                    scene.meshes.push(MeshDraw {
+                        color,
+                        ..at(rigid, red, -3.0, 1.0)
+                    });
+                }
+                let img = render_models(&device, &queue, &mut assets, &gfx, &models);
+                // Блок 4×4, выровненный по сетке Байера: строки кадра 28..32 — это `y` 32..36 у `pixel`.
+                let block: Vec<_> = (28..32)
+                    .flat_map(|x| (32..36).map(move |y| (x, y)))
+                    .map(|(x, y)| crate::gpu_test::pixel(&img, x, y))
+                    .collect();
+                let red_n = block.iter().filter(|&&p| p == [255, 0, 0]).count();
+                let green_n = block.iter().filter(|&&p| p == [0, 255, 0]).count();
+                assert_eq!(
+                    (red_n, green_n),
+                    (kept, 16 - kept),
+                    "skin {skin}, a {a}: {block:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn model_parts_are_drawn() {
         let Some((device, queue)) = gpu() else {
             return;
@@ -1171,6 +1230,7 @@ mod tests {
                     model,
                     transform: Mat4::from_translation(vec3(0.0, 0.0, z)),
                     pose: None,
+                    tint: Color::WHITE,
                 }],
                 ..Default::default()
             });

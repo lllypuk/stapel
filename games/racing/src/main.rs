@@ -351,6 +351,7 @@ impl Game for Racing {
             model,
             transform: self.car.transform(alpha),
             pose: Some(self.pose.clone()),
+            tint: Color::WHITE,
         });
         ctx.gfx.clear_color = self.sky;
         ctx.gfx.scene = Some(Scene {

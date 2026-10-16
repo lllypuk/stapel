@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use engine::{Assets, Handle, Mat4, Model, ModelDraw, StaticWorld, Triangle, Vec3, vec3};
+use engine::{Assets, Color, Handle, Mat4, Model, ModelDraw, StaticWorld, Triangle, Vec3, vec3};
 
 use crate::ASSETS;
 use crate::pieces::{BARRIER_WALL, CARS, DECOR, KIT_SCALE, PIECES};
@@ -136,6 +136,7 @@ impl Layout {
                     model: models.get(p.name),
                     transform: p.transform,
                     pose: None,
+                    tint: Color::WHITE,
                 })
                 .collect(),
             world: StaticWorld::new(KIT_SCALE, triangles(&placed, models, assets)),

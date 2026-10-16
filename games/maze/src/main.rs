@@ -109,6 +109,7 @@ fn at(model: Handle<Model>, cell: IVec2, yaw: f32) -> ModelDraw {
         model,
         transform: Mat4::from_rotation_translation(Quat::from_rotation_y(yaw), cell_center(cell)),
         pose: None,
+        tint: Color::WHITE,
     }
 }
 
@@ -379,6 +380,7 @@ impl Maze {
                     vec3(p.x, 0.0, p.y),
                 ),
                 pose: Some(pose),
+                tint: Color::WHITE,
             }
         }));
         let lights = (self.map.torches.iter().enumerate())

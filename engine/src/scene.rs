@@ -95,6 +95,8 @@ pub struct ModelDraw {
     pub transform: Mat4,
     /// Поза от `Model::pose` этой же модели, иначе паника при раскрытии; `None` — `Model::rest`.
     pub pose: Option<Pose>,
+    /// Линейный множитель цвета материалов; `a < 1` — дизеринг.
+    pub tint: Color,
 }
 
 /// Меш со скином: вершины смешивают матрицы `palettes[palette]` своего `ExpandedModels`.
@@ -140,7 +142,7 @@ impl ExpandedModels {
         self.palettes.extend_from_slice(&pose.palettes);
         for (node, global) in model.nodes.iter().zip(&pose.globals) {
             for p in &node.primitives {
-                let color = model.materials[p.material as usize].color;
+                let color = mul(model.materials[p.material as usize].color, draw.tint);
                 match node.skin {
                     Some(skin) => self.skinned.push(SkinnedDraw {
                         mesh: p.mesh,
@@ -184,6 +186,15 @@ impl MeshInstance {
                 .to_cols_array_2d(),
             tint: rgba(color),
         }
+    }
+}
+
+fn mul(a: Color, b: Color) -> Color {
+    Color {
+        r: a.r * b.r,
+        g: a.g * b.g,
+        b: a.b * b.b,
+        a: a.a * b.a,
     }
 }
 
@@ -324,8 +335,16 @@ mod tests {
             model,
             transform,
             pose,
+            tint: Color::WHITE,
         }
     }
+
+    const TINT: Color = Color {
+        r: 0.5,
+        g: 0.25,
+        b: 2.0,
+        a: 0.5,
+    };
 
     #[test]
     fn rigid_mesh_takes_node_from_pose_or_rest() {
@@ -377,6 +396,13 @@ mod tests {
         let at = Mat4::from_rotation_y(1.0);
         let mut out = ExpandedModels::default();
         out.push(&orc, &model_draw(Handle::new(0), at, None));
+        out.push(
+            &orc,
+            &ModelDraw {
+                tint: TINT,
+                ..model_draw(Handle::new(0), at, None)
+            },
+        );
         assert_eq!(out.meshes, []);
         let body = orc.nodes[8].primitives[0];
         assert_eq!(
@@ -394,7 +420,20 @@ mod tests {
                 palette: 0,
             }
         );
-        assert_eq!(out.palettes, orc.rest.palettes);
+        let tinted = out
+            .skinned
+            .iter()
+            .find(|d| d.mesh == body.mesh && d.palette >= orc.rest.palettes.len());
+        assert_eq!(
+            tinted.map(|d| d.color),
+            Some(Color {
+                r: 0.25,
+                g: 0.0625,
+                b: 2.0,
+                a: 0.5,
+            })
+        );
+        assert_eq!(out.palettes[..orc.rest.palettes.len()], orc.rest.palettes);
     }
 
     #[test]
@@ -407,6 +446,22 @@ mod tests {
         let materials: Vec<_> = road.materials.iter().map(|m| m.color).collect();
         assert_eq!(colors, materials);
         assert_ne!(colors[0], colors[2]);
+    }
+
+    #[test]
+    fn tint_multiplies_rigid_material_color() {
+        let mut assets = Assets::default();
+        let h = assets.load_model(testdata("racing/roadStraight.glb"));
+        let road = assets.model(h);
+        let tinted = ModelDraw {
+            tint: TINT,
+            ..model_draw(h, Mat4::IDENTITY, None)
+        };
+        let out = ExpandedModels::new(&[tinted], &assets);
+        let colors: Vec<_> = out.meshes.iter().map(|d| d.color).collect();
+        let expected: Vec<_> = road.materials.iter().map(|m| mul(m.color, TINT)).collect();
+        assert_eq!(colors, expected);
+        assert_ne!(colors[0], road.materials[0].color);
     }
 
     #[test]
