@@ -123,7 +123,6 @@ fn triangles(placed: &[Placed], models: &Models, assets: &Assets) -> Vec<Triangl
 /// Трасса для рендера и столкновений.
 pub(crate) struct Layout {
     pub(crate) draws: Vec<ModelDraw>,
-    #[cfg_attr(not(test), expect(dead_code, reason = "по миру ездит машина, Task 14"))]
     pub(crate) world: StaticWorld,
 }
 

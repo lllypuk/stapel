@@ -18,6 +18,8 @@ exclude_re = [
     "replace \\+ with - in Welder::id$",
     # Равные расстояния до двух рёбер — только в их общей вершине, оба дают её.
     "replace < with <= in closest_point$",
+    # Ровно на боку или ровно на −10 м — граница нулевой меры, физикой не воспроизводится.
+    "replace < with <= in Racing::auto_respawn$",
     # Нулевая оставшаяся глубина прибавляет к сдвигу ноль.
     "replace > with >= in solve_contacts$",
 ]

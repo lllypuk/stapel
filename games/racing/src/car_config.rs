@@ -13,7 +13,7 @@ pub(crate) enum Drive {
 }
 
 /// Характеристики машины из `cars/<модель>.toml`; единицы СИ, углы в файле — градусы.
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CarConfig {
     /// Имя модели в `assets/` без `.glb`.

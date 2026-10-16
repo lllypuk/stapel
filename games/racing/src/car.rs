@@ -1,7 +1,9 @@
 use engine::physics3d::Contact;
+use std::f32::consts::TAU;
+
 use engine::{
-    ContactParams, Hit, Mat3, Model, Quat, RigidBody, StaticWorld, Vec2, Vec3, box_inertia,
-    solve_contacts,
+    ContactParams, Hit, Mat3, Mat4, Model, Pose, Quat, RigidBody, StaticWorld, Vec2, Vec3,
+    box_inertia, solve_contacts,
 };
 
 use crate::car_config::{CarConfig, CarError, Drive, Wheel, Wheels, wheels};
@@ -41,6 +43,8 @@ pub(crate) struct Controls {
     pub(crate) brake: f32,
     /// −1..1, плюс — влево.
     pub(crate) steer: f32,
+    /// Ручник блокирует задние колёса.
+    pub(crate) handbrake: bool,
 }
 
 /// Колесо после подшага.
@@ -63,6 +67,10 @@ pub(crate) struct Car {
     pub(crate) body: RigidBody,
     pub(crate) wheels: [WheelState; 4],
     pub(crate) config: CarConfig,
+    /// Центр масс и поворот перед последним тиком — для интерполяции.
+    pub(crate) prev: (Vec3, Quat),
+    /// Угол вращения колёс по пройденному пути, рад, 0..2π.
+    pub(crate) spin: [f32; 4],
     mounts: Wheels,
     /// Центр масс в пространстве модели.
     com: Vec3,
@@ -121,13 +129,11 @@ impl Car {
         let mounts = wheels(model)?;
         let b = model.bounds().expect("у колёс есть габариты");
         let com = (b.min + b.max) / 2.0 + Vec3::from(config.com_offset);
-        let rot = Quat::from_rotation_y(yaw);
-        let mut body = RigidBody::new(
-            pos + rot * com + Vec3::Y * config.travel,
+        let body = RigidBody::new(
+            Vec3::ZERO,
             config.mass,
             box_inertia(config.mass, b.max - b.min),
         );
-        body.rot = rot;
         let at = |x: f32, z: f32| Vec3::new(x, mounts[0].mount.y, z) - com;
         let (left, right) = (b.max.x - BODY_RADIUS, b.min.x + BODY_RADIUS);
         let (front, back) = (b.max.z - BODY_RADIUS, b.min.z + BODY_RADIUS);
@@ -140,15 +146,63 @@ impl Car {
             at(left, back),
             at(right, back),
         ];
-        Ok(Self {
+        let mut car = Self {
             body,
             wheels: [WheelState::default(); 4],
             config,
+            prev: (Vec3::ZERO, Quat::IDENTITY),
+            spin: [0.0; 4],
             mounts,
             com,
             spheres,
             contacts: Vec::new(),
-        })
+        };
+        car.place(pos, yaw);
+        Ok(car)
+    }
+
+    /// Ставит неподвижной в `pos` с рысканием `yaw`, как `new`; интерполяции из прежнего места нет.
+    pub(crate) fn place(&mut self, pos: Vec3, yaw: f32) {
+        let rot = Quat::from_rotation_y(yaw);
+        let body = &mut self.body;
+        body.pos = pos + rot * self.com + Vec3::Y * self.config.travel;
+        body.rot = rot;
+        body.vel = Vec3::ZERO;
+        body.ang_vel = Vec3::ZERO;
+        self.wheels = [WheelState::default(); 4];
+        self.prev = (body.pos, body.rot);
+    }
+
+    /// Центр масс и поворот между `prev` и текущим состоянием.
+    pub(crate) fn lerp(&self, alpha: f32) -> (Vec3, Quat) {
+        (
+            self.prev.0.lerp(self.body.pos, alpha),
+            self.prev.1.slerp(self.body.rot, alpha),
+        )
+    }
+
+    /// Модель → мир между `prev` и текущим состоянием.
+    pub(crate) fn transform(&self, alpha: f32) -> Mat4 {
+        let (pos, rot) = self.lerp(alpha);
+        Mat4::from_rotation_translation(rot, pos) * Mat4::from_translation(-self.com)
+    }
+
+    /// Центр колеса `i` в пространстве модели: ниже крепления на несжатый ход.
+    fn wheel_center(&self, i: usize) -> Vec3 {
+        self.mounts[i].mount - Vec3::Y * (self.config.travel - self.wheels[i].compression)
+    }
+
+    /// Поза колёс: высота по ходу подвески, руль, вращение; колёса Car Kit — корневые узлы.
+    pub(crate) fn pose(&self, model: &Model, pose: &mut Pose) {
+        pose.clone_from(&model.rest);
+        for (i, w) in self.mounts.iter().enumerate() {
+            let local = pose.local_mut(w.node);
+            local.translation += self.wheel_center(i) - w.mount;
+            local.rotation = Quat::from_rotation_y(self.wheels[i].steer)
+                * Quat::from_rotation_x(self.spin[i])
+                * local.rotation;
+        }
+        model.recompose(pose);
     }
 
     /// Центры сфер кузова в мире.
@@ -163,6 +217,7 @@ impl Car {
 
     /// Тик 60 Гц подшагами.
     pub(crate) fn tick(&mut self, world: &StaticWorld, controls: Controls) {
+        self.prev = (self.body.pos, self.body.rot);
         for _ in 0..SUBSTEPS {
             self.substep(world, controls, SUBSTEP);
         }
@@ -177,6 +232,17 @@ impl Car {
         }
         solve_contacts(&mut self.body, &self.contacts, &BODY_CONTACT);
         self.body.integrate_position(dt);
+        self.roll(dt);
+    }
+
+    /// Колёса поворачиваются на путь центра колеса вдоль его направления за подшаг.
+    fn roll(&mut self, dt: f32) {
+        for i in 0..4 {
+            let center = self.body.pos + self.body.rot * (self.wheel_center(i) - self.com);
+            let heading = self.body.rot * Quat::from_rotation_y(self.wheels[i].steer) * Vec3::Z;
+            let path = self.body.velocity_at(center).dot(heading) * dt;
+            self.spin[i] = (self.spin[i] + path / self.mounts[i].radius).rem_euclid(TAU);
+        }
     }
 
     /// Подвеска и шины: силы копятся в теле до `integrate_velocity`.
@@ -221,7 +287,11 @@ impl Car {
             let (v_long, v_lat) = (v.dot(fwd), v.dot(side));
             let m_long = effective_mass(body, inv_inertia, center, fwd) / grounded;
             let m_lat = effective_mass(body, inv_inertia, center, side) / grounded;
-            let resist = controls.brake * cfg.brake / 4.0 + ROLLING * state.load;
+            let resist = if controls.handbrake && i >= 2 {
+                f32::INFINITY
+            } else {
+                controls.brake * cfg.brake / 4.0 + ROLLING * state.load
+            };
             let mut long = (-m_long * v_long / dt).clamp(-resist, resist);
             if driven(cfg.drive, i) {
                 long += drive;
@@ -524,6 +594,7 @@ mod tests {
                 throttle: 1.0,
                 brake: 0.0,
                 steer: 1.0,
+                handbrake: true,
             },
         );
         for w in car.wheels {
@@ -718,6 +789,157 @@ mod tests {
             let hit = w.ground.expect("опора");
             assert_eq!(hit.tag, ROAD, "{mount}");
             assert!(hit.point.y.abs() < 1e-4, "{mount}: {}", hit.point);
+        }
+    }
+
+    #[test]
+    fn tick_keeps_prev_from_before_all_substeps_and_place_resets_it() {
+        let world = world(plane(ROAD));
+        let mut car = rolling("race", &world, 10.0);
+        let before = (car.body.pos, car.body.rot);
+        car.tick(&world, Controls::default());
+        assert_eq!(car.prev, before);
+        assert!(car.body.pos.distance(before.0) > 0.15, "{}", car.body.pos);
+        let model =
+            |pos, rot| Mat4::from_rotation_translation(rot, pos) * Mat4::from_translation(-car.com);
+        assert!(
+            car.transform(0.0)
+                .abs_diff_eq(model(before.0, before.1), 1e-5)
+        );
+        assert!(
+            car.transform(1.0)
+                .abs_diff_eq(model(car.body.pos, car.body.rot), 1e-5)
+        );
+        let mid = car.transform(0.5).transform_point3(car.com);
+        assert!(
+            mid.abs_diff_eq(before.0.lerp(car.body.pos, 0.5), 1e-5),
+            "{mid}"
+        );
+
+        car.place(vec3(3.0, 1.0, -2.0), 1.0);
+        assert_eq!(car.prev, (car.body.pos, car.body.rot));
+        assert_eq!((car.body.vel, car.body.ang_vel), (Vec3::ZERO, Vec3::ZERO));
+        assert!(car.transform(0.0).abs_diff_eq(car.transform(1.0), 1e-6));
+        let origin = car.transform(1.0).transform_point3(Vec3::ZERO);
+        assert!(
+            origin.abs_diff_eq(vec3(3.0, 1.0 + car.config.travel, -2.0), 1e-5),
+            "{origin}"
+        );
+        let nose = car.body.rot * Vec3::Z;
+        assert!(
+            nose.abs_diff_eq(vec3(1f32.sin(), 0.0, 1f32.cos()), 1e-5),
+            "{nose}"
+        );
+    }
+
+    #[test]
+    fn wheels_spin_by_path_traveled() {
+        let world = world(plane(ROAD));
+        let mut car = rolling("race", &world, 5.0);
+        let heading = car.body.rot * Vec3::Z;
+        let start = car.body.pos;
+        // Путь меньше оборота колеса: угол сравним без свёртки.
+        run(&mut car, &world, Controls::default(), 15);
+        let path = (car.body.pos - start).dot(heading);
+        assert!((1.0..1.8).contains(&path), "{path}");
+        for (spin, w) in car.spin.iter().zip(car.mounts) {
+            assert!((spin - path / w.radius).abs() < 0.01, "{spin} / {path}");
+        }
+        // В повороте влево наружное заднее колесо проходит больше внутреннего.
+        let mut car = rolling("race", &world, 5.0);
+        let left = Controls {
+            steer: 1.0,
+            ..Controls::default()
+        };
+        run(&mut car, &world, left, 15);
+        assert!(car.spin[3] > 1.02 * car.spin[2], "{:?}", car.spin);
+        car.spin = [TAU - 0.01; 4];
+        car.tick(&world, Controls::default());
+        assert!(
+            car.spin.iter().all(|s| (0.0..0.5).contains(s)),
+            "{:?}",
+            car.spin
+        );
+    }
+
+    #[test]
+    fn wheel_pose_steers_spins_and_follows_suspension() {
+        let world = world(plane(ROAD));
+        for name in CARS {
+            let (mut car, mut assets) = car_with(config(name), 0.0, 0.0);
+            let handle = assets.load_model(format!("{ASSETS}{name}.glb"));
+            let model = assets.model(handle);
+            let mut pose = Pose::default();
+            run(&mut car, &world, Controls::default(), 2 * 60);
+            car.tick(
+                &world,
+                Controls {
+                    steer: 1.0,
+                    ..Controls::default()
+                },
+            );
+            car.spin = [0.3, 0.3, 0.7, 0.7];
+            car.pose(model, &mut pose);
+            for (i, w) in car.mounts.iter().enumerate() {
+                let g = pose.globals[w.node];
+                let rest = model.rest.globals[w.node];
+                let sag = car.config.travel - car.wheels[i].compression;
+                let center = g.transform_point3(Vec3::ZERO);
+                let want = rest.transform_point3(Vec3::ZERO) - Vec3::Y * sag;
+                assert!(
+                    center.abs_diff_eq(want, 1e-5),
+                    "{name} {i}: {center} / {want}"
+                );
+                let (steer, spin) = (car.wheels[i].steer, car.spin[i]);
+                assert_eq!(steer != 0.0, i < 2, "{name} {i}");
+                let axle = g.transform_vector3(Vec3::X);
+                assert!(
+                    axle.abs_diff_eq(vec3(steer.cos(), 0.0, -steer.sin()), 1e-5),
+                    "{name} {i}: {axle}"
+                );
+                let up = Quat::from_rotation_y(-steer) * g.transform_vector3(Vec3::Y);
+                assert!(
+                    up.abs_diff_eq(vec3(0.0, spin.cos(), spin.sin()), 1e-5),
+                    "{name} {i}: {up}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn airborne_wheels_hang_at_full_travel() {
+        let world = world(plane(ROAD));
+        let (mut car, mut assets) = car_with(config("race"), 0.0, 5.0);
+        car.tick(&world, Controls::default());
+        let handle = assets.load_model(format!("{ASSETS}race.glb"));
+        let model = assets.model(handle);
+        let mut pose = Pose::default();
+        car.pose(model, &mut pose);
+        for w in car.mounts {
+            let drop = model.rest.globals[w.node].w_axis.y - pose.globals[w.node].w_axis.y;
+            assert!((drop - car.config.travel).abs() < 1e-5, "{drop}");
+        }
+    }
+
+    #[test]
+    fn handbrake_locks_rear_wheels_only() {
+        let world = world(plane(ROAD));
+        let mut car = rolling("race", &world, 20.0);
+        car.substep(
+            &world,
+            Controls {
+                handbrake: true,
+                ..Controls::default()
+            },
+            SUBSTEP,
+        );
+        for (i, w) in car.wheels.iter().enumerate() {
+            if i < 2 {
+                assert!(w.traction.abs() < ROLLING * w.load + 1.0, "{i}: {w:?}");
+            } else {
+                let limit = car.config.grip_rear * w.load;
+                assert!((w.traction / -limit - 1.0).abs() < 0.01, "{i}: {w:?}");
+            }
         }
     }
 

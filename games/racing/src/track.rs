@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use engine::{IVec2, Mat4, Vec3, vec3};
+use engine::{IVec2, Mat4, Vec3, ivec2, vec3};
 use serde::Deserialize;
 use toml::Spanned;
 
@@ -81,6 +81,13 @@ impl Road {
         })
     }
 
+    /// Занятые клетки трассы с уровнями.
+    fn cells(&self) -> impl Iterator<Item = (IVec2, u32)> {
+        self.piece.cells(self.rot).flat_map(move |c| {
+            (self.piece.levels.clone()).map(move |l| (self.cell + c, self.level + l))
+        })
+    }
+
     /// Клетки детали → мир: клетки трассы по 4 м, поворот вокруг центра якорной клетки.
     pub(crate) fn frame(&self) -> Mat4 {
         let anchor = vec3(
@@ -141,7 +148,6 @@ impl Checkpoint {
     }
 
     /// Отрезок движения `from → to` пересёк прямоугольник по направлению цепочки.
-    #[cfg_attr(not(test), expect(dead_code, reason = "круги считает Task 16"))]
     pub(crate) fn crossed(&self, from: Vec3, to: Vec3) -> bool {
         let (a, b) = (
             (from - self.origin).dot(self.normal),
@@ -156,9 +162,16 @@ impl Checkpoint {
     }
 }
 
+/// Клетка и уровень точки в метрах; ниже уровня 0 — `None`.
+pub(crate) fn cell_at(p: Vec3) -> Option<(IVec2, u32)> {
+    let c = (p / vec3(KIT_SCALE, LEVEL * KIT_SCALE, KIT_SCALE))
+        .floor()
+        .as_ivec3();
+    Some((ivec2(c.x, c.z), u32::try_from(c.y).ok()?))
+}
+
 #[derive(Debug)]
 pub(crate) struct Track {
-    #[cfg_attr(not(test), expect(dead_code, reason = "машину ставит Task 15"))]
     pub(crate) car: String,
     pub(crate) road: Vec<Road>,
     pub(crate) decor: Vec<Decor>,
@@ -210,26 +223,23 @@ impl Track {
                 line: line(&r.piece),
                 rot: r.rot,
             })?;
-            let cell = IVec2::from(r.cell);
-            for c in piece.cells(rot) {
-                for l in piece.levels.clone() {
-                    let (cell, level) = (cell + c, r.level + l);
-                    if !taken.insert((cell, level)) {
-                        return Err(TrackError::Overlap {
-                            line: line(&r.piece),
-                            cell,
-                            level,
-                        });
-                    }
-                }
-            }
-            road.push(Road {
+            let r = Road {
                 piece,
-                cell,
+                cell: IVec2::from(r.cell),
                 level: r.level,
                 rot,
                 line: line(&r.piece),
-            });
+            };
+            for (cell, level) in r.cells() {
+                if !taken.insert((cell, level)) {
+                    return Err(TrackError::Overlap {
+                        line: r.line,
+                        cell,
+                        level,
+                    });
+                }
+            }
+            road.push(r);
         }
         let decor = file
             .decor
@@ -247,6 +257,11 @@ impl Track {
             road,
             decor,
         })
+    }
+
+    /// Клетки и уровни под дорогой.
+    pub(crate) fn road_cells(&self) -> HashSet<(IVec2, u32)> {
+        self.road.iter().flat_map(Road::cells).collect()
     }
 
     /// Чекпоинты на выходах деталей по цепочке от `roadStart`, первый — у старта.
@@ -298,7 +313,7 @@ impl Track {
 mod tests {
     use std::fmt::Write;
 
-    use engine::{ivec2, vec3};
+    use engine::vec3;
 
     use super::*;
 
@@ -591,6 +606,27 @@ mod tests {
         assert_eq!(over.piece.name, "roadStraightBridgeMid");
         assert_eq!(checkpoints[3].origin, vec3(0.0, 0.0, 2.0));
         assert_eq!(checkpoints[12].origin, vec3(2.0, 2.0, 4.0));
+    }
+
+    #[test]
+    fn road_cells_hold_every_level_of_piece() {
+        let track = Track::parse(include_str!("testdata/bridge8.toml")).expect("восьмёрка");
+        let cells = track.road_cells();
+        let taken: usize = (track.road.iter())
+            .map(|r| r.piece.cells(r.rot).count() * r.piece.levels.clone().count())
+            .sum();
+        assert_eq!(cells.len(), taken);
+        assert!(cells.contains(&(IVec2::ZERO, 0)) && cells.contains(&(IVec2::ZERO, 1)));
+        assert!(cells.contains(&(ivec2(-2, -1), 0)), "угол 2×2 целиком");
+        assert!(!cells.contains(&(ivec2(1, 0), 1)));
+    }
+
+    #[test]
+    fn cell_at_floors_meters_to_cell_and_level_band() {
+        assert_eq!(cell_at(vec3(0.5, 0.3, 3.9)), Some((IVec2::ZERO, 0)));
+        assert_eq!(cell_at(vec3(-0.1, 2.0, 4.0)), Some((ivec2(-1, 1), 1)));
+        assert_eq!(cell_at(vec3(8.0, 1.99, -4.1)), Some((ivec2(2, -2), 0)));
+        assert_eq!(cell_at(vec3(0.0, -0.01, 0.0)), None);
     }
 
     /// Выход клетки [0, 0] к +X: плоскость x = 4, z в 0..4, y в 0..2.

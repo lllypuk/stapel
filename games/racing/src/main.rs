@@ -1,59 +1,193 @@
-#[cfg_attr(not(test), expect(dead_code, reason = "езду собирает Task 15"))]
+mod camera;
 mod car;
-#[cfg_attr(not(test), expect(dead_code, reason = "езду собирает Task 15"))]
 mod car_config;
 mod layout;
 mod pieces;
 mod track;
 
+use std::collections::HashSet;
 use std::fs;
 
 use engine::{
-    Assets, Camera3D, Color, Config, Context, DirectionalLight, Fog, Game, Scene, Vec3, vec3,
+    Assets, Color, Config, Context, DirectionalLight, Fog, Game, IVec2, Input, KeyCode, ModelDraw,
+    Pose, Scene, Vec3, vec3,
 };
 
+use crate::camera::Chase;
+use crate::car::{Car, Controls, SUBSTEP, SUBSTEPS};
+use crate::car_config::CarConfig;
 use crate::layout::{Layout, Models};
-use crate::pieces::Rot;
-use crate::track::Track;
+use crate::pieces::KIT_SCALE;
+use crate::track::{Checkpoint, Track, cell_at};
 
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
 const TRACK: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/tracks/oval.toml");
+const CARS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cars/");
 
-/// Камера обзора — над центром трассы, со сдвигом к +Z.
-const OVERVIEW: Vec3 = vec3(0.0, 40.0, 30.0);
+const GAS: &[KeyCode] = &[KeyCode::KeyW, KeyCode::ArrowUp];
+const BRAKE: &[KeyCode] = &[KeyCode::KeyS, KeyCode::ArrowDown];
+const LEFT: &[KeyCode] = &[KeyCode::KeyA, KeyCode::ArrowLeft];
+const RIGHT: &[KeyCode] = &[KeyCode::KeyD, KeyCode::ArrowRight];
 
-/// Обзор сверху на центр клеток дороги.
-fn overview(track: &Track) -> Camera3D {
-    let centers: Vec<Vec3> = (track.road.iter())
-        .flat_map(|r| {
-            let frame = r.frame();
-            r.piece
-                .cells(Rot::default())
-                .map(move |c| frame.transform_point3(vec3(c.x as f32 + 0.5, 0.0, c.y as f32 + 0.5)))
-        })
+/// Ниже этой высоты центра масс — респаун, м.
+const FALL_Y: f32 = -10.0;
+/// Тиков колёсами вверх до респауна.
+const UPSIDE_DOWN_TICKS: u32 = 2 * 60;
+/// Тиков вне клеток дороги своего уровня до респауна.
+const OFF_ROAD_TICKS: u32 = 3 * 60;
+/// Машина ставится чуть выше дороги и падает на колёса, м.
+const SPAWN_LIFT: f32 = 0.1;
+
+/// Характеристики машин из `dir` по имени файла без `.toml`: `race` раньше `race-future`.
+fn load_cars(dir: &str) -> Vec<CarConfig> {
+    let mut paths: Vec<_> = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{dir}: {e}"))
+        .map(|e| e.unwrap_or_else(|e| panic!("{dir}: {e}")).path())
+        .filter(|p| p.extension().is_some_and(|e| e == "toml"))
         .collect();
-    let center = centers.iter().sum::<Vec3>() / centers.len().max(1) as f32;
-    let mut camera = Camera3D {
-        far: 400.0,
-        ..Camera3D::default()
-    };
-    camera.look_at(center + OVERVIEW, center);
-    camera
+    paths.sort_by(|a, b| a.file_stem().cmp(&b.file_stem()));
+    paths
+        .iter()
+        .map(|p| {
+            let text = fs::read_to_string(p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            CarConfig::parse(&text).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+        })
+        .collect()
+}
+
+fn controls(input: &Input) -> Controls {
+    let down = |keys: &[KeyCode]| f32::from(u8::from(keys.iter().any(|&k| input.is_down(k))));
+    Controls {
+        throttle: down(GAS),
+        brake: down(BRAKE),
+        steer: down(LEFT) - down(RIGHT),
+        handbrake: input.is_down(KeyCode::Space),
+    }
+}
+
+/// Куда ставится машина: начало модели и направление носа.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Spawn {
+    pos: Vec3,
+    dir: Vec3,
+}
+
+impl Spawn {
+    fn at(c: &Checkpoint) -> Self {
+        Self {
+            pos: c.origin,
+            dir: c.normal,
+        }
+    }
 }
 
 struct Racing {
     layout: Layout,
-    camera: Camera3D,
+    models: Models,
     sky: Color,
+    cars: Vec<CarConfig>,
+    car_index: usize,
+    car: Car,
+    pose: Pose,
+    chase: Chase,
+    checkpoints: Vec<Checkpoint>,
+    road_cells: HashSet<(IVec2, u32)>,
+    /// Посреди последней клетки `roadStart` носом по цепочке.
+    start: Spawn,
+    /// Последний пройденный чекпоинт, до первого — старт.
+    respawn: Spawn,
+    /// Индекс следующего чекпоинта.
+    next: usize,
+    /// Пройдена линия старта: Tab больше не меняет машину.
+    started: bool,
+    upside_down: u32,
+    off_road: u32,
 }
 
 impl Racing {
-    fn new(track: &Track, assets: &mut Assets) -> Self {
+    /// # Panics
+    /// Если трасса без цепочки или машины трассы нет в `cars`.
+    fn new(track: &Track, cars: Vec<CarConfig>, assets: &mut Assets) -> Self {
         let models = Models::load(assets);
-        Self {
+        let checkpoints = track.chain().unwrap_or_else(|e| panic!("{e}"));
+        let car_index = (cars.iter().position(|c| c.model == track.car))
+            .unwrap_or_else(|| panic!("машины {} нет в cars/", track.car));
+        let first = &checkpoints[0];
+        let start = Spawn {
+            pos: first.origin - first.normal * KIT_SCALE / 2.0,
+            dir: first.normal,
+        };
+        let car = Self::make_car(&cars[car_index], &models, assets);
+        let mut racing = Self {
             layout: Layout::new(track, &models, assets),
-            camera: overview(track),
+            models,
             sky: Color::from_srgb8(170, 205, 235),
+            chase: Chase::new(car.body.pos, car.body.rot),
+            cars,
+            car_index,
+            car,
+            pose: Pose::default(),
+            road_cells: track.road_cells(),
+            checkpoints,
+            start,
+            respawn: start,
+            next: 0,
+            started: false,
+            upside_down: 0,
+            off_road: 0,
+        };
+        racing.restart();
+        racing
+    }
+
+    fn make_car(config: &CarConfig, models: &Models, assets: &Assets) -> Car {
+        let model = assets.model(models.get(&config.model));
+        Car::new(config.clone(), model, Vec3::ZERO, 0.0)
+            .unwrap_or_else(|e| panic!("{}: {e}", config.model))
+    }
+
+    fn spawn(&mut self, at: Spawn) {
+        self.car
+            .place(at.pos + Vec3::Y * SPAWN_LIFT, at.dir.x.atan2(at.dir.z));
+        self.chase = Chase::new(self.car.body.pos, self.car.body.rot);
+        self.upside_down = 0;
+        self.off_road = 0;
+    }
+
+    fn restart(&mut self) {
+        self.next = 0;
+        self.started = false;
+        self.respawn = self.start;
+        self.spawn(self.start);
+    }
+
+    fn next_car(&mut self, assets: &Assets) {
+        self.car_index = (self.car_index + 1) % self.cars.len();
+        self.car = Self::make_car(&self.cars[self.car_index], &self.models, assets);
+        self.restart();
+    }
+
+    fn pass_checkpoint(&mut self) {
+        let c = &self.checkpoints[self.next];
+        if c.crossed(self.car.prev.0, self.car.body.pos) {
+            self.respawn = Spawn::at(c);
+            self.next = (self.next + 1) % self.checkpoints.len();
+            self.started = true;
+        }
+    }
+
+    /// Респаун после падения, переворота или съезда с дороги своего уровня.
+    fn auto_respawn(&mut self) {
+        let body = &self.car.body;
+        let on_road = cell_at(body.pos).is_some_and(|c| self.road_cells.contains(&c));
+        self.off_road = if on_road { 0 } else { self.off_road + 1 };
+        let upside_down = (body.rot * Vec3::Y).y < 0.0;
+        self.upside_down = if upside_down { self.upside_down + 1 } else { 0 };
+        if body.pos.y < FALL_Y
+            || self.upside_down >= UPSIDE_DOWN_TICKS
+            || self.off_road >= OFF_ROAD_TICKS
+        {
+            self.spawn(self.respawn);
         }
     }
 }
@@ -63,15 +197,36 @@ impl Game for Racing {
         let text = fs::read_to_string(TRACK).unwrap_or_else(|e| panic!("{TRACK}: {e}"));
         let track = Track::parse(&text).unwrap_or_else(|e| panic!("{TRACK}: {e}"));
         track.chain().unwrap_or_else(|e| panic!("{TRACK}: {e}"));
-        Self::new(&track, &mut ctx.assets)
+        Self::new(&track, load_cars(CARS_DIR), &mut ctx.assets)
     }
 
-    fn update(&mut self, _ctx: &mut Context) {}
+    fn update(&mut self, ctx: &mut Context) {
+        if ctx.input.just_pressed(KeyCode::Tab) && !self.started {
+            self.next_car(&ctx.assets);
+        }
+        if ctx.input.just_pressed(KeyCode::KeyR) {
+            self.spawn(self.respawn);
+        }
+        self.car.tick(&self.layout.world, controls(&ctx.input));
+        self.pass_checkpoint();
+        self.auto_respawn();
+        let tick = SUBSTEPS as f32 * SUBSTEP;
+        self.chase.tick(self.car.body.pos, self.car.body.rot, tick);
+    }
 
-    fn draw(&mut self, ctx: &mut Context, _alpha: f32) {
+    fn draw(&mut self, ctx: &mut Context, alpha: f32) {
+        let model = self.models.get(&self.car.config.model);
+        self.car.pose(ctx.assets.model(model), &mut self.pose);
+        let (pos, rot) = self.car.lerp(alpha);
+        let mut models = self.layout.draws.clone();
+        models.push(ModelDraw {
+            model,
+            transform: self.car.transform(alpha),
+            pose: Some(self.pose.clone()),
+        });
         ctx.gfx.clear_color = self.sky;
         ctx.gfx.scene = Some(Scene {
-            camera: self.camera,
+            camera: self.chase.camera(alpha, pos, rot),
             ambient: Color {
                 r: 0.35,
                 g: 0.37,
@@ -94,7 +249,7 @@ impl Game for Racing {
             }),
             lights: Vec::new(),
             meshes: Vec::new(),
-            models: self.layout.draws.clone(),
+            models,
         });
     }
 }
@@ -111,32 +266,262 @@ fn main() -> Result<(), engine::EventLoopError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use engine::ElementState::{Pressed, Released};
+    use engine::{Quat, StaticWorld, Triangle};
 
-    #[test]
-    fn overview_looks_down_at_road_center() {
+    use super::*;
+    use crate::layout::ROAD;
+
+    fn racing(ctx: &mut Context) -> Racing {
         let track = Track::parse(include_str!("testdata/oval.toml")).expect("овал");
-        let camera = overview(&track);
-        // Овал — клетки 0..7 × 0..5 по 4 м.
-        let center = vec3(14.0, 0.0, 10.0);
-        assert!(
-            camera.pos.abs_diff_eq(center + OVERVIEW, 1e-4),
-            "{}",
-            camera.pos
-        );
-        let to_center = (center - camera.pos).normalize();
-        assert!(camera.forward().abs_diff_eq(to_center, 1e-4));
+        Racing::new(&track, load_cars(CARS_DIR), &mut ctx.assets)
+    }
+
+    fn tick(g: &mut Racing, ctx: &mut Context) {
+        g.update(ctx);
+        ctx.input.end_tick();
+    }
+
+    fn ticks(g: &mut Racing, ctx: &mut Context, n: u32) {
+        for _ in 0..n {
+            tick(g, ctx);
+        }
+    }
+
+    fn tap(g: &mut Racing, ctx: &mut Context, key: KeyCode) {
+        ctx.input.on_key(key, Pressed, false);
+        tick(g, ctx);
+        ctx.input.on_key(key, Released, false);
+    }
+
+    /// Последний тик начат с машины, поставленной в `at`.
+    fn placed_at(g: &Racing, at: Spawn) -> bool {
+        let origin = g.car.transform(0.0).transform_point3(Vec3::ZERO);
+        let lift = Vec3::Y * (SPAWN_LIFT + g.car.config.travel);
+        let nose = g.car.prev.1 * Vec3::Z;
+        origin.abs_diff_eq(at.pos + lift, 1e-4) && nose.abs_diff_eq(at.dir, 1e-5)
+    }
+
+    /// Расстояние по горизонтали.
+    fn across(a: Vec3, b: Vec3) -> f32 {
+        (a - b).with_y(0.0).length()
+    }
+
+    /// Плоскость дороги на высоте `y` вместо мира трассы.
+    fn flat(g: &mut Racing, y: f32) {
+        let half = 1000.0;
+        let corner = [(-1.0, -1.0), (-1.0, 1.0), (1.0, 1.0), (1.0, -1.0)]
+            .map(|(x, z)| vec3(x * half, y, z * half));
+        let tri = |[a, b, c]: [usize; 3]| Triangle {
+            verts: [corner[a], corner[b], corner[c]],
+            tag: ROAD,
+        };
+        g.layout.world = StaticWorld::new(KIT_SCALE, vec![tri([0, 1, 2]), tri([0, 2, 3])]);
     }
 
     #[test]
-    fn draw_shows_track_lit_from_above_and_fogged_before_far_plane() {
+    fn keys_map_to_controls() {
+        let mut input = Input::default();
+        for k in [KeyCode::KeyW, KeyCode::KeyA, KeyCode::Space] {
+            input.on_key(k, Pressed, false);
+        }
+        let want = Controls {
+            throttle: 1.0,
+            brake: 0.0,
+            steer: 1.0,
+            handbrake: true,
+        };
+        assert_eq!(controls(&input), want);
+        let mut input = Input::default();
+        for k in [KeyCode::ArrowDown, KeyCode::ArrowRight] {
+            input.on_key(k, Pressed, false);
+        }
+        let want = Controls {
+            brake: 1.0,
+            steer: -1.0,
+            ..Controls::default()
+        };
+        assert_eq!(controls(&input), want);
+        for k in [
+            KeyCode::ArrowUp,
+            KeyCode::KeyS,
+            KeyCode::KeyD,
+            KeyCode::ArrowLeft,
+        ] {
+            input.on_key(k, Pressed, false);
+        }
+        let both = controls(&input);
+        assert_eq!((both.throttle, both.brake, both.steer), (1.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn load_cars_reads_every_file_sorted() {
+        let names: Vec<String> = load_cars(CARS_DIR).into_iter().map(|c| c.model).collect();
+        assert_eq!(
+            names,
+            ["hatchback-sports", "race", "race-future", "sedan-sports"]
+        );
+    }
+
+    #[test]
+    fn starts_mid_last_start_cell_facing_chain_and_stays_on_road() {
         let mut ctx = Context::default();
-        let track = Track::parse(include_str!("testdata/oval.toml")).expect("овал");
-        let mut racing = Racing::new(&track, &mut ctx.assets);
-        racing.draw(&mut ctx, 0.0);
+        let mut g = racing(&mut ctx);
+        // Старт овала — клетки [2..3, 0], цепочка едет к −X: выход у x = 8.
+        let start = Spawn {
+            pos: vec3(10.0, 0.0, 2.0),
+            dir: Vec3::NEG_X,
+        };
+        assert!(g.start.pos.abs_diff_eq(start.pos, 1e-5), "{:?}", g.start);
+        assert!(g.start.dir.abs_diff_eq(start.dir, 1e-6));
+        assert_eq!(g.respawn, g.start);
+        assert_eq!(g.car.config.model, "race");
+        ticks(&mut g, &mut ctx, 2 * 60);
+        assert!(g.car.body.vel.length() < 0.05, "{}", g.car.body.vel);
+        let origin = g.car.transform(1.0).transform_point3(Vec3::ZERO);
+        assert!(across(origin, start.pos) < 0.05, "{origin}");
+        assert!(origin.y.abs() < 0.2, "{origin}");
+        assert_eq!((g.off_road, g.upside_down, g.next), (0, 0, 0));
+    }
+
+    /// Газ до пересечения первого чекпоинта; дольше 3 с — паника.
+    fn cross_start_line(g: &mut Racing, ctx: &mut Context) {
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+        for _ in 0..3 * 60 {
+            tick(g, ctx);
+            if g.next == 1 {
+                ctx.input.on_key(KeyCode::KeyW, Released, false);
+                return;
+            }
+        }
+        panic!("не пересекла старт: {}", g.car.body.pos);
+    }
+
+    #[test]
+    fn r_returns_to_last_checkpoint_in_its_direction() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+        ticks(&mut g, &mut ctx, 10);
+        ctx.input.on_key(KeyCode::KeyW, Released, false);
+        assert!(g.car.body.vel.length() > 1.0);
+        tap(&mut g, &mut ctx, KeyCode::KeyR);
+        assert!(placed_at(&g, g.start));
+
+        cross_start_line(&mut g, &mut ctx);
+        let first = Spawn::at(&g.checkpoints[0]);
+        assert_eq!(g.respawn, first);
+        ticks(&mut g, &mut ctx, 30);
+        tap(&mut g, &mut ctx, KeyCode::KeyR);
+        assert!(placed_at(&g, first));
+        assert_eq!(g.next, 1);
+        let eye = g
+            .chase
+            .eye
+            .distance(camera::target(g.car.body.pos, g.car.body.rot));
+        assert!(eye < 0.5, "{eye}");
+    }
+
+    #[test]
+    fn tab_switches_car_only_before_start_line() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+        ticks(&mut g, &mut ctx, 10);
+        ctx.input.on_key(KeyCode::KeyW, Released, false);
+        tap(&mut g, &mut ctx, KeyCode::Tab);
+        assert_eq!(g.car.config.model, "race-future");
+        assert!(placed_at(&g, g.start));
+        assert_eq!(g.car.body.vel.with_y(0.0).length(), 0.0);
+        for _ in 0..3 {
+            tap(&mut g, &mut ctx, KeyCode::Tab);
+        }
+        assert_eq!(g.car.config.model, "race");
+
+        cross_start_line(&mut g, &mut ctx);
+        assert!(g.started);
+        tap(&mut g, &mut ctx, KeyCode::Tab);
+        assert_eq!(g.car.config.model, "race");
+        assert!(!placed_at(&g, g.start), "рестартовала");
+        assert_eq!(g.next, 1);
+    }
+
+    #[test]
+    fn falling_below_ten_meters_respawns() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        ticks(&mut g, &mut ctx, 30);
+        g.car.place(vec3(14.0, -9.0, 10.0), 0.0);
+        tick(&mut g, &mut ctx);
+        assert!(g.car.body.pos.y < -8.0, "{}", g.car.body.pos);
+        g.car.place(vec3(14.0, -10.6, 10.0), 0.0);
+        tick(&mut g, &mut ctx);
+        assert!(placed_at(&g, g.start), "{}", g.car.body.pos);
+    }
+
+    #[test]
+    fn upside_down_for_two_seconds_respawns() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        flat(&mut g, 0.0);
+        g.car.body.rot = Quat::from_rotation_z(std::f32::consts::PI) * g.car.body.rot;
+        g.car.body.pos.y += 0.5;
+        for t in 1..2 * 60 {
+            tick(&mut g, &mut ctx);
+            assert!((g.car.body.rot * Vec3::Y).y < 0.0, "{t}");
+            assert_eq!(g.upside_down, t);
+        }
+        tick(&mut g, &mut ctx);
+        assert!(placed_at(&g, g.start));
+        assert_eq!(g.upside_down, 0);
+    }
+
+    #[test]
+    fn off_road_of_own_level_for_three_seconds_respawns() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        flat(&mut g, 0.0);
+        // [3, 2] — внутри овала.
+        let inside = vec3(14.0, 0.0, 10.0);
+        g.car.place(inside, 0.0);
+        for t in 1..3 * 60 {
+            tick(&mut g, &mut ctx);
+            assert_eq!(g.off_road, t);
+        }
+        assert!(across(g.car.body.pos, inside) < 0.1);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.off_road, 0);
+        let origin = g.car.transform(1.0).transform_point3(Vec3::ZERO);
+        assert!(across(origin, g.start.pos) < 0.01, "{origin}");
+
+        // Над клеткой старта, но уровнем выше.
+        flat(&mut g, LEVEL_UP);
+        g.car.place(g.start.pos + Vec3::Y * LEVEL_UP, 0.0);
+        ticks(&mut g, &mut ctx, 2);
+        assert_eq!(g.off_road, 2);
+        flat(&mut g, 0.0);
+        g.car.place(g.start.pos, 0.0);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.off_road, 0);
+    }
+
+    const LEVEL_UP: f32 = 2.2;
+
+    #[test]
+    fn draw_shows_track_and_posed_car_from_chase_camera() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        ticks(&mut g, &mut ctx, 5);
+        g.draw(&mut ctx, 0.5);
         let scene = ctx.gfx.scene.expect("сцена");
-        assert_ne!(scene.models.len(), 0);
-        assert_eq!(scene.models, racing.layout.draws);
+        let (car, track) = scene.models.split_last().expect("машина");
+        assert_eq!(track, g.layout.draws.as_slice());
+        assert_eq!(car.model, g.models.get("race"));
+        assert_eq!(car.transform, g.car.transform(0.5));
+        assert_eq!(car.pose.as_ref(), Some(&g.pose));
+        assert_ne!(g.pose, Pose::default());
+        let (pos, rot) = g.car.lerp(0.5);
+        assert_eq!(scene.camera, g.chase.camera(0.5, pos, rot));
         assert!(scene.sun.is_some_and(|s| s.dir.y < 0.0));
         assert!(scene.fog.end <= scene.camera.far);
         assert_eq!(ctx.gfx.clear_color, scene.fog.color);
