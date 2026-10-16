@@ -234,7 +234,11 @@ impl Track {
                 line: line(&r.piece),
                 rot: r.rot,
             })?;
-            if r.cell.iter().any(|c| c.abs() > MAX_CELL) || r.level > MAX_LEVEL {
+            if r.cell
+                .iter()
+                .any(|c| c.unsigned_abs() > MAX_CELL.unsigned_abs())
+                || r.level > MAX_LEVEL
+            {
                 return Err(TrackError::Bounds {
                     line: line(&r.piece),
                 });
@@ -415,6 +419,7 @@ mod tests {
             "строка 3: клетка вне ±1000, уровень больше 16 или позиция не число"
         );
         assert_eq!(road("[0, -1001]", 0), TrackError::Bounds { line: 3 });
+        assert_eq!(road("[-2147483648, 0]", 0), TrackError::Bounds { line: 3 });
         assert_eq!(road("[0, 0]", 17), TrackError::Bounds { line: 3 });
         for (pos, yaw) in [("[nan, 0, 0]", "0"), ("[0, 0, 0]", "inf")] {
             let e = err(&format!(
