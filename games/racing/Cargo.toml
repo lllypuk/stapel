@@ -1,0 +1,13 @@
+[package]
+name = "racing"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+engine.workspace = true
+serde.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true

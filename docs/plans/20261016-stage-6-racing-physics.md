@@ -45,7 +45,7 @@
   - **Особые детали.**
     - `roadStart`: асфальт смещён на +0,13 по X, стойки арки выходят в соседние клетки.
     - Вырожденные треугольники: 5 в `roadStart`, по 4 в `roadStraightBridge*`.
-    - Мост и `roadRampLong` поднимаются на 0,52, `roadRamp` — на 0,27, это половина уровня. Борта моста — 4 см над настилом.
+    - Мост и `roadRampLong` поднимаются на 0,52, `roadRamp` — на 0,27, это половина уровня. Асфальт моста и выхода `roadRampLong` — на 0,5 (габарит 0,52 — с бортами и корнем −0,01), поэтому уровень — 0,5 ед. (Task 10). Борта моста — 4 см над настилом.
     - Кривых барьеров нет; `roadCorner*Wall` — бортик 0,03.
   - **Что не подходит.** `fenceStraight`, `fenceCurved`, `flagCheckers` — встроенный PNG и полупрозрачность. `raceCar*` шире асфальта при масштабе Car Kit.
 - **Ассеты** скачаны в scratchpad сессии: `kenney-car-kit/x/Models/GLB format/`, `kenney-racing-kit/x/Models/GLTF format/`.
@@ -153,7 +153,7 @@
 - `lib.rs`: реэкспорт новых типов в задачах, где они появляются.
 
 ### Игра `games/racing`
-- **Масштаб.** Клетка — 4 м, Racing Kit ×4; уровень — 2,08 м; Car Kit ×1. Машины: `race`, `race-future`, `sedan-sports`, `hatchback-sports`.
+- **Масштаб.** Клетка — 4 м, Racing Kit ×4; уровень — 2 м (асфальт моста, см. Context); Car Kit ×1. Машины: `race`, `race-future`, `sedan-sports`, `hatchback-sports`.
 - **Детали этапа:**
   - дорога: `roadStraight`, `roadStraightLong`, `roadCornerSmall`, `roadCornerLarge`, `roadCornerLarger`, `roadStart`, `roadRampLong` (+1 уровень), `roadStraightBridgeStart`, `roadStraightBridgeMid`, `roadStraightBridge`, `roadRamp` (прыжок);
   - декор: `barrierWall`, `barrierRed`, `barrierWhite`, `rail`, `treeLarge`, `treeSmall`, `grandStand`, `cone` из Car Kit.
@@ -332,10 +332,10 @@
 - Create: `games/racing/Cargo.toml`, `games/racing/src/main.rs`, `games/racing/src/pieces.rs`, `games/racing/src/track.rs`, `games/racing/src/testdata/oval.toml`
 - Modify: `Cargo.toml` (`serde` с `derive`, `toml` в `[workspace.dependencies]`)
 
-- [ ] тесты разбора: поля, неизвестная деталь, `rot` не кратен 90, две детали в одной `(cell, level)` — ошибка, деталь под мостом на другом уровне — нет; ошибка TOML — сообщение со строкой
-- [ ] тесты таблицы: стыки поворачиваются с деталью; выход `roadRamp` — уровень 0; смещение `roadStart` выравнивает его асфальт со стыком `roadStraight`
-- [ ] `pieces.rs` (клетки, смещения, стыки, твёрдость — значения измерены по GLB), `track.rs` (разбор `serde` + `toml`), заглушка `main.rs`; `cargo deny check`
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] тесты разбора: поля, неизвестная деталь, `rot` не кратен 90, две детали в одной `(cell, level)` — ошибка, деталь под мостом на другом уровне — нет; ошибка TOML — сообщение со строкой
+- [x] тесты таблицы: стыки поворачиваются с деталью; выход `roadRamp` — уровень 0; смещение `roadStart` выравнивает его асфальт со стыком `roadStraight`
+- [x] `pieces.rs` (клетки, смещения, стыки, твёрдость — значения измерены по GLB), `track.rs` (разбор `serde` + `toml`), заглушка `main.rs`; `cargo deny check`
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 11: Сцена трассы и мир столкновений
 
@@ -345,7 +345,7 @@
 
 - [ ] тесты:
   - каждая модель таблицы деталей, декора и машин загружается непустой;
-  - асфальт каждой детали — в своих клетках при четырёх `rot`; уровень поднимает на 2,08 м;
+  - асфальт каждой детали — в своих клетках при четырёх `rot`; уровень поднимает на 2 м;
   - рендер-инстансы и треугольники мира из одного преобразования;
   - `tag` треугольника по материалу, `barrier*` — барьер, деревья и трибуны в мир не попадают;
   - у деталей уровня ≥1 по бокам барьеры;
