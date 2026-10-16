@@ -82,7 +82,7 @@ impl Road {
     }
 
     /// Занятые клетки трассы с уровнями.
-    fn cells(&self) -> impl Iterator<Item = (IVec2, u32)> {
+    pub(crate) fn cells(&self) -> impl Iterator<Item = (IVec2, u32)> {
         self.piece.cells(self.rot).flat_map(move |c| {
             (self.piece.levels.clone()).map(move |l| (self.cell + c, self.level + l))
         })

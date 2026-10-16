@@ -3,14 +3,15 @@ mod car;
 mod car_config;
 mod layout;
 mod pieces;
+mod race;
 mod track;
 
 use std::collections::HashSet;
 use std::fs;
 
 use engine::{
-    Assets, Color, Config, Context, DirectionalLight, Fog, Game, IVec2, Input, KeyCode, ModelDraw,
-    Pose, Scene, Vec3, vec3,
+    Assets, Camera2D, Color, Config, Context, DirectionalLight, Fog, Font, FontData, Game, Gfx,
+    Handle, IVec2, Input, KeyCode, ModelDraw, Pose, Scene, Vec2, Vec3, egui, vec2, vec3,
 };
 
 use crate::camera::Chase;
@@ -18,11 +19,26 @@ use crate::car::{Car, Controls, SUBSTEP, SUBSTEPS};
 use crate::car_config::CarConfig;
 use crate::layout::{Layout, Models};
 use crate::pieces::KIT_SCALE;
+use crate::race::{Race, lap_time};
 use crate::track::{Checkpoint, Track, cell_at};
 
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
 const TRACK: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/tracks/oval.toml");
 const CARS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cars/");
+const FONT_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/fonts/JetBrainsMono-Regular.ttf"
+);
+
+const TICK_HZ: u32 = 60;
+/// HUD в единицах окна 1280×720; иной аспект — letterbox.
+const VIEW: Vec2 = vec2(1280.0, 720.0);
+/// При `VIEW` в окне 1280×720 тексель атласа — пиксель экрана.
+const HUD_PX: f32 = 24.0;
+const HUD_MARGIN: f32 = 12.0;
+const HUD_LAYER: i32 = 1;
+/// Атлас шрифта — только ASCII, поэтому HUD по-английски.
+const WRONG_WAY: &str = "WRONG WAY";
 
 const GAS: &[KeyCode] = &[KeyCode::KeyW, KeyCode::ArrowUp];
 const BRAKE: &[KeyCode] = &[KeyCode::KeyS, KeyCode::ArrowDown];
@@ -32,9 +48,9 @@ const RIGHT: &[KeyCode] = &[KeyCode::KeyD, KeyCode::ArrowRight];
 /// Ниже этой высоты центра масс — респаун, м.
 const FALL_Y: f32 = -10.0;
 /// Тиков колёсами вверх до респауна.
-const UPSIDE_DOWN_TICKS: u32 = 2 * 60;
+const UPSIDE_DOWN_TICKS: u32 = 2 * TICK_HZ;
 /// Тиков вне клеток дороги своего уровня до респауна.
-const OFF_ROAD_TICKS: u32 = 3 * 60;
+const OFF_ROAD_TICKS: u32 = 3 * TICK_HZ;
 /// Машина ставится чуть выше дороги и падает на колёса, м.
 const SPAWN_LIFT: f32 = 0.1;
 
@@ -53,6 +69,13 @@ fn load_cars(dir: &str) -> Vec<CarConfig> {
             CarConfig::parse(&text).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
         })
         .collect()
+}
+
+fn text_width(font: &FontData, text: &str) -> f32 {
+    text.chars()
+        .filter_map(|c| font.glyph(c).or_else(|| font.glyph('?')))
+        .map(|g| g.advance)
+        .sum()
 }
 
 fn controls(input: &Input) -> Controls {
@@ -90,18 +113,17 @@ struct Racing {
     car: Car,
     pose: Pose,
     chase: Chase,
-    checkpoints: Vec<Checkpoint>,
+    race: Race,
     road_cells: HashSet<(IVec2, u32)>,
     /// Посреди последней клетки `roadStart` носом по цепочке.
     start: Spawn,
     /// Последний пройденный чекпоинт, до первого — старт.
     respawn: Spawn,
-    /// Индекс следующего чекпоинта.
-    next: usize,
-    /// Пройдена линия старта: Tab больше не меняет машину.
-    started: bool,
     upside_down: u32,
     off_road: u32,
+    font: Handle<Font>,
+    /// Ошибка разбора трассы; кириллицы нет в атласе, поэтому — в egui.
+    error: Option<String>,
 }
 
 impl Racing {
@@ -128,13 +150,13 @@ impl Racing {
             car,
             pose: Pose::default(),
             road_cells: track.road_cells(),
-            checkpoints,
+            race: Race::new(track, checkpoints),
             start,
             respawn: start,
-            next: 0,
-            started: false,
             upside_down: 0,
             off_road: 0,
+            font: assets.load_font(FONT_PATH, HUD_PX),
+            error: None,
         };
         racing.restart();
         racing
@@ -155,8 +177,7 @@ impl Racing {
     }
 
     fn restart(&mut self) {
-        self.next = 0;
-        self.started = false;
+        self.race.restart();
         self.respawn = self.start;
         self.spawn(self.start);
     }
@@ -168,11 +189,46 @@ impl Racing {
     }
 
     fn pass_checkpoint(&mut self) {
-        let c = &self.checkpoints[self.next];
-        if c.crossed(self.car.prev.0, self.car.body.pos) {
-            self.respawn = Spawn::at(c);
-            self.next = (self.next + 1) % self.checkpoints.len();
-            self.started = true;
+        let body = &self.car.body;
+        if let Some(i) = self.race.tick(self.car.prev.0, body.pos, body.vel) {
+            self.respawn = Spawn::at(&self.race.checkpoints[i]);
+        }
+    }
+
+    fn status(&self) -> String {
+        let r = &self.race;
+        let best = r.best.map_or_else(|| "-:--.--".into(), lap_time);
+        format!("LAP {} {}\nBEST  {best}", r.laps + 1, lap_time(r.ticks))
+    }
+
+    /// Круг и лучший — слева сверху, скорость — справа снизу, «не туда» — по центру.
+    fn draw_hud(&self, gfx: &mut Gfx, assets: &Assets) {
+        gfx.camera = Camera2D {
+            center: Vec2::ZERO,
+            size: VIEW,
+        };
+        let half = VIEW / 2.0;
+        let font = assets.font(self.font);
+        let speed = format!("{:3.0} KM/H", self.car.body.vel.length() * 3.6);
+        let mut lines = vec![
+            (
+                self.status(),
+                vec2(-half.x + HUD_MARGIN, half.y - HUD_MARGIN - HUD_PX),
+            ),
+            (
+                speed.clone(),
+                vec2(
+                    half.x - HUD_MARGIN - text_width(font, &speed),
+                    HUD_MARGIN - half.y,
+                ),
+            ),
+        ];
+        if self.race.wrong_way() {
+            let pos = vec2(-text_width(font, WRONG_WAY) / 2.0, half.y / 2.0);
+            lines.push((WRONG_WAY.into(), pos));
+        }
+        for (s, pos) in lines {
+            gfx.draw_text(assets, self.font, &s, pos, 1.0, Color::WHITE, HUD_LAYER);
         }
     }
 
@@ -201,7 +257,7 @@ impl Game for Racing {
     }
 
     fn update(&mut self, ctx: &mut Context) {
-        if ctx.input.just_pressed(KeyCode::Tab) && !self.started {
+        if ctx.input.just_pressed(KeyCode::Tab) && !self.race.started {
             self.next_car(&ctx.assets);
         }
         if ctx.input.just_pressed(KeyCode::KeyR) {
@@ -251,6 +307,22 @@ impl Game for Racing {
             meshes: Vec::new(),
             models,
         });
+        self.draw_hud(&mut ctx.gfx, &ctx.assets);
+    }
+
+    fn ui(&mut self, ui: &egui::Context) {
+        engine::ui::set_font(ui, FONT_PATH);
+        let Some(error) = &self.error else {
+            return;
+        };
+        egui::Window::new("Ошибка трассы")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(
+                egui::Align2::LEFT_BOTTOM,
+                egui::vec2(HUD_MARGIN, -HUD_MARGIN),
+            )
+            .show(ui, |ui| ui.label(error));
     }
 }
 
@@ -258,7 +330,7 @@ fn main() -> Result<(), engine::EventLoopError> {
     engine::run::<Racing>(Config {
         title: "racing".into(),
         size: (1280, 720),
-        tick_hz: 60,
+        tick_hz: TICK_HZ,
         vsync: std::env::var("NO_VSYNC").as_deref() != Ok("1"),
         pixel_perfect: false,
     })
@@ -266,8 +338,10 @@ fn main() -> Result<(), engine::EventLoopError> {
 
 #[cfg(test)]
 mod tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
     use engine::ElementState::{Pressed, Released};
-    use engine::{Quat, StaticWorld, Triangle};
+    use engine::{Quat, Sprite, StaticWorld, Triangle, text};
 
     use super::*;
     use crate::layout::ROAD;
@@ -381,7 +455,7 @@ mod tests {
         let origin = g.car.transform(1.0).transform_point3(Vec3::ZERO);
         assert!(across(origin, start.pos) < 0.05, "{origin}");
         assert!(origin.y.abs() < 0.2, "{origin}");
-        assert_eq!((g.off_road, g.upside_down, g.next), (0, 0, 0));
+        assert_eq!((g.off_road, g.upside_down, g.race.next), (0, 0, 0));
     }
 
     /// Газ до пересечения первого чекпоинта; дольше 3 с — паника.
@@ -389,7 +463,7 @@ mod tests {
         ctx.input.on_key(KeyCode::KeyW, Pressed, false);
         for _ in 0..3 * 60 {
             tick(g, ctx);
-            if g.next == 1 {
+            if g.race.next == 1 {
                 ctx.input.on_key(KeyCode::KeyW, Released, false);
                 return;
             }
@@ -409,12 +483,12 @@ mod tests {
         assert!(placed_at(&g, g.start));
 
         cross_start_line(&mut g, &mut ctx);
-        let first = Spawn::at(&g.checkpoints[0]);
+        let first = Spawn::at(&g.race.checkpoints[0]);
         assert_eq!(g.respawn, first);
         ticks(&mut g, &mut ctx, 30);
         tap(&mut g, &mut ctx, KeyCode::KeyR);
         assert!(placed_at(&g, first));
-        assert_eq!(g.next, 1);
+        assert_eq!(g.race.next, 1);
         let eye = g
             .chase
             .eye
@@ -439,11 +513,11 @@ mod tests {
         assert_eq!(g.car.config.model, "race");
 
         cross_start_line(&mut g, &mut ctx);
-        assert!(g.started);
+        assert!(g.race.started);
         tap(&mut g, &mut ctx, KeyCode::Tab);
         assert_eq!(g.car.config.model, "race");
         assert!(!placed_at(&g, g.start), "рестартовала");
-        assert_eq!(g.next, 1);
+        assert_eq!(g.race.next, 1);
     }
 
     #[test]
@@ -525,5 +599,99 @@ mod tests {
         assert!(scene.sun.is_some_and(|s| s.dir.y < 0.0));
         assert!(scene.fog.end <= scene.camera.far);
         assert_eq!(ctx.gfx.clear_color, scene.fog.color);
+    }
+
+    fn hud(ctx: &Context) -> Vec<Sprite> {
+        (ctx.gfx.sprites.iter())
+            .filter(|s| s.layer == HUD_LAYER)
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn hud_shows_lap_best_speed_and_wrong_way() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        (g.race.laps, g.race.ticks, g.race.best) = (1, 150, Some(61 * 60 + 30));
+        g.car.body.vel = vec3(0.0, 0.0, -25.0);
+        g.draw(&mut ctx, 1.0);
+        assert_eq!(
+            ctx.gfx.camera,
+            Camera2D {
+                center: Vec2::ZERO,
+                size: VIEW
+            }
+        );
+        let driving = hud(&ctx);
+        ctx.gfx.sprites.clear();
+        g.race.best = None;
+        g.race.wrong = 2 * TICK_HZ;
+        g.draw(&mut ctx, 1.0);
+        let wrong = hud(&ctx);
+
+        let font = ctx.assets.font(g.font);
+        assert!(font.atlas.is_some(), "шрифт не загрузился");
+        let text = |s, pos| text::layout(font, s, pos, 1.0, Color::WHITE, HUD_LAYER);
+        let speed = " 90 KM/H";
+        let right = vec2(628.0 - text_width(font, speed), -348.0);
+        let want: Vec<_> = text("LAP 2 0:02.50\nBEST  1:01.50", vec2(-628.0, 324.0))
+            .chain(text(speed, right))
+            .collect();
+        assert_eq!(driving, want);
+        let want: Vec<_> = text("LAP 2 0:02.50\nBEST  -:--.--", vec2(-628.0, 324.0))
+            .chain(text(speed, right))
+            .chain(text(
+                WRONG_WAY,
+                vec2(-text_width(font, WRONG_WAY) / 2.0, 180.0),
+            ))
+            .collect();
+        assert_eq!(wrong, want);
+    }
+
+    #[test]
+    fn crossing_start_line_starts_lap_clock() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.race.ticks, 0);
+        cross_start_line(&mut g, &mut ctx);
+        ticks(&mut g, &mut ctx, 10);
+        assert_eq!(g.race.ticks, 10);
+    }
+
+    fn harness(g: Racing) -> Harness<'static, Racing> {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(800.0, 400.0))
+            .build_ui_state(|ui, g: &mut Racing| g.ui(ui.ctx()), g);
+        h.run();
+        h
+    }
+
+    #[test]
+    fn track_error_shows_in_window_with_cyrillic_font() {
+        let mut ctx = Context::default();
+        let h = harness(racing(&mut ctx));
+        assert!(h.query_by_label("Ошибка трассы").is_none());
+        let mut g = racing(&mut ctx);
+        let error = "строка 3: неизвестная деталь \"x\"";
+        g.error = Some(error.into());
+        let h = harness(g);
+        let bottom = h.get_by_label(error).rect().max.y;
+        assert!(bottom < 400.0 - HUD_MARGIN, "{bottom}");
+        assert!(
+            h.ctx
+                .fonts(|f| f.definitions().font_data.contains_key(FONT_PATH))
+        );
+    }
+
+    #[test]
+    fn text_width_sums_advances() {
+        let mut assets = Assets::default();
+        let font = assets.load_font(FONT_PATH, HUD_PX);
+        let font = assets.font(font);
+        let one = text_width(font, "0");
+        assert_eq!(one, font.glyph('0').expect("0").advance);
+        assert!(one > 1.0);
+        assert_eq!(text_width(font, "0\u{e9}0"), 3.0 * one);
     }
 }

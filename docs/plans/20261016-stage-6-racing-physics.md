@@ -425,15 +425,15 @@
 - Create: `games/racing/src/race.rs`
 - Modify: `games/racing/src/main.rs`
 
-- [ ] тесты:
+- [x] тесты:
   - круг засчитан только по порядку чекпоинтов;
   - срезка мимо чекпоинта не засчитана;
   - время круга по тикам;
   - лучший обновляется только меньшим;
   - против цепочки дольше 1 с — «не туда»;
   - HUD: км/ч, тексты круга, лучшего и ошибки трассы.
-- [ ] `race.rs`, HUD шрифтом `assets/fonts/JetBrainsMono-Regular.ttf`
-- [ ] мутанты по файлам, `make cov`, `make check`
+- [x] `race.rs`, HUD шрифтом `assets/fonts/JetBrainsMono-Regular.ttf`
+- [x] мутанты по файлам, `make cov`, `make check`
 
 ### Task 17: Стартовые трассы, перезагрузка, автопилот
 

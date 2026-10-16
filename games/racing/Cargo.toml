@@ -9,5 +9,8 @@ engine.workspace = true
 serde.workspace = true
 toml.workspace = true
 
+[dev-dependencies]
+egui_kittest.workspace = true
+
 [lints]
 workspace = true
