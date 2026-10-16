@@ -34,7 +34,31 @@ pub struct Pose {
     pub globals: Vec<Mat4>,
     /// По скину: `globals[сустав] × IBM` в порядке `Skin::joints`.
     pub palettes: Vec<Vec<Mat4>>,
-    locals: Vec<(Vec3, Quat, Vec3)>,
+    locals: Vec<Trs>,
+}
+
+impl Pose {
+    /// Локальный TRS узла для ручной правки; `globals` обновит `Model::recompose`.
+    ///
+    /// # Panics
+    /// Если `node` вне узлов позы, в том числе у позы, ещё не заполненной моделью.
+    pub fn local_mut(&mut self, node: usize) -> &mut Trs {
+        let len = self.locals.len();
+        self.locals
+            .get_mut(node)
+            .unwrap_or_else(|| panic!("node {node} out of pose with {len} nodes"))
+    }
+}
+
+/// Локальные перенос, поворот и масштаб узла.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Trs {
+    /// Перенос.
+    pub translation: Vec3,
+    /// Поворот.
+    pub rotation: Quat,
+    /// Масштаб.
+    pub scale: Vec3,
 }
 
 /// Узел иерархии с локальным TRS.
@@ -155,7 +179,7 @@ impl Model {
         };
         let mut rest = Pose::default();
         rest.locals.extend(model.nodes.iter().map(Node::trs));
-        model.compose(&mut rest);
+        model.recompose(&mut rest);
         model.rest = rest;
         Ok(model)
     }
@@ -171,7 +195,11 @@ impl Model {
         pose.locals.clear();
         pose.locals.extend(self.nodes.iter().map(Node::trs));
         for c in &a.channels {
-            let (translation, rotation, scale) = &mut pose.locals[c.node];
+            let Trs {
+                translation,
+                rotation,
+                scale,
+            } = &mut pose.locals[c.node];
             match &c.values {
                 Values::Translation(v) => {
                     *translation = sample(&c.times, v, t, Vec3::lerp).unwrap_or(*translation);
@@ -182,16 +210,16 @@ impl Model {
                 Values::Scale(v) => *scale = sample(&c.times, v, t, Vec3::lerp).unwrap_or(*scale),
             }
         }
-        self.compose(pose);
+        self.recompose(pose);
     }
 
-    /// Глобальные матрицы и палитры из `pose.locals`.
-    fn compose(&self, pose: &mut Pose) {
+    /// Глобальные матрицы и палитры из локальных TRS позы этой модели после `Pose::local_mut`.
+    pub fn recompose(&self, pose: &mut Pose) {
         pose.globals.clear();
         pose.globals.extend(
             pose.locals
                 .iter()
-                .map(|&(t, r, s)| Mat4::from_scale_rotation_translation(s, r, t)),
+                .map(|l| Mat4::from_scale_rotation_translation(l.scale, l.rotation, l.translation)),
         );
         for &i in &self.order {
             if let Some(p) = self.nodes[i].parent {
@@ -212,8 +240,12 @@ impl Model {
 }
 
 impl Node {
-    fn trs(&self) -> (Vec3, Quat, Vec3) {
-        (self.translation, self.rotation, self.scale)
+    fn trs(&self) -> Trs {
+        Trs {
+            translation: self.translation,
+            rotation: self.rotation,
+            scale: self.scale,
+        }
     }
 }
 
@@ -656,6 +688,59 @@ pub(crate) mod tests {
         let z = pose.globals[0].transform_vector3(Vec3::Z);
         let expected = Quat::from_rotation_y(-FRAC_PI_2 / 2.0) * Vec3::Z;
         assert!(z.abs_diff_eq(expected, 1e-5), "{z}");
+    }
+
+    #[test]
+    fn turned_wheel_changes_only_its_global() {
+        let car = load("racing/race.glb");
+        let wheel = car
+            .nodes
+            .iter()
+            .position(|n| n.name == "wheel-front-left")
+            .unwrap();
+        let turn = Quat::from_rotation_x(1.0);
+        let mut pose = car.rest.clone();
+        pose.local_mut(wheel).rotation = turn;
+        car.recompose(&mut pose);
+        for (i, (got, rest)) in pose.globals.iter().zip(&car.rest.globals).enumerate() {
+            if i == wheel {
+                let at = Mat4::from_rotation_translation(turn, car.nodes[i].translation);
+                assert!(got.abs_diff_eq(at, 1e-6), "{got}");
+            } else {
+                assert_eq!(got, rest, "{}", car.nodes[i].name);
+            }
+        }
+    }
+
+    #[test]
+    fn manual_turn_over_animation_moves_children_and_keeps_channels() {
+        let model = Model::new(
+            vec![
+                node(None, Vec3::ZERO),
+                node(Some(0), Vec3::X),
+                node(None, Vec3::ZERO),
+            ],
+            Vec::new(),
+            vec![animation(vec![Channel {
+                node: 2,
+                times: vec![0.0],
+                values: Values::Translation(vec![Vec3::Y * 3.0]),
+            }])],
+        )
+        .unwrap();
+        let mut pose = Pose::default();
+        model.pose(0, 0.0, false, &mut pose);
+        pose.local_mut(0).rotation = Quat::from_rotation_y(FRAC_PI_2);
+        model.recompose(&mut pose);
+        let child = pose.globals[1].transform_point3(Vec3::ZERO);
+        assert!(child.abs_diff_eq(-Vec3::Z, 1e-6), "{child}");
+        assert_eq!(pose.globals[2], Mat4::from_translation(Vec3::Y * 3.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "node 5 out of pose with 5 nodes")]
+    fn local_mut_out_of_range_panics() {
+        load("racing/race.glb").rest.clone().local_mut(5);
     }
 
     #[test]

@@ -225,9 +225,9 @@
 **Files:**
 - Modify: `engine/src/model.rs`, `engine/src/lib.rs`
 
-- [ ] тесты: поворот колеса `race.glb` через `local_mut` + `recompose` поверх `rest` меняет `globals` только у колеса и его детей; поверх `pose(anim)` каналы анимации сохраняются; узел вне диапазона — паника с текстом
-- [ ] `Trs`, `Pose::local_mut`, `Model::recompose`
-- [ ] мутанты по файлу, `make cov`, `make check`
+- [x] тесты: поворот колеса `race.glb` через `local_mut` + `recompose` поверх `rest` меняет `globals` только у колеса и его детей; поверх `pose(anim)` каналы анимации сохраняются; узел вне диапазона — паника с текстом
+- [x] `Trs`, `Pose::local_mut`, `Model::recompose`
+- [x] мутанты по файлу, `make cov`, `make check`
 
 ### Task 4: Габариты и CPU-геометрия
 
