@@ -22,4 +22,9 @@ exclude_re = [
     "replace < with <= in Racing::auto_respawn$",
     # Нулевая оставшаяся глубина прибавляет к сдвигу ноль.
     "replace > with >= in solve_contacts$",
+    # Audio в тестах игры немой: голос не стартует, и Set со Stop недостижимы; решение — в проверенном command.
+    " in Racing::update_sound$",
+    "replace Racing::update_sound with \\(\\)$",
+    # Обороты ровно на пороге переключения — граница нулевой меры.
+    "replace (> with >=|< with <=) in Rpm::tick$",
 ]

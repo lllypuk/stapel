@@ -3,6 +3,7 @@ mod autopilot;
 mod camera;
 mod car;
 mod car_config;
+mod engine_sound;
 mod garage;
 mod ghost;
 mod layout;
@@ -18,13 +19,14 @@ use std::path::{Path, PathBuf};
 
 use engine::{
     Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Fog, Font, FontData,
-    Game, Gfx, Handle, IVec2, Input, KeyCode, ModelDraw, Pose, Scene, StaticWorld, Vec2, Vec3,
-    Watcher, egui, vec2, vec3,
+    Game, Gfx, Handle, IVec2, Input, KeyCode, LoopId, ModelDraw, Pose, Scene, Sound, StaticWorld,
+    Vec2, Vec3, Watcher, egui, vec2, vec3,
 };
 
 use crate::camera::Chase;
 use crate::car::{Car, Controls, SUBSTEP, SUBSTEPS};
 use crate::car_config::{CarConfig, TUNING};
+use crate::engine_sound::{Rpm, SoundCmd};
 use crate::garage::{Garage, GarageCmd};
 use crate::ghost::{Ghost, Recorder};
 use crate::layout::{Layout, Models};
@@ -191,6 +193,9 @@ struct Racing {
     race: Race,
     recorder: Recorder,
     ghost: Ghost,
+    motor: Handle<Sound>,
+    rpm: Rpm,
+    voice: Option<LoopId>,
     road_cells: HashSet<(IVec2, u32)>,
     /// Посреди последней клетки `roadStart` носом по цепочке.
     start: Spawn,
@@ -234,6 +239,9 @@ impl Racing {
             race: Race::new(&track, checkpoints),
             recorder: Recorder::default(),
             ghost: Ghost::default(),
+            motor: assets.add_sound(engine_sound::synth(assets.sample_rate())),
+            rpm: Rpm::default(),
+            voice: None,
             start,
             respawn: start,
             upside_down: 0,
@@ -360,6 +368,24 @@ impl Racing {
         self.drive(controls(&ctx.input));
     }
 
+    fn update_sound(&mut self, ctx: &mut Context) {
+        match (
+            engine_sound::command(self.mode, &self.rpm, self.voice.is_some()),
+            self.voice,
+        ) {
+            // Голос стартует с `rate = 1`: тишина до первого `Set` в следующем тике.
+            (SoundCmd::Start, _) => {
+                self.voice = ctx.audio.start_loop(ctx.assets.sound(self.motor), 0.0);
+            }
+            (SoundCmd::Set(rate, volume), Some(id)) => ctx.audio.set_loop(id, rate, volume),
+            (SoundCmd::Stop, Some(id)) => {
+                ctx.audio.stop_loop(id);
+                self.voice = None;
+            }
+            _ => {}
+        }
+    }
+
     /// Свет и туман общие у заезда и гаража.
     fn scene(&self, camera: Camera3D, models: Vec<ModelDraw>) -> Scene {
         Scene {
@@ -477,6 +503,9 @@ impl Racing {
     /// Тик машины с управлением `controls`: чекпоинты, респаун, запись круга, камера.
     fn drive(&mut self, controls: Controls) {
         self.car.tick(&self.layout.world, controls);
+        let speed = self.car.forward_speed().abs() / self.car.config.max_speed;
+        let grounded = self.car.wheels.iter().any(|w| w.ground.is_some());
+        self.rpm.tick(speed, controls.throttle, grounded);
         let pass = self.pass_checkpoint();
         self.auto_respawn();
         // Сэмпл — после респауна: в кадре машина уже на новом месте.
@@ -519,6 +548,7 @@ impl Game for Racing {
             Mode::Garage => self.update_garage(ctx),
             Mode::Race => self.update_race(ctx),
         }
+        self.update_sound(ctx);
     }
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
@@ -681,6 +711,21 @@ mod tests {
             names,
             ["hatchback-sports", "race", "race-future", "sedan-sports"]
         );
+    }
+
+    #[test]
+    fn motor_revs_with_gas_and_mute_start_is_retried() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        ticks(&mut g, &mut ctx, 30);
+        let idle = g.rpm.rate();
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+        ticks(&mut g, &mut ctx, 60);
+        assert!(g.rpm.rate() > 2.0 * idle, "{} vs {idle}", g.rpm.rate());
+        assert!(g.rpm.rate() < engine::audio::MAX_RATE, "{}", g.rpm.rate());
+        assert_eq!(g.voice, None);
+        let sound = engine_sound::command(g.mode, &g.rpm, g.voice.is_some());
+        assert_eq!(sound, SoundCmd::Start);
     }
 
     #[test]

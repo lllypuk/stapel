@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use rtrb::{Producer, RingBuffer};
 
+pub use mixer::MAX_RATE;
 use mixer::{Command, Counters, LOOPS, Mixer};
 
 /// Команд в очереди от игры к аудиопотоку.

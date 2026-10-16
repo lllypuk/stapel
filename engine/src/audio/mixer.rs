@@ -10,7 +10,7 @@ const VOICES: usize = 32;
 /// Длящихся голосов, отдельно от эффектов.
 pub(crate) const LOOPS: usize = 4;
 /// Предел скорости проигрывания длящегося голоса.
-pub(crate) const MAX_RATE: f32 = 4.0;
+pub const MAX_RATE: f32 = 4.0;
 /// Длина fade-in и fade-out в аудиофреймах.
 const FADE: usize = 64;
 /// Команд из очереди за один `render`.

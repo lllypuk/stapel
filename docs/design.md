@@ -184,6 +184,7 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 - Огибающая — в аудиофреймах, одна на L и R: по сэмплам каналы затухали бы со сдвигом. У звука короче двух огибающих fade-in и fade-out не складываются, берётся минимум, иначе пик выше громкости. → тест `mixer::fade_ramps_64_frames_equally_in_both_channels`
 - Потерянный при полной очереди `Stop` — вечный мотор. `Stop` и последний `Set` слота ждут в `Audio` и досылаются в начале каждого вызова и в `flush` раз в кадр. `LoopId` несёт поколение слота: опоздавшие `Set` и `Stop` прежнего голоса микшер не применяет к новому. → тесты `audio::stop_waits_out_full_queue_until_flush`, `audio::stop_waits_out_full_queue_until_next_call`, `audio::set_loop_coalesces_to_last_while_queue_is_full`, `mixer::loop_commands_of_other_generation_or_slot_are_ignored`; вызов `flush` в `app.rs` — ревью
 - На стыке цикла музыки огибающей нет: затухание к стыку слышно как провал раз за круг. Шов без щелчка — дело файла (loop-ready). → тест `mixer::music_loops_with_fade_in_only_on_first_start`; шов — слух
+- Гармоника цикла мотора `racing` выше `sample_rate / 2 / MAX_RATE` на большом `rate` уходит за Найквист и заворачивается в нестройный писк без ошибки. Синтез берёт только гармоники ниже, а оборот — целым числом отсчётов, иначе шов цикла даёт утечку по всему спектру. → тест `engine_sound::synth_has_no_harmonics_that_alias_at_max_rate`
 
 ### Игры
 
