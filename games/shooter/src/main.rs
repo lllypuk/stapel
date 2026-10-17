@@ -1,3 +1,5 @@
+#[cfg_attr(not(test), expect(dead_code, reason = "бот играет только в тестах"))]
+mod bot;
 mod enemy;
 mod map;
 mod obstacle;
@@ -776,6 +778,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::bot::{Bot, press};
     use crate::enemy::{State, stats};
     use crate::player::{EYE, SENSITIVITY, SPEED};
 
@@ -1675,5 +1678,99 @@ mod tests {
         let s = scene(&ctx);
         assert_eq!((s.ambient, s.fog, s.sun), (AMBIENT, FOG, Some(SUN)));
         assert_eq!(ctx.gfx.clear_color, FOG.color);
+    }
+
+    /// Тики бота до победы или смерти, не дольше `secs`; выстрелы каждого оружия.
+    fn run_bot(g: &mut Shooter, ctx: &mut Context, secs: u32) -> [u32; 2] {
+        let mut bot = Bot::default();
+        let mut shots = [0; 2];
+        ctx.grabbed = true;
+        for _ in 0..TICK_HZ * secs {
+            if g.level.won || !g.level.player.alive() {
+                break;
+            }
+            press(
+                bot.act(&g.level, g.map.exit),
+                g.level.player.yaw,
+                &mut ctx.input,
+            );
+            tick(g, ctx);
+            for &(sfx, _) in &g.level.sounds {
+                match sfx {
+                    Sfx::Blaster => shots[0] += 1,
+                    Sfx::Launcher => shots[1] += 1,
+                    _ => {}
+                }
+            }
+        }
+        shots
+    }
+
+    #[test]
+    fn bot_clears_level01_with_both_weapons() {
+        let (mut g, mut ctx) = shooter(LEVEL01);
+        // Без бластера с начала и с тремя снарядами бот обязан менять оружие дважды.
+        g.level.arsenal.weapons[0].ammo = 0;
+        g.level.arsenal.weapons[1].ammo = 3;
+        let start = g.level.arsenal.weapons.map(|w| w.ammo);
+        let shots = run_bot(&mut g, &mut ctx, 90);
+        let l = &g.level;
+        assert!(l.won, "hp {} в {:?}", l.player.hp, l.player.pos);
+        assert!(l.enemies.iter().all(|e| e.state == State::Dead));
+        assert!(l.key && l.doors.iter().all(|d| d.opened.is_some()));
+        let packs = u32::try_from(g.map.ammo.len() - l.ammo.len()).unwrap();
+        assert!(packs > 0);
+        for (w, weapon) in l.arsenal.weapons.iter().enumerate() {
+            assert!(shots[w] > 0, "оружие {w} не стреляло");
+            let left = start[w] + packs * AMMO_PACK[w] - shots[w];
+            assert_eq!(weapon.ammo, left, "оружие {w}: выстрел — патрон");
+        }
+    }
+
+    #[test]
+    fn idle_player_near_enemies_dies_and_enter_restarts() {
+        let (mut g, mut ctx) = shooter("##########\n#P..f.s.X#\n##########\n");
+        for _ in 0..TICK_HZ * 20 {
+            tick(&mut g, &mut ctx);
+        }
+        assert!(!g.level.player.alive());
+        assert_eq!(g.level.player.pos, vec2(1.5, 1.5));
+        ctx.input.on_key(KeyCode::Enter, Pressed, false);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.level, Level::new(&g.map, &g.models));
+    }
+
+    #[test]
+    fn closed_door_stops_sight_path_shot_and_projectile() {
+        let (mut g, mut ctx) = shooter("##########\n#P...Dm.X#\n#k...#####\n##########\n");
+        let door = 5.0;
+        g.level.player.yaw = Dir::E.yaw();
+        ctx.grabbed = true;
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        for key in [KeyCode::Digit1, KeyCode::Digit2] {
+            ctx.input.on_key(key, Pressed, false);
+            for _ in 0..TICK_HZ {
+                tick(&mut g, &mut ctx);
+                assert!(g.level.projectiles.iter().all(|p| p.pos.x <= door));
+            }
+            ctx.input.on_key(key, Released, false);
+        }
+        let start = Arsenal::new(g.models.blaster, g.models.launcher);
+        for (w, s) in g.level.arsenal.weapons.iter().zip(&start.weapons) {
+            assert!(w.ammo < s.ammo, "{:?} не стрелял", w.kind);
+        }
+        let e = &g.level.enemies[0];
+        assert_eq!(
+            (e.state, e.hp),
+            (State::Sleep, stats(EnemyKind::Brawler).hp)
+        );
+
+        g.level.enemies[0].hurt(1);
+        for _ in 0..TICK_HZ * 5 {
+            tick(&mut g, &mut ctx);
+            assert!(g.level.enemies[0].pos.x > door + 1.0);
+        }
+        assert_eq!(g.level.enemies[0].state, State::Chase);
+        assert_eq!(g.level.player.hp, MAX_HP);
     }
 }
