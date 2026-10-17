@@ -164,30 +164,135 @@ yaw = 165.0
 
 [[decor]]
 piece = "barrierWall"
-pos = [0.30, 0.0, 10.00]
+pos = [0.3, 0.0, 10.0]
 yaw = 90.0
 
 [[decor]]
 piece = "barrierWall"
-pos = [51.70, 0.0, 10.00]
+pos = [51.7, 0.0, 10.0]
 yaw = 90.0
 
 [[decor]]
 piece = "treeLarge"
-pos = [10.00, 0.0, 10.00]
+pos = [10.0, 0.0, 10.0]
 yaw = 70.0
 
 [[decor]]
 piece = "treeLarge"
-pos = [22.00, 0.0, 10.00]
+pos = [22.0, 0.0, 10.0]
 yaw = 154.0
 
 [[decor]]
 piece = "treeLarge"
-pos = [34.00, 0.0, 10.00]
+pos = [34.0, 0.0, 10.0]
 yaw = 238.0
 
 [[decor]]
 piece = "grandStand"
-pos = [30.00, 0.0, 23.50]
+pos = [30.0, 0.0, 23.5]
 yaw = 0.0
+
+[[decor]]
+piece = "barrierRed"
+pos = [39.988335, 0.0, 20.23234]
+yaw = 0.0
+
+[[decor]]
+piece = "barrierRed"
+pos = [41.447414, 0.0, 23.463924]
+yaw = 0.0
+
+[[decor]]
+piece = "barrierRed"
+pos = [43.49566, 0.0, 20.148464]
+yaw = 0.0
+
+[[decor]]
+piece = "barrierRed"
+pos = [42.42354, 0.0, 20.148464]
+yaw = 0.0
+
+[[decor]]
+piece = "barrierRed"
+pos = [41.25126, 0.0, 20.434965]
+yaw = 0.0
+
+[[decor]]
+piece = "barrierRed"
+pos = [38.574593, 0.0, 20.2398]
+yaw = 0.0
+
+[[decor]]
+piece = "barrierRed"
+pos = [37.13815, 0.0, 20.209946]
+yaw = 0.0
+
+[[decor]]
+piece = "treeLarge"
+pos = [24.826633, 0.0, 14.526069]
+yaw = 0.0
+
+[[decor]]
+piece = "treeLarge"
+pos = [38.775093, 0.0, 14.442131]
+yaw = 0.0
+
+[[decor]]
+piece = "treeSmall"
+pos = [16.82986, 0.0, 12.415635]
+yaw = 0.0
+
+[[decor]]
+piece = "treeSmall"
+pos = [17.081888, 0.0, 8.823692]
+yaw = 0.0
+
+[[decor]]
+piece = "barrierWhite"
+pos = [27.667011, 0.0, 4.435972]
+yaw = 0.0
+
+[[decor]]
+piece = "cone"
+pos = [29.561882, 0.0, 8.62491]
+yaw = 0.0
+
+[[decor]]
+piece = "cone"
+pos = [30.985945, 0.0, 11.967514]
+yaw = 0.0
+
+[[decor]]
+piece = "cone"
+pos = [21.301258, -0.040000916, 19.787916]
+yaw = 0.0
+
+[[decor]]
+piece = "cone"
+pos = [24.97839, -0.040000916, 16.281948]
+yaw = 0.0
+
+[[decor]]
+piece = "cone"
+pos = [32.737907, 0.040002823, 19.627535]
+yaw = 0.0
+
+[[decor]]
+piece = "rail"
+pos = [21.73682, 0.0, 15.923026]
+yaw = 0.0
+
+[[decor]]
+piece = "rail"
+pos = [23.96896, -0.040000916, 19.69071]
+yaw = 0.0
+
+[[decor]]
+piece = "grandStand"
+pos = [27.692123, 0.0, 13.910868]
+yaw = 0.0
+
+[[decor]]
+piece = "grandStand"
+pos = [24.12469, 0.0, 21.812428]
+yaw = 180.0
