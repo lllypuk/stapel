@@ -32,6 +32,6 @@ check:
 cov:
 	cargo llvm-cov --workspace --ignore-filename-regex 'engine/src/(app|renderer|audio/device)\.rs' --fail-under-lines 98 -- --include-ignored
 
-# Исключения и причины — .cargo/mutants.toml.
+# Исключения и причины — .cargo/mutants.toml. Вполсилы: 8 сборок, 4×2 тестовых потока, nice — машина остаётся отзывчивой.
 mutants:
-	cargo mutants -j 4
+	RUST_TEST_THREADS=2 nice -n 19 cargo mutants -j 4 --jobserver-tasks 8
