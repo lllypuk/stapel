@@ -65,6 +65,15 @@ fn nanos(d: Duration) -> u64 {
     u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
 }
 
+/// Громкость без NaN, ∞ и знака: NaN в общем буфере глушит все голоса.
+fn gain(volume: f32) -> f32 {
+    if volume.is_finite() {
+        volume.max(0.0)
+    } else {
+        0.0
+    }
+}
+
 struct Voice {
     frames: Arc<[f32]>,
     pos: usize,
@@ -80,7 +89,7 @@ impl Voice {
             frames,
             pos: 0,
             age: 0,
-            volume,
+            volume: gain(volume),
             looping,
         })
     }
@@ -132,9 +141,9 @@ impl LoopVoice {
             generation,
             phase: 0.0,
             rate: 1.0,
-            volume,
+            volume: gain(volume),
             target_rate: 1.0,
-            target_volume: volume,
+            target_volume: gain(volume),
             fade: 0,
             stopping: false,
         })
@@ -276,7 +285,7 @@ impl Mixer {
                     } else {
                         rate.clamp(0.0, MAX_RATE)
                     };
-                    voice.target_volume = volume;
+                    voice.target_volume = gain(volume);
                 }
             }
             Command::LoopStop { slot, generation } => {
@@ -628,6 +637,34 @@ mod tests {
                 mixer.loops[0].as_ref().map(|v| v.rate),
                 Some(expected),
                 "{rate}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_finite_or_negative_volume_is_silence_and_does_not_stick() {
+        let (mut tx, mut mixer) = setup();
+        let sound = constant(64, 0.5, 0.5);
+        for volume in [f32::NAN, f32::INFINITY, -1.0] {
+            play(&mut tx, &sound, volume);
+            let command = Command::LoopStart {
+                slot: 0,
+                generation: 1,
+                frames: sound.clone(),
+                volume,
+            };
+            assert!(tx.push(command).is_ok());
+            assert_eq!(render(&mut mixer, 32), [0.0; 64], "{volume}");
+            loop_set(&mut tx, 0, 1, 1.0, 1.0);
+            render(&mut mixer, 32);
+            loop_set(&mut tx, 0, 1, 1.0, volume);
+            render(&mut mixer, 32);
+            loop_set(&mut tx, 0, 1, 1.0, 1.0);
+            render(&mut mixer, 2 * FADE);
+            let out = render(&mut mixer, 32);
+            assert!(
+                out.iter().all(|s| s.is_finite() && *s > 0.0),
+                "{volume}: {out:?}"
             );
         }
     }
