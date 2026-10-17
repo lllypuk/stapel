@@ -1,8 +1,3 @@
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "врагов подключает тик игры следующей задачи")
-)]
-
 use engine::{IVec2, Mat3, Mat4, Model, Pose, Quat, Vec2, Vec3, vec3};
 
 use crate::map::EnemyKind;

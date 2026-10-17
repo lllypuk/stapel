@@ -1,8 +1,3 @@
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "оружие подключает тик игры следующей задачи")
-)]
-
 use engine::{Handle, Input, KeyCode, Model, Vec2, Vec3};
 
 use crate::obstacle::Obstacles;
