@@ -1503,4 +1503,48 @@ mod tests {
         let empty = frame(Box::new(move |_| layer(fov, 0.05)(Vec::new())));
         assert!(none == empty, "empty layer changed the frame");
     }
+
+    #[test]
+    fn viewmodel_skin_leaves_world_skin_palette() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let frame = |with_layer: bool| {
+            let mut assets = Assets::default();
+            let orc = assets.load_model(crate::model::tests::testdata("character-orc.glb"));
+            let model = assets.model(orc);
+            let mut collapsed = model.rest.clone();
+            for node in 0..model.nodes.len() {
+                collapsed.local_mut(node).scale = Vec3::ZERO;
+            }
+            model.recompose(&mut collapsed);
+            let draw = |z: f32, pose| crate::ModelDraw {
+                model: orc,
+                transform: Mat4::from_translation(vec3(0.0, 0.0, z)),
+                pose,
+                tint: Color::BLACK,
+            };
+            // Сжатый в точку орк слоя позади камеры виден только через общую с миром палитру.
+            let viewmodel = with_layer.then(|| Viewmodel {
+                fov_y: Camera3D::default().fov_y,
+                near: 0.05,
+                models: vec![draw(2.0, Some(collapsed))],
+            });
+            let mut gfx = gfx(Scene {
+                ambient: Color::WHITE,
+                camera: Camera3D {
+                    pos: vec3(0.0, 0.4, 0.0),
+                    ..Default::default()
+                },
+                models: vec![draw(-2.0, None)],
+                viewmodel,
+                ..Default::default()
+            });
+            gfx.clear_color = Color::WHITE;
+            render(&device, &queue, &mut assets, &gfx)
+        };
+        let base = frame(false);
+        assert_pixel(&base, "world orc", CENTER, [0, 0, 0]);
+        assert!(frame(true) == base, "layer skin changed the world orc");
+    }
 }

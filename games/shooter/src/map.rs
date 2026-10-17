@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), expect(dead_code, reason = "карту читают следующие задачи"))]
-
 use std::f32::consts::{FRAC_PI_2, PI};
 use std::fmt;
 

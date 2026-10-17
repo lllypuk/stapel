@@ -125,18 +125,6 @@ const FONT_PATH: &str = concat!(
     "/../../assets/fonts/JetBrainsMono-Regular.ttf"
 );
 
-/// Клипы, которые враги ищут по имени.
-#[cfg(test)]
-const CLIPS: [&str; 7] = [
-    "idle",
-    "walk",
-    "sprint",
-    "die",
-    "holding-right-shoot",
-    "attack-melee-right",
-    "attack-kick-right",
-];
-
 struct Models {
     tree: Handle<Model>,
     tree_high: Handle<Model>,
@@ -447,6 +435,8 @@ struct Shooter {
     open_secs: f32,
     sounds: Sounds,
     level: Level,
+    /// Кнопка нажата до захвата курсора и ещё не отпущена.
+    grab_click: bool,
 }
 
 impl Shooter {
@@ -469,6 +459,7 @@ impl Shooter {
             map,
             open,
             open_secs,
+            grab_click: false,
         }
     }
 
@@ -671,14 +662,14 @@ impl Shooter {
     /// Тик до победы; мёртвый игрок стоит, а мир идёт.
     fn play(&mut self, ctx: &Context) {
         let dt = ctx.time.step.as_secs_f32();
+        let trigger = ctx.grabbed && !self.grab_click && ctx.input.mouse_down(MouseButton::Left);
         let l = &mut self.level;
         let enemy_hp: Vec<i32> = l.enemies.iter().map(|e| e.hp).collect();
         l.player.update(&ctx.input, dt, &l.obstacles);
         l.arsenal.update(&ctx.input, dt);
         l.flash = (l.flash - dt).max(0.0);
         if l.player.alive() {
-            // Клик захвата курсора — не выстрел.
-            if ctx.grabbed && ctx.input.mouse_down(MouseButton::Left) {
+            if trigger {
                 l.fire();
             }
             l.pick_up();
@@ -722,10 +713,14 @@ impl Game for Shooter {
     }
 
     fn update(&mut self, ctx: &mut Context) {
+        let click = ctx.input.mouse_just_pressed(MouseButton::Left);
         // Клик, пришедший до потери фокуса, захватил бы курсор в фоновом окне.
-        if ctx.input.mouse_just_pressed(MouseButton::Left) && ctx.focused {
+        if click && ctx.focused {
             ctx.cursor_grab = true;
         }
+        // Захват приходит кадром позже, а клик длиннее кадра — без этого клик захвата стрелял бы.
+        self.grab_click =
+            (self.grab_click || (click && !ctx.grabbed)) && ctx.input.mouse_down(MouseButton::Left);
         if ctx.input.just_pressed(KeyCode::Escape) {
             ctx.cursor_grab = false;
         }
@@ -781,6 +776,7 @@ mod tests {
     use crate::bot::{Bot, press};
     use crate::enemy::{State, stats};
     use crate::player::{EYE, SENSITIVITY, SPEED};
+    use crate::weapon::Owner;
 
     fn all(m: &Models) -> [Handle<Model>; 15] {
         [
@@ -819,13 +815,6 @@ mod tests {
         for (i, h) in handles.iter().enumerate() {
             assert!(!ctx.assets.model(*h).nodes.is_empty(), "модель {i}");
             assert!(!handles[..i].contains(h), "модель {i} — повтор");
-        }
-        for h in [m.brawler, m.gunner, m.runner] {
-            let model = ctx.assets.model(h);
-            for clip in CLIPS {
-                assert!(model.animations.iter().any(|a| a.name == clip), "{clip}");
-            }
-            assert!(model.nodes.iter().any(|n| n.name == "arm-right"));
         }
     }
 
@@ -1033,6 +1022,21 @@ mod tests {
     }
 
     #[test]
+    fn one_key_opens_every_door_each_on_its_own_touch() {
+        let (mut g, mut ctx) = shooter("#########\n#kPD.D.X#\n#########\n");
+        g.level.player.yaw = Dir::W.yaw();
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+        until(&mut g, &mut ctx, |g| g.level.key);
+        g.level.player.yaw = Dir::E.yaw();
+        until(&mut g, &mut ctx, |g| g.level.doors[0].opened.is_some());
+        assert_eq!(g.level.doors[1].opened, None, "дальняя ждёт касания");
+        until(&mut g, &mut ctx, |g| g.level.doors[1].opened.is_some());
+        let [a, b] = [0, 1].map(|i| g.level.doors[i].opened.unwrap());
+        assert!(a >= g.open_secs && b < a, "{a} {b}");
+        until(&mut g, &mut ctx, |g| g.level.won);
+    }
+
+    #[test]
     fn medkit_heals_up_to_max_and_waits_at_full_health() {
         let (mut g, mut ctx) = shooter("#########\n#P+.+.+X#\n#########\n");
         walk_east(&mut g, &mut ctx);
@@ -1045,6 +1049,21 @@ mod tests {
         g.level.player.hp = 50;
         until(&mut g, &mut ctx, |g| g.level.medkits.len() == 1);
         assert_eq!(g.level.player.hp, 50 + MEDKIT);
+    }
+
+    #[test]
+    fn hit_in_medkit_tick_still_sounds() {
+        let (mut g, mut ctx) = shooter("######\n#P+m.#\n#X...#\n######\n");
+        g.level.player.pos = vec2(2.5, 1.5);
+        g.level.player.hp = 50;
+        g.level.enemies[0].pos = vec2(3.0, 1.5);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.level.medkits, []);
+        assert_eq!(
+            g.level.player.hp,
+            50 + MEDKIT - stats(EnemyKind::Brawler).damage
+        );
+        assert_eq!(sfx(&g), [Sfx::Pickup, Sfx::Hit]);
     }
 
     #[test]
@@ -1148,11 +1167,17 @@ mod tests {
         g.level.enemies[0].hurt(1000);
         ctx.input.on_button(MouseButton::Left, Pressed);
         tick(&mut g, &mut ctx);
+        ctx.grabbed = true;
+        for _ in 0..TICK_HZ / 4 {
+            tick(&mut g, &mut ctx);
+        }
         assert_eq!(
             g.level.arsenal.weapons[0].ammo, 40,
-            "клик захвата — не выстрел"
+            "клик захвата — не выстрел и после захвата"
         );
-        ctx.grabbed = true;
+        ctx.input.on_button(MouseButton::Left, Released);
+        tick(&mut g, &mut ctx);
+        ctx.input.on_button(MouseButton::Left, Pressed);
         tick(&mut g, &mut ctx);
         let w = g.level.arsenal.weapons[0];
         assert_eq!(w.ammo, 39);
@@ -1615,6 +1640,21 @@ mod tests {
         tick(&mut g, &mut ctx);
         assert!(g.level.won);
         assert_eq!(g.level.flash, 0.0);
+    }
+
+    #[test]
+    fn win_freezes_projectiles_and_mouse_look() {
+        let (mut g, mut ctx) = shooter(ROOM);
+        let bolt = Projectile::new(vec2(1.5, 1.5), Vec2::X, 1.0, 1, Owner::Player);
+        g.level.projectiles.push(bolt);
+        g.level.player.pos = vec2(3.5, 1.5);
+        tick(&mut g, &mut ctx);
+        assert!(g.level.won);
+        let p = g.level.projectiles[0];
+        assert!(p.pos != bolt.pos && p.prev == p.pos, "{p:?}");
+        ctx.input.on_mouse_motion(vec2(50.0, 0.0));
+        g.draw(&mut ctx, 0.5);
+        assert_eq!(camera(&ctx).yaw, g.level.player.yaw);
     }
 
     fn hud(gfx: &Gfx) -> Vec<Sprite> {

@@ -256,9 +256,10 @@ mod tests {
             weapon: Some(1),
         };
         press(action, 0.25, &mut input);
-        let mut player = Player::new(Vec2::ZERO, 0.25);
-        player.yaw -= input.mouse_delta().x * SENSITIVITY;
-        assert!(near(player.yaw, 1.0));
+        let mut l = level("#####\n#P.X#\n#####\n");
+        l.player.yaw = 0.25;
+        l.player.update(&input, 0.0, &l.obstacles);
+        assert!(near(l.player.yaw, 1.0));
         assert_eq!(input.mouse_delta().y, 0.0);
         assert!(input.is_down(KeyCode::KeyW) && input.mouse_down(MouseButton::Left));
         assert!(input.just_pressed(KeyCode::Digit2) && !input.is_down(KeyCode::Digit1));
