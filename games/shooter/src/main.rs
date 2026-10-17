@@ -1,11 +1,16 @@
 mod map;
 mod obstacle;
+mod player;
 
 use std::fs;
 
-use engine::{Aabb3, Assets, Config, Context, Game, Handle, Mat4, Model, Scene, Vec3};
+use engine::{
+    Aabb3, Assets, Config, Context, Game, Handle, KeyCode, Mat4, Model, MouseButton, Scene, Vec3,
+};
 
 use crate::map::Map;
+use crate::obstacle::Obstacles;
+use crate::player::Player;
 
 const TICK_HZ: u32 = 60;
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
@@ -13,7 +18,6 @@ const LEVEL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/levels/level01.
 #[cfg(test)]
 const LEVEL01: &str = include_str!("../assets/levels/level01.txt");
 /// Сторона клетки карты, м.
-#[cfg_attr(not(test), expect(dead_code, reason = "карта — в следующих задачах"))]
 const CELL: f32 = 2.0;
 /// Единица Mini Forest — клетка.
 #[cfg_attr(not(test), expect(dead_code, reason = "сцена — в следующих задачах"))]
@@ -86,23 +90,47 @@ fn standing(model: &Model, scale: f32) -> Mat4 {
 struct Shooter {
     #[cfg_attr(not(test), expect(dead_code, reason = "сцена — в следующих задачах"))]
     models: Models,
-    #[cfg_attr(not(test), expect(dead_code, reason = "карту читают следующие задачи"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "рестарт — в следующих задачах"))]
     map: Map,
+    obstacles: Obstacles,
+    player: Player,
+}
+
+impl Shooter {
+    fn new(map: Map, assets: &mut Assets) -> Self {
+        Self {
+            models: Models::load(assets),
+            obstacles: Obstacles::new(&map),
+            player: Player::new(map.player.as_vec2() + 0.5, map.facing.yaw()),
+            map,
+        }
+    }
 }
 
 impl Game for Shooter {
     fn init(ctx: &mut Context) -> Self {
         let text = fs::read_to_string(LEVEL).unwrap_or_else(|e| panic!("{LEVEL}: {e}"));
-        Self {
-            models: Models::load(&mut ctx.assets),
-            map: Map::parse(&text).unwrap_or_else(|e| panic!("{LEVEL}: {e}")),
-        }
+        let map = Map::parse(&text).unwrap_or_else(|e| panic!("{LEVEL}: {e}"));
+        Self::new(map, &mut ctx.assets)
     }
 
-    fn update(&mut self, _ctx: &mut Context) {}
+    fn update(&mut self, ctx: &mut Context) {
+        // Клик, пришедший до потери фокуса, захватил бы курсор в фоновом окне.
+        if ctx.input.mouse_just_pressed(MouseButton::Left) && ctx.focused {
+            ctx.cursor_grab = true;
+        }
+        if ctx.input.just_pressed(KeyCode::Escape) {
+            ctx.cursor_grab = false;
+        }
+        let dt = ctx.time.step.as_secs_f32();
+        self.player.update(&ctx.input, dt, &self.obstacles);
+    }
 
-    fn draw(&mut self, ctx: &mut Context, _alpha: f32) {
-        ctx.gfx.scene = Some(Scene::default());
+    fn draw(&mut self, ctx: &mut Context, alpha: f32) {
+        ctx.gfx.scene = Some(Scene {
+            camera: self.player.camera(alpha, ctx.input.mouse_delta()),
+            ..Scene::default()
+        });
     }
 }
 
@@ -118,9 +146,17 @@ fn main() -> Result<(), engine::EventLoopError> {
 
 #[cfg(test)]
 mod tests {
-    use engine::Texture;
+    use std::time::Duration;
+
+    use engine::{
+        Camera3D,
+        ElementState::{Pressed, Released},
+        FixedClock, Texture, vec2, vec3,
+    };
 
     use super::*;
+    use crate::map::Dir;
+    use crate::player::{EYE, RADIUS, SENSITIVITY, SPEED};
 
     fn all(m: &Models) -> [Handle<Model>; 15] {
         [
@@ -216,11 +252,91 @@ mod tests {
         assert_eq!(g.map, Map::parse(LEVEL01).unwrap());
     }
 
+    fn shooter(text: &str) -> (Shooter, Context) {
+        let mut ctx = Context::new(FixedClock::new(TICK_HZ, Duration::from_millis(250)).step());
+        let g = Shooter::new(Map::parse(text).unwrap(), &mut ctx.assets);
+        (g, ctx)
+    }
+
+    fn camera(ctx: &Context) -> Camera3D {
+        ctx.gfx.scene.as_ref().unwrap().camera
+    }
+
+    const ROOM: &str = "#####\n#P.X#\n#####\n";
+
     #[test]
-    fn draw_puts_empty_scene() {
-        let mut ctx = Context::default();
-        let mut g = Shooter::init(&mut ctx);
-        g.draw(&mut ctx, 0.5);
-        assert_eq!(ctx.gfx.scene, Some(Scene::default()));
+    fn player_starts_at_cell_centre_facing_open_neighbour() {
+        let (g, _) = shooter(ROOM);
+        assert_eq!(g.player.pos, vec2(1.5, 1.5));
+        assert_eq!(g.player.yaw, Dir::E.yaw());
+    }
+
+    #[test]
+    fn update_walks_player_by_tick_step() {
+        let (mut g, mut ctx) = shooter(ROOM);
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+        g.update(&mut ctx);
+        assert_eq!(g.player.pos, vec2(1.5 + SPEED / TICK_HZ as f32, 1.5));
+    }
+
+    #[test]
+    fn closed_door_holds_player() {
+        let (mut g, mut ctx) = shooter("######\n#PD.X#\n#k...#\n######\n");
+        g.player.yaw = Dir::E.yaw();
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+        for _ in 0..120 {
+            g.update(&mut ctx);
+        }
+        assert!(
+            (g.player.pos.x - (2.0 - RADIUS)).abs() < 1e-5,
+            "{:?}",
+            g.player.pos
+        );
+    }
+
+    #[test]
+    fn update_consumes_mouse_and_draw_adds_rest() {
+        let (mut g, mut ctx) = shooter(ROOM);
+        let yaw = g.player.yaw;
+        ctx.input.on_mouse_motion(vec2(100.0, -40.0));
+        g.update(&mut ctx);
+        ctx.input.end_tick();
+        assert_eq!(g.player.yaw, yaw - 100.0 * SENSITIVITY);
+        g.draw(&mut ctx, 1.0);
+        assert_eq!(camera(&ctx).yaw, g.player.yaw);
+        assert_eq!(camera(&ctx).pitch, 40.0 * SENSITIVITY);
+
+        let before = g.player;
+        ctx.input.on_mouse_motion(vec2(50.0, 0.0));
+        g.draw(&mut ctx, 1.0);
+        assert_eq!(camera(&ctx).yaw, before.yaw - 50.0 * SENSITIVITY);
+        assert_eq!(g.player, before);
+        assert_eq!(camera(&ctx).pos, vec3(1.5 * CELL, EYE, 1.5 * CELL));
+    }
+
+    #[test]
+    fn click_grabs_cursor_only_when_focused() {
+        let (mut g, mut ctx) = shooter(ROOM);
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        g.update(&mut ctx);
+        assert!(!ctx.cursor_grab, "окно без фокуса");
+        ctx.input.on_button(MouseButton::Left, Released);
+        ctx.input.end_tick();
+
+        ctx.focused = true;
+        ctx.input.on_button(MouseButton::Right, Pressed);
+        g.update(&mut ctx);
+        assert!(!ctx.cursor_grab, "не левая кнопка");
+        ctx.input.end_tick();
+
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        g.update(&mut ctx);
+        assert!(ctx.cursor_grab);
+        ctx.input.end_tick();
+        g.update(&mut ctx);
+        assert!(ctx.cursor_grab, "без Esc захват держится");
+        ctx.input.on_key(KeyCode::Escape, Pressed, false);
+        g.update(&mut ctx);
+        assert!(!ctx.cursor_grab);
     }
 }

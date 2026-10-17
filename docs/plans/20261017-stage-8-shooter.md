@@ -135,9 +135,9 @@
 ### Task 6: Игрок
 **Files:**
 - Create: `games/shooter/src/player.rs`
-- [ ] тесты: ход и скольжение вдоль стены, закрытая дверь держит, мышь потребляется в `update`, остаток — в `draw`, наклон ограничен, урон и смерть
-- [ ] перенос из `maze` с правками; захват курсора кликом, Esc отпускает
-- [ ] `cargo mutants -f games/shooter/src/player.rs`, `make cov`, `make check`
+- [x] тесты: ход и скольжение вдоль стены, закрытая дверь держит, мышь потребляется в `update`, остаток — в `draw`, наклон ограничен, урон и смерть
+- [x] перенос из `maze` с правками; захват курсора кликом, Esc отпускает
+- [x] `cargo mutants -f games/shooter/src/player.rs`, `make cov`, `make check`
 
 ### Task 7: Оружие и снаряды
 **Files:**
