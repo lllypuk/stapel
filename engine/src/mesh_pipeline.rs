@@ -6,8 +6,8 @@ use crate::gpu_textures::DEPTH_FORMAT;
 use crate::scene::rgba;
 use crate::sprite_pipeline::{grow_capacity, instance_buffer, wgpu_color};
 use crate::{
-    Assets, Color, ExpandedModels, GpuTextures, MAX_JOINTS, MAX_LIGHTS, MeshInstance, PointLight,
-    Scene, Vertex, batch_meshes,
+    Assets, Camera3D, Color, ExpandedModels, GpuTextures, MAX_JOINTS, MAX_LIGHTS, MeshDraw,
+    MeshInstance, PointLight, Scene, Vertex, batch_meshes,
 };
 
 /// Начальный размер буфера инстансов в байтах.
@@ -43,8 +43,8 @@ struct SceneUniform {
 }
 
 impl SceneUniform {
-    /// Uniform кадра; из `lights` берутся первые `MAX_LIGHTS`.
-    fn new(scene: &Scene, aspect: f32) -> Self {
+    /// Uniform прохода с камерой `camera`; из `lights` берутся первые `MAX_LIGHTS`.
+    fn new(scene: &Scene, camera: &Camera3D, aspect: f32) -> Self {
         let mut lights = [LightUniform::zeroed(); MAX_LIGHTS];
         for (dst, l) in lights.iter_mut().zip(&scene.lights) {
             *dst = LightUniform::from(l);
@@ -55,11 +55,11 @@ impl SceneUniform {
             (s.dir.normalize_or_zero(), rgba(s.color))
         });
         Self {
-            view_proj: scene.camera.view_proj(aspect).to_cols_array_2d(),
+            view_proj: camera.view_proj(aspect).to_cols_array_2d(),
             ambient: rgba(scene.ambient),
             fog_color: rgba(scene.fog.color),
             sun_color,
-            eye: scene.camera.pos.into(),
+            eye: camera.pos.into(),
             fog_start: scene.fog.start,
             sun_dir: sun_dir.into(),
             fog_end: scene.fog.end,
@@ -94,20 +94,101 @@ struct GpuMesh {
     count: u32,
 }
 
-/// GPU-путь мешей: буферы мешей по хэндлу, инстансы и 3D-проход с глубиной.
+/// Проход мира.
+const WORLD: usize = 0;
+/// Проход слоя оружия.
+const VIEWMODEL: usize = 1;
+
+/// Uniform, инстансы и палитры одного прохода: `write_buffer` слоя в общие буферы затёр бы мир до `submit`.
+struct PassBuffers {
+    scene_buf: wgpu::Buffer,
+    scene_group: wgpu::BindGroup,
+    instances: wgpu::Buffer,
+    capacity: u64,
+    palettes: wgpu::Buffer,
+    palette_group: wgpu::BindGroup,
+    palette_capacity: u64,
+}
+
+impl PassBuffers {
+    fn new(
+        device: &wgpu::Device,
+        scene_layout: &wgpu::BindGroupLayout,
+        palette_layout: &wgpu::BindGroupLayout,
+    ) -> Self {
+        let palettes = palette_buffer(device, PALETTE_STRIDE);
+        let palette_group = palette_group(device, palette_layout, &palettes);
+        let scene_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scene"),
+            size: size_of::<SceneUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let scene_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scene"),
+            layout: scene_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: scene_buf.as_entire_binding(),
+            }],
+        });
+        Self {
+            scene_buf,
+            scene_group,
+            instances: instance_buffer(device, INITIAL_CAPACITY),
+            capacity: INITIAL_CAPACITY,
+            palettes,
+            palette_group,
+            palette_capacity: PALETTE_STRIDE,
+        }
+    }
+
+    /// Пишет `instances`, растя буфер.
+    fn write_instances(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, bytes: &[u8]) {
+        if let Some(capacity) = grow_capacity(self.capacity, bytes.len() as u64) {
+            self.instances = instance_buffer(device, capacity);
+            self.capacity = capacity;
+        }
+        if !bytes.is_empty() {
+            queue.write_buffer(&self.instances, 0, bytes);
+        }
+    }
+
+    /// Пишет `palettes` с шагом `PALETTE_STRIDE`; от длинной палитры — первые `MAX_JOINTS`.
+    fn write_palettes(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        palettes: &[Vec<Mat4>],
+    ) {
+        let mut data = vec![[[0.0f32; 4]; 4]; palettes.len() * MAX_JOINTS];
+        for (dst, p) in data.chunks_mut(MAX_JOINTS).zip(palettes) {
+            for (d, m) in dst.iter_mut().zip(p) {
+                *d = m.to_cols_array_2d();
+            }
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(&data);
+        if let Some(capacity) = grow_capacity(self.palette_capacity, bytes.len() as u64) {
+            self.palettes = palette_buffer(device, capacity);
+            self.palette_group = palette_group(device, layout, &self.palettes);
+            self.palette_capacity = capacity;
+        }
+        if !bytes.is_empty() {
+            queue.write_buffer(&self.palettes, 0, bytes);
+        }
+    }
+}
+
+/// GPU-путь мешей: буферы мешей по хэндлу, инстансы и 3D-проходы мира и слоя с глубиной.
 pub struct MeshPipeline {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
     skinned: wgpu::RenderPipeline,
-    scene_buf: wgpu::Buffer,
-    scene_group: wgpu::BindGroup,
-    instances: wgpu::Buffer,
-    capacity: u64,
     palette_layout: wgpu::BindGroupLayout,
-    palettes: wgpu::Buffer,
-    palette_group: wgpu::BindGroup,
-    palette_capacity: u64,
+    /// Индекс — `WORLD` или `VIEWMODEL`.
+    passes: [PassBuffers; 2],
     /// Индекс — `Handle<Mesh>::index`.
     meshes: Vec<GpuMesh>,
     lights_warned: bool,
@@ -181,35 +262,14 @@ impl MeshPipeline {
                 11 => Float32x4,
             ],
         );
-        let palettes = palette_buffer(device, PALETTE_STRIDE);
-        let palette_group = palette_group(device, &palette_layout, &palettes);
-        let scene_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scene"),
-            size: size_of::<SceneUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let scene_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("scene"),
-            layout: &scene_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: scene_buf.as_entire_binding(),
-            }],
-        });
+        let passes = [(); 2].map(|()| PassBuffers::new(device, &scene_layout, &palette_layout));
         Self {
             device: device.clone(),
             queue: queue.clone(),
             pipeline,
             skinned,
-            scene_buf,
-            scene_group,
-            instances: instance_buffer(device, INITIAL_CAPACITY),
-            capacity: INITIAL_CAPACITY,
             palette_layout,
-            palettes,
-            palette_group,
-            palette_capacity: PALETTE_STRIDE,
+            passes,
             meshes: Vec::new(),
             lights_warned: false,
             joints_warned: false,
@@ -255,20 +315,78 @@ impl MeshPipeline {
         }
     }
 
-    /// Очищает `view` цветом `clear` и `depth` и рисует `scene` с её моделями `models`; aspect камеры — `depth`, он размера цели.
-    /// Буферы пишутся через `write_buffer`: второй `draw` до `submit` затрёт первый.
+    /// Рисует мир `scene` с очисткой цвета `clear`, затем её `viewmodel` поверх мира; aspect камеры — `depth`, он размера цели.
     #[expect(clippy::too_many_arguments, reason = "цель, глубина, текстуры и кадр")]
-    pub fn draw(
+    pub fn draw_scene(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         depth: &wgpu::Texture,
         textures: &GpuTextures,
         scene: &Scene,
-        models: &ExpandedModels,
+        assets: &Assets,
         clear: Color,
     ) {
-        let (mut instances, batches) = batch_meshes(scene.meshes.iter().chain(&models.meshes));
+        if first_overflow(&mut self.lights_warned, scene.lights.len(), MAX_LIGHTS) {
+            log::warn!(
+                "{} point lights, only the first {MAX_LIGHTS} are drawn",
+                scene.lights.len()
+            );
+        }
+        let world = ExpandedModels::new(&scene.models, assets);
+        self.pass(
+            WORLD,
+            encoder,
+            view,
+            depth,
+            textures,
+            scene,
+            &scene.camera,
+            &scene.meshes,
+            &world,
+            Some(clear),
+        );
+        if let Some(vm) = &scene.viewmodel {
+            let camera = Camera3D {
+                fov_y: vm.fov_y,
+                near: vm.near,
+                ..scene.camera
+            };
+            let models = ExpandedModels::new(&vm.models, assets);
+            self.pass(
+                VIEWMODEL,
+                encoder,
+                view,
+                depth,
+                textures,
+                scene,
+                &camera,
+                &[],
+                &models,
+                None,
+            );
+        }
+    }
+
+    /// Проход `index`: `meshes` и `models` под светом `scene` с камерой `camera`; глубина чистится, цвет — при `Some(clear)`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "проход, цель, глубина, текстуры и кадр"
+    )]
+    fn pass(
+        &mut self,
+        index: usize,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        depth: &wgpu::Texture,
+        textures: &GpuTextures,
+        scene: &Scene,
+        camera: &Camera3D,
+        meshes: &[MeshDraw],
+        models: &ExpandedModels,
+        clear: Option<Color>,
+    ) {
+        let (mut instances, batches) = batch_meshes(meshes.iter().chain(&models.meshes));
         let longest = models.palettes.iter().map(Vec::len).max().unwrap_or(0);
         if first_overflow(&mut self.joints_warned, longest, MAX_JOINTS) {
             log::warn!("skin with {longest} joints, over {MAX_JOINTS} are not drawn");
@@ -288,35 +406,28 @@ impl MeshPipeline {
                 .iter()
                 .map(|d| MeshInstance::new(d.transform, d.color)),
         );
-        self.write_palettes(&models.palettes);
-
-        let bytes: &[u8] = bytemuck::cast_slice(&instances);
-        if let Some(capacity) = grow_capacity(self.capacity, bytes.len() as u64) {
-            self.instances = instance_buffer(&self.device, capacity);
-            self.capacity = capacity;
-        }
-        if !bytes.is_empty() {
-            self.queue.write_buffer(&self.instances, 0, bytes);
-        }
-        if first_overflow(&mut self.lights_warned, scene.lights.len(), MAX_LIGHTS) {
-            log::warn!(
-                "{} point lights, only the first {MAX_LIGHTS} are drawn",
-                scene.lights.len()
-            );
-        }
+        let buf = &mut self.passes[index];
+        buf.write_palettes(
+            &self.device,
+            &self.queue,
+            &self.palette_layout,
+            &models.palettes,
+        );
+        buf.write_instances(&self.device, &self.queue, bytemuck::cast_slice(&instances));
         let aspect = depth.width() as f32 / depth.height() as f32;
-        let uniform = SceneUniform::new(scene, aspect);
+        let uniform = SceneUniform::new(scene, camera, aspect);
         self.queue
-            .write_buffer(&self.scene_buf, 0, bytemuck::bytes_of(&uniform));
+            .write_buffer(&buf.scene_buf, 0, bytemuck::bytes_of(&uniform));
 
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+        let load = clear.map_or(wgpu::LoadOp::Load, |c| wgpu::LoadOp::Clear(wgpu_color(c)));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu_color(clear)),
+                    load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -331,8 +442,8 @@ impl MeshPipeline {
             ..Default::default()
         });
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.scene_group, &[]);
-        pass.set_vertex_buffer(1, self.instances.slice(..));
+        pass.set_bind_group(0, &buf.scene_group, &[]);
+        pass.set_vertex_buffer(1, buf.instances.slice(..));
         for b in batches {
             let mesh = &self.meshes[b.mesh.index as usize];
             if mesh.count == 0 {
@@ -355,29 +466,10 @@ impl MeshPipeline {
             )]
             let offset = (d.palette as u64 * PALETTE_STRIDE) as u32;
             pass.set_bind_group(1, textures.group(d.texture), &[]);
-            pass.set_bind_group(2, &self.palette_group, &[offset]);
+            pass.set_bind_group(2, &buf.palette_group, &[offset]);
             pass.set_vertex_buffer(0, mesh.vertices.slice(..));
             pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..mesh.count, 0, i..i + 1);
-        }
-    }
-
-    /// Пишет `palettes` с шагом `PALETTE_STRIDE`; от длинной палитры — первые `MAX_JOINTS`.
-    fn write_palettes(&mut self, palettes: &[Vec<Mat4>]) {
-        let mut data = vec![[[0.0f32; 4]; 4]; palettes.len() * MAX_JOINTS];
-        for (dst, p) in data.chunks_mut(MAX_JOINTS).zip(palettes) {
-            for (d, m) in dst.iter_mut().zip(p) {
-                *d = m.to_cols_array_2d();
-            }
-        }
-        let bytes: &[u8] = bytemuck::cast_slice(&data);
-        if let Some(capacity) = grow_capacity(self.palette_capacity, bytes.len() as u64) {
-            self.palettes = palette_buffer(&self.device, capacity);
-            self.palette_group = palette_group(&self.device, &self.palette_layout, &self.palettes);
-            self.palette_capacity = capacity;
-        }
-        if !bytes.is_empty() {
-            self.queue.write_buffer(&self.palettes, 0, bytes);
         }
     }
 }
@@ -496,7 +588,7 @@ mod tests {
     use crate::gpu_textures::depth_texture;
     use crate::{
         Camera2D, Camera3D, DirectionalLight, Fog, Gfx, Handle, Mesh, MeshDraw, SkinnedDraw,
-        Sprite, SpritePipeline, Texture, Vec2, Vec3, Viewport, vec2, vec3,
+        Sprite, SpritePipeline, Texture, Vec2, Vec3, Viewmodel, Viewport, vec2, vec3,
     };
     use std::f64::consts::FRAC_1_SQRT_2;
     use std::mem::offset_of;
@@ -594,7 +686,7 @@ mod tests {
             lights: lights.clone(),
             ..Default::default()
         };
-        let u = SceneUniform::new(&scene, 1.5);
+        let u = SceneUniform::new(&scene, &scene.camera, 1.5);
 
         assert_eq!(u.light_count as usize, MAX_LIGHTS);
         let packed: Vec<_> = lights[..MAX_LIGHTS]
@@ -620,7 +712,7 @@ mod tests {
             lights: lights[..3].to_vec(),
             ..Default::default()
         };
-        assert_eq!(SceneUniform::new(&few, 1.0).light_count, 3);
+        assert_eq!(SceneUniform::new(&few, &few.camera, 1.0).light_count, 3);
     }
 
     #[test]
@@ -632,10 +724,10 @@ mod tests {
             }),
             ..Default::default()
         };
-        let u = SceneUniform::new(&sun, 1.0);
+        let u = SceneUniform::new(&sun, &sun.camera, 1.0);
         assert_eq!(u.sun_dir, [0.0, -0.6, 0.8]);
         assert_eq!(u.sun_color, [0.5, 0.5, 0.5, 1.0]);
-        let none = SceneUniform::new(&Scene::default(), 1.0);
+        let none = SceneUniform::new(&Scene::default(), &Camera3D::default(), 1.0);
         assert_eq!((none.sun_dir, none.sun_color), ([0.0; 3], [0.0; 4]));
     }
 
@@ -721,24 +813,78 @@ mod tests {
         }
     }
 
-    /// Кадр как в `Renderer`: 3D с очисткой, затем спрайты с `Load`.
+    /// Кадр как в `Renderer`: `draw_scene`, затем спрайты с `Load`.
     fn render(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         assets: &mut Assets,
         gfx: &Gfx,
     ) -> Vec<u8> {
-        let models = ExpandedModels::new(&gfx.scene.as_ref().unwrap().models, assets);
-        render_models(device, queue, assets, gfx, &models)
+        let scene = gfx.scene.as_ref().unwrap();
+        frame(
+            device,
+            queue,
+            assets,
+            gfx,
+            |p, encoder, view, depth, textures, assets| {
+                p.draw_scene(
+                    encoder,
+                    view,
+                    depth,
+                    textures,
+                    scene,
+                    assets,
+                    gfx.clear_color,
+                );
+            },
+        )
     }
 
-    /// `render` с готовыми моделями кадра.
+    /// `render` с готовыми моделями мира и без слоя.
     fn render_models(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         assets: &mut Assets,
         gfx: &Gfx,
         models: &ExpandedModels,
+    ) -> Vec<u8> {
+        let scene = gfx.scene.as_ref().unwrap();
+        frame(
+            device,
+            queue,
+            assets,
+            gfx,
+            |p, encoder, view, depth, textures, _| {
+                p.pass(
+                    WORLD,
+                    encoder,
+                    view,
+                    depth,
+                    textures,
+                    scene,
+                    &scene.camera,
+                    &scene.meshes,
+                    models,
+                    Some(gfx.clear_color),
+                );
+            },
+        )
+    }
+
+    /// 3D от `draw` на свежем конвейере, затем спрайты `gfx` с `Load`.
+    fn frame(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        assets: &mut Assets,
+        gfx: &Gfx,
+        draw: impl FnOnce(
+            &mut MeshPipeline,
+            &mut wgpu::CommandEncoder,
+            &wgpu::TextureView,
+            &wgpu::Texture,
+            &GpuTextures,
+            &Assets,
+        ),
     ) -> Vec<u8> {
         let format = wgpu::TextureFormat::Rgba8UnormSrgb;
         let mut textures = GpuTextures::new(device, queue);
@@ -754,16 +900,7 @@ mod tests {
             h: SIZE as f32,
         };
         offscreen(device, queue, |encoder, view| {
-            let scene = gfx.scene.as_ref().unwrap();
-            meshes.draw(
-                encoder,
-                view,
-                &depth,
-                &textures,
-                scene,
-                models,
-                gfx.clear_color,
-            );
+            draw(&mut meshes, encoder, view, &depth, &textures, assets);
             sprites.draw(encoder, view, &textures, viewport, gfx, false);
         })
     }
@@ -1238,5 +1375,132 @@ mod tests {
             let img = render(&device, &queue, &mut assets, &gfx);
             assert_ne!(crate::gpu_test::pixel(&img, 32, 32), [0, 0, 0], "{file}");
         }
+    }
+    /// Красная стена с передней гранью в 1 м перед камерой на высоте 0,4 и орк `tint` за ней в 2 м — в слое `viewmodel`.
+    fn wall_and_orc(
+        assets: &mut Assets,
+        test: &str,
+        tint: Color,
+        viewmodel: impl FnOnce(Vec<crate::ModelDraw>) -> Option<Viewmodel>,
+    ) -> Gfx {
+        let cube = cube(assets);
+        let red = load_png(assets, test, 1, 1, &[255, 0, 0, 255]);
+        let orc = assets.load_model(crate::model::tests::testdata("character-orc.glb"));
+        let models = vec![crate::ModelDraw {
+            model: orc,
+            transform: Mat4::from_translation(vec3(0.0, 0.0, -2.0)),
+            pose: None,
+            tint,
+        }];
+        gfx(Scene {
+            ambient: Color::WHITE,
+            camera: Camera3D {
+                pos: vec3(0.0, 0.4, 0.0),
+                ..Default::default()
+            },
+            meshes: vec![MeshDraw {
+                transform: Mat4::from_translation(vec3(0.0, 0.4, -1.5)),
+                ..at(cube, red, 0.0, 1.0)
+            }],
+            viewmodel: viewmodel(models),
+            ..Default::default()
+        })
+    }
+
+    fn layer(fov_y: f32, near: f32) -> impl FnOnce(Vec<crate::ModelDraw>) -> Option<Viewmodel> {
+        move |models| {
+            Some(Viewmodel {
+                fov_y,
+                near,
+                models,
+            })
+        }
+    }
+
+    #[test]
+    fn viewmodel_behind_world_wall_is_drawn_over_it() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let fov = Camera3D::default().fov_y;
+        for (near, expected) in [(0.05, [0, 0, 0]), (5.0, [255, 0, 0])] {
+            let mut assets = Assets::default();
+            let gfx = wall_and_orc(&mut assets, "vm-over-wall", Color::BLACK, layer(fov, near));
+            let img = render(&device, &queue, &mut assets, &gfx);
+            assert_pixel(&img, &format!("layer near {near}"), CENTER, expected);
+        }
+    }
+
+    #[test]
+    fn pixels_outside_viewmodel_match_frame_without_it() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let frame = |viewmodel: Box<dyn FnOnce(_) -> _>| {
+            let mut assets = Assets::default();
+            let gfx = wall_and_orc(&mut assets, "vm-outside", Color::BLACK, viewmodel);
+            render(&device, &queue, &mut assets, &gfx)
+        };
+        let base = frame(Box::new(|_| None));
+        let fov = Camera3D::default().fov_y;
+        let mut covered = Vec::new();
+        for fov_y in [fov, fov / 2.0] {
+            let img = frame(Box::new(layer(fov_y, 0.05)));
+            let (mut model, mut wall) = (0, 0);
+            for (y, x) in (0..SIZE).flat_map(|y| (0..SIZE).map(move |x| (y, x))) {
+                let (p, b) = (
+                    crate::gpu_test::pixel(&img, x, y),
+                    crate::gpu_test::pixel(&base, x, y),
+                );
+                if p == [0, 0, 0] {
+                    model += 1;
+                } else {
+                    assert_eq!(p, b, "fov {fov_y}, pixel ({x}, {y})");
+                    wall += usize::from(p == [255, 0, 0]);
+                }
+            }
+            assert!(
+                model > 0 && wall > 0,
+                "fov {fov_y}: model {model}, wall {wall}"
+            );
+            covered.push(model);
+        }
+        assert!(
+            covered[1] > covered[0],
+            "narrower layer fov zooms: {covered:?}"
+        );
+    }
+
+    #[test]
+    fn scene_light_shines_on_viewmodel_and_empty_layer_changes_nothing() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let fov = Camera3D::default().fov_y;
+        let lit_orc = |lights: Vec<PointLight>| {
+            let mut assets = Assets::default();
+            let mut gfx = wall_and_orc(&mut assets, "vm-light", Color::WHITE, layer(fov, 0.05));
+            let scene = gfx.scene.as_mut().unwrap();
+            scene.ambient = Color::BLACK;
+            scene.lights = lights;
+            render(&device, &queue, &mut assets, &gfx)
+        };
+        assert_pixel(&lit_orc(Vec::new()), "unlit", CENTER, [0, 0, 0]);
+        let light = PointLight {
+            pos: vec3(0.0, 0.4, -1.0),
+            color: Color::WHITE,
+            range: 3.0,
+        };
+        let lit = lit_orc(vec![light]);
+        assert_ne!(crate::gpu_test::pixel(&lit, 32, 32), [0, 0, 0], "lit");
+
+        let frame = |viewmodel: Box<dyn FnOnce(_) -> _>| {
+            let mut assets = Assets::default();
+            let gfx = wall_and_orc(&mut assets, "vm-empty", Color::BLACK, viewmodel);
+            render(&device, &queue, &mut assets, &gfx)
+        };
+        let none = frame(Box::new(|_| None));
+        let empty = frame(Box::new(move |_| layer(fov, 0.05)(Vec::new())));
+        assert!(none == empty, "empty layer changed the frame");
     }
 }

@@ -624,6 +624,7 @@ impl Racing {
             lights: Vec::new(),
             meshes: Vec::new(),
             models,
+            viewmodel: None,
         }
     }
 

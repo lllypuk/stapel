@@ -75,7 +75,7 @@ pub use physics3d::{
 pub use renderer::{RenderError, Renderer};
 pub use scene::{
     DirectionalLight, ExpandedModels, Fog, MAX_JOINTS, MAX_LIGHTS, MeshBatch, MeshDraw,
-    MeshInstance, ModelDraw, PointLight, Scene, SkinnedDraw, batch_meshes,
+    MeshInstance, ModelDraw, PointLight, Scene, SkinnedDraw, Viewmodel, batch_meshes,
 };
 pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;

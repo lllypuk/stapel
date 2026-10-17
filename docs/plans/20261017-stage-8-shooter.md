@@ -94,12 +94,12 @@
 ### Task 2: Слой оружия — второй 3D-проход
 **Files:**
 - Modify: `engine/src/scene.rs`, `engine/src/mesh_pipeline.rs`, `engine/src/renderer.rs`, `engine/src/lib.rs`, `games/maze/src/main.rs`, `games/racing/src/main.rs`, `docs/design.md`, `CLAUDE.md`
-- [ ] офскрин-тест `draw_scene`: модель слоя за стеной в мире рисуется поверх стены
-- [ ] офскрин-тест: пиксели вне модели слоя совпадают с кадром без слоя
-- [ ] офскрин-тест: точечный свет сцены освещает модель слоя, слой без моделей ничего не меняет
-- [ ] `Viewmodel`, `Scene::viewmodel`, `[PassBuffers; 2]`, `draw_scene`; `Renderer::render` — один вызов; литералы `Scene` в maze и racing — `viewmodel: None`
-- [ ] `docs/design.md` «3D»: слой и буферы проходов, молчаливая поломка «общие буферы проходов затирают мир → тест»; `CLAUDE.md` «Архитектура»: кадр и `Scene::viewmodel`
-- [ ] `REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine`, `cargo mutants -f engine/src/scene.rs -f engine/src/mesh_pipeline.rs`, `make cov`, `make check`
+- [x] офскрин-тест `draw_scene`: модель слоя за стеной в мире рисуется поверх стены
+- [x] офскрин-тест: пиксели вне модели слоя совпадают с кадром без слоя
+- [x] офскрин-тест: точечный свет сцены освещает модель слоя, слой без моделей ничего не меняет
+- [x] `Viewmodel`, `Scene::viewmodel`, `[PassBuffers; 2]`, `draw_scene`; `Renderer::render` — один вызов; литералы `Scene` в maze и racing — `viewmodel: None`
+- [x] `docs/design.md` «3D»: слой и буферы проходов, молчаливая поломка «общие буферы проходов затирают мир → тест»; `CLAUDE.md` «Архитектура»: кадр и `Scene::viewmodel`
+- [x] `REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine`, `cargo mutants -f engine/src/scene.rs -f engine/src/mesh_pipeline.rs`, `make cov`, `make check`
 
 ### Task 3: Каркас игры и ассеты
 **Files:**

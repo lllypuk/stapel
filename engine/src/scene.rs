@@ -29,6 +29,19 @@ pub struct Scene {
     pub meshes: Vec<MeshDraw>,
     /// Модели кадра.
     pub models: Vec<ModelDraw>,
+    /// Слой оружия в руках поверх мира; `None` — без него.
+    pub viewmodel: Option<Viewmodel>,
+}
+
+/// Модели, рисуемые после мира с очищенной глубиной: в стену не уходят.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Viewmodel {
+    /// Угол обзора слоя; позиция, взгляд и `far` — от камеры сцены.
+    pub fov_y: f32,
+    /// Ближняя плоскость слоя.
+    pub near: f32,
+    /// Модели в мире, как `Scene::models`; свет и туман — сцены.
+    pub models: Vec<ModelDraw>,
 }
 
 /// Свет из бесконечности без затухания, Ламберт; теней нет.

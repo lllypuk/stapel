@@ -7,8 +7,8 @@ use winit::window::Window;
 use crate::gpu_textures::depth_texture;
 use crate::surface::{Action, action, pick_format, pick_present_mode, split, surface_size};
 use crate::{
-    Assets, ExpandedModels, Gfx, GpuTextures, MeshPipeline, Shown, ShownScene, SpritePipeline,
-    UVec2, UiFrame, viewport,
+    Assets, Gfx, GpuTextures, MeshPipeline, Shown, ShownScene, SpritePipeline, UVec2, UiFrame,
+    viewport,
 };
 
 /// Поверхность окна и GPU-устройство; кадр: 3D на всю поверхность, спрайты во вписанный вьюпорт, egui — поверх.
@@ -226,13 +226,13 @@ impl Renderer {
             self.pixel_perfect,
         );
         if let Some(scene) = &gfx.scene {
-            self.meshes.draw(
+            self.meshes.draw_scene(
                 &mut encoder,
                 &view,
                 &self.depth,
                 &self.textures,
                 scene,
-                &ExpandedModels::new(&scene.models, assets),
+                assets,
                 gfx.clear_color,
             );
         }

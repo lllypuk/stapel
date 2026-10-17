@@ -397,6 +397,7 @@ impl Maze {
             lights,
             models,
             meshes: Vec::new(),
+            viewmodel: None,
         }
     }
 
