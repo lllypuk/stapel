@@ -2043,9 +2043,11 @@ mod tests {
         for key in pan {
             ctx.input.on_key(key, Pressed, false);
         }
-        while g.editor.orbit.focus.x < 12.0 {
+        let panned = (0..600).any(|_| {
             tick(&mut g, &mut ctx);
-        }
+            g.editor.orbit.focus.x >= 12.0
+        });
+        assert!(panned, "камера не доехала до овала");
         for key in pan {
             ctx.input.on_key(key, Released, false);
         }

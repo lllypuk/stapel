@@ -431,13 +431,14 @@
 
 ### Task 18: Приёмка
 - [x] все пункты Overview (сценарии — тестами; вид и звук — Post-Completion)
-- [ ] `make check`, `make cov` (порог не ниже текущего), `make mutants`
+- [x] `make check`, `make cov` (порог не ниже текущего), `make mutants`
+- ➕ 13 таймаутов мутантов: цикл сдвига камеры в сквозном тесте ограничен тиками; два мутанта периода `synth` — исключения в `.cargo/mutants.toml`
 
 ### Task 19: Документация
 - [x] `games/racing/README.md`: управление гаража, редактора и панели; комментарии из `track01`–`03` перенесены сюда
 - [x] `CLAUDE.md`: команда `make racing` — гараж, F1, F2
 - [x] `docs/design.md`: таблица «Этапы» — строка 7 с движковой частью
-- [ ] `make check`; план — в `docs/plans/completed/`
+- [x] `make check`; план — в `docs/plans/completed/`
 
 ## Post-Completion
 **Проверка запуском** (`make racing`):
