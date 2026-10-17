@@ -1,6 +1,7 @@
 mod map;
 mod obstacle;
 mod player;
+mod weapon;
 
 use std::fs;
 
