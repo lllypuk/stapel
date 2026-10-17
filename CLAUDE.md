@@ -20,6 +20,7 @@ NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color
 make check                                                        # fmt, typos, clippy, doc, machete, deny, тесты; deny качает advisory-db — нужна сеть
 make cov                                                          # покрытие строк с порогом
 make mutants                                                      # мутанты вполсилы под nice, ~1 ч; исключения — .cargo/mutants.toml
+make mutants-diff                                                 # мутанты только по строкам ветки против main (BASE=...)
 REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine   # офскрин-тесты 2D и 3D без адаптера падают, а не пропускаются; без WGPU_BACKEND найдётся адаптер GL
 ```
 
@@ -44,6 +45,7 @@ REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine   # офскрин-тес
 - Долгий тест — под `#[ignore = "..."]`: его включают `make test` и `make cov`, а `cargo test --workspace` и мутанты — нет.
 - Порог покрытия в `make cov` — только вверх; снижение — осознанное решение в коммите.
 - Выживший мутант — тест, который его убивает, или исключение в `.cargo/mutants.toml` с причиной.
+- Приёмка этапа — `make mutants-diff`; полный `make mutants` — если ветка удаляет или ослабляет старые тесты, иначе его гоняет CI по расписанию.
 - Новая молчаливая поломка — в свой слой раздела `docs/design.md` с пометкой «→ что её ловит»; правка кода, снимающая защиту, правит и пометку.
 - Тег `CI_IMAGE` в `.gitlab-ci.yml` поднимается вместе с правкой `ci/Dockerfile`; образ собирается и пушится вручную.
 - Ревью веток — `revmux`; профиль проекта для него — `.revmux/profile.md`, архив раундов `.revmux/tasks/` в git не попадает.

@@ -3,7 +3,7 @@ export PATH := $(HOME)/.cargo/bin:$(PATH)
 
 GAMES := $(notdir $(wildcard games/*))
 
-.PHONY: $(GAMES) test lint doc deps check cov mutants
+.PHONY: $(GAMES) test lint doc deps check cov mutants mutants-diff
 
 # make pong; make pong NO_VSYNC=1
 $(GAMES):
@@ -33,5 +33,13 @@ cov:
 	cargo llvm-cov --workspace --ignore-filename-regex 'engine/src/(app|renderer|audio/device)\.rs' --fail-under-lines 98 -- --include-ignored
 
 # Исключения и причины — .cargo/mutants.toml. Вполсилы: 8 сборок, 4×2 тестовых потока, nice — машина остаётся отзывчивой.
+MUTANTS = RUST_TEST_THREADS=2 nice -n 19 cargo mutants -j 4 --jobserver-tasks 8
+BASE ?= main
+
 mutants:
-	RUST_TEST_THREADS=2 nice -n 19 cargo mutants -j 4 --jobserver-tasks 8
+	$(MUTANTS)
+
+# Только строки ветки против BASE: тест, ослабленный в ветке, в нетронутом коде не заметит — тогда полный mutants.
+mutants-diff:
+	mkdir -p target && git diff $(BASE)...HEAD > target/branch.diff
+	$(MUTANTS) --in-diff target/branch.diff
