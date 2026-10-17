@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use engine::{
-    Aabb3, Assets, Color, Handle, Mat4, Model, ModelDraw, StaticWorld, Triangle, Vec3, vec3,
+    Aabb3, Assets, Color, Handle, IVec2, Mat4, Model, ModelDraw, StaticWorld, Triangle, Vec3, vec3,
 };
 
 use crate::ASSETS;
@@ -12,6 +12,14 @@ use crate::track::{Entry, TrackDraft};
 pub(crate) const ROAD: u32 = 0;
 pub(crate) const GRASS: u32 = 1;
 pub(crate) const BARRIER: u32 = 2;
+pub(crate) const GROUND: u32 = 3;
+
+/// Высота травы деталей уровня 0 и земли, м: корень моделей набора опущен на 0,01 единицы.
+pub(crate) const BASE: f32 = -0.01 * KIT_SCALE;
+/// Клеток земли от любой клетки дороги.
+pub(crate) const GROUND_MARGIN: i32 = 128;
+/// Сторона квадрата земли в клетках; квадраты одной сетки стыкуются вершина в вершину.
+const CHUNK: i32 = 16;
 
 /// Неизвестный материал — дорога; тест держит список материалов деталей полным.
 fn surface(material: &str) -> u32 {
@@ -127,6 +135,40 @@ fn triangles(placed: &[Placed], models: &Models, assets: &Assets) -> Vec<Triangl
     out
 }
 
+/// Плоская трава деталей на высоте земли: в мире её заменяет земля.
+fn base_grass(t: &Triangle) -> bool {
+    t.tag == GRASS && t.verts.iter().all(|v| (v.y - BASE).abs() < 1e-3)
+}
+
+/// Квадраты `CHUNK` общей сетки, задевающие `GROUND_MARGIN` вокруг клеток дорог.
+fn ground(track: &TrackDraft) -> Vec<Triangle> {
+    let mut chunks = BTreeSet::new();
+    for (c, _) in track.road_cells() {
+        let lo = (c - GROUND_MARGIN).div_euclid(IVec2::splat(CHUNK));
+        let hi = (c + GROUND_MARGIN).div_euclid(IVec2::splat(CHUNK));
+        for x in lo.x..=hi.x {
+            chunks.extend((lo.y..=hi.y).map(|z| (x, z)));
+        }
+    }
+    let side = CHUNK as f32 * KIT_SCALE;
+    (chunks.into_iter())
+        .flat_map(|(x, z)| {
+            let corner = |dx, dz| vec3((x + dx) as f32 * side, BASE, (z + dz) as f32 * side);
+            let [a, b, c, d] = [corner(0, 0), corner(0, 1), corner(1, 1), corner(1, 0)];
+            [[a, b, c], [a, c, d]].map(|verts| Triangle { verts, tag: GROUND })
+        })
+        .collect()
+}
+
+/// Цвет травы деталей — им же рисуется земля.
+pub(crate) fn grass_color(models: &Models, assets: &Assets) -> Color {
+    let model = assets.model(models.get("roadStraight"));
+    (model.materials.iter())
+        .find(|m| m.name == "grass")
+        .expect("трава roadStraight")
+        .color
+}
+
 /// Трасса для рендера и столкновений.
 pub(crate) struct Layout {
     pub(crate) draws: Vec<ModelDraw>,
@@ -148,7 +190,12 @@ impl Layout {
                     tint: Color::WHITE,
                 })
                 .collect(),
-            world: StaticWorld::new(KIT_SCALE, triangles(&placed, models, assets)),
+            world: StaticWorld::new(
+                KIT_SCALE,
+                (triangles(&placed, models, assets).into_iter())
+                    .filter(|t| !base_grass(t))
+                    .chain(ground(track)),
+            ),
             bounds: (placed.iter())
                 .map(|p| {
                     let model = assets.model(models.get(p.name));
@@ -325,6 +372,78 @@ pos = [20.0, 0.0, 20.0]
         assert_eq!(rendered, world);
     }
 
+    #[test]
+    fn ground_lies_at_base_and_covers_margin_around_roads() {
+        let (assets, models) = loaded();
+        let up = RoadEntry {
+            piece: &PIECES[0],
+            cell: ivec2(0, 0),
+            level: 1,
+            rot: Rot::default(),
+        };
+        let world = Layout::new(&track(vec![up]), &models, &assets).world;
+        let edge = (GROUND_MARGIN + 1) as f32 * KIT_SCALE - 0.5;
+        for (x, z) in [
+            (0.1, 2.0),
+            (edge, 2.0),
+            (2.0, edge),
+            (-edge + KIT_SCALE, -edge + KIT_SCALE),
+        ] {
+            let hit = world.raycast(vec3(x, 1.0, z), Vec3::NEG_Y, 2.0, |_| true);
+            assert!(
+                hit.is_some_and(|h| h.tag == GROUND && (h.point.y - BASE).abs() < 1e-4),
+                "{x} {z}: {hit:?}"
+            );
+        }
+        let beyond = (GROUND_MARGIN + CHUNK + 1) as f32 * KIT_SCALE;
+        assert_eq!(down(&world, beyond, 2.0), None);
+        assert_eq!(down(&world, 2.0, beyond), None);
+        assert_eq!(ground(&track(Vec::new())), []);
+    }
+
+    #[test]
+    fn only_flat_grass_at_base_is_replaced_and_ground_is_green() {
+        let at = |tag, dy| Triangle {
+            verts: [
+                vec3(0.0, BASE, 0.0),
+                vec3(0.0, BASE, 1.0),
+                vec3(1.0, BASE + dy, 1.0),
+            ],
+            tag,
+        };
+        assert!(base_grass(&at(GRASS, 0.0)));
+        assert!(!base_grass(&at(ROAD, 0.0)));
+        assert!(!base_grass(&at(GRASS, 0.01)));
+        let (assets, models) = loaded();
+        let c = grass_color(&models, &assets);
+        assert!(c.g > c.r && c.g > c.b, "{c:?}");
+    }
+
+    #[test]
+    fn grass_of_pieces_never_lies_below_base_and_flat_grass_lies_on_it() {
+        let (assets, models) = loaded();
+        for piece in &PIECES {
+            let road = RoadEntry {
+                piece,
+                cell: IVec2::ZERO,
+                level: 0,
+                rot: Rot::default(),
+            };
+            let tris = triangles(&place(&track(vec![road])), &models, &assets);
+            let grass: Vec<_> = tris.iter().filter(|t| t.tag == GRASS).collect();
+            for t in &grass {
+                assert!(
+                    t.verts.iter().all(|v| v.y > BASE - 1e-3),
+                    "{}: {t:?}",
+                    piece.name
+                );
+            }
+            if piece.name == "roadStraight" {
+                assert!(grass.iter().any(|t| base_grass(t)), "{}", piece.name);
+            }
+        }
+    }
+
     fn down(world: &StaticWorld, x: f32, z: f32) -> Option<u32> {
         world
             .raycast(vec3(x, 20.0, z), Vec3::NEG_Y, 40.0, |_| true)
@@ -346,13 +465,13 @@ pos = [20.0, 0.0, 20.0]
         )
         .expect("трасса");
         let world = Layout::new(&track, &models, &assets).world;
-        // Трава — x 0..0,082 клетки, бортик — до 0,155, дальше асфальт.
+        // Трава — x 0..0,082 клетки, её заменяет земля; бортик — до 0,155, дальше асфальт.
         assert_eq!(down(&world, 2.0, 2.0), Some(ROAD));
         assert_eq!(down(&world, 0.48, 2.0), Some(ROAD));
-        assert_eq!(down(&world, 0.1, 2.0), Some(GRASS));
+        assert_eq!(down(&world, 0.1, 2.0), Some(GROUND));
         assert_eq!(down(&world, 10.0, 2.0), Some(BARRIER));
         for x in [20.0, 25.0, 30.0, 40.0, 45.0] {
-            assert_eq!(down(&world, x, 2.0), None, "x {x}");
+            assert_eq!(down(&world, x, 2.0), Some(GROUND), "x {x}");
         }
     }
 

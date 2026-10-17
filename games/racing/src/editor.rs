@@ -7,7 +7,7 @@ use engine::{
     Vertex, vec2, vec3,
 };
 
-use crate::layout::{Layout, Models, place};
+use crate::layout::{GROUND, Layout, Models, place};
 use crate::pieces::{DecorPiece, KIT_SCALE, LEVEL, PIECES, Piece, Rot};
 use crate::track::{Checkpoint, DecorEntry, DraftError, Entry, MAX_LEVEL, RoadEntry, TrackDraft};
 
@@ -359,14 +359,16 @@ impl Editor {
         })
     }
 
-    /// Декор в точке попадания по миру, мимо — на плоскости уровня; пределы не проверяет.
+    /// Декор в точке попадания по миру, мимо — на плоскости уровня; земля — только на уровне 0. Пределы не проверяет.
     pub(crate) fn decor_at(
         &self,
         ray: Ray,
         piece: &'static DecorPiece,
         yaw: f32,
     ) -> Option<DecorEntry> {
-        let hit = (self.layout.world).raycast(ray.origin, ray.dir, PICK_RANGE, |_| true);
+        let hit = (self.layout.world).raycast(ray.origin, ray.dir, PICK_RANGE, |h| {
+            self.level == 0 || h.tag != GROUND
+        });
         let pos = match hit {
             Some(h) => h.point,
             None => at(ray, plane_t(ray, self.floor())?),
@@ -437,6 +439,7 @@ mod tests {
     use engine::{ivec2, vec3};
 
     use super::*;
+    use crate::layout::BASE;
     use crate::pieces::{decor_piece, piece};
 
     fn loaded() -> (Assets, Models) {
@@ -564,9 +567,20 @@ mod tests {
             (2.0, 2.0, 30.0)
         );
         assert!(e.click(down(10.0, 2.0), &models, &assets));
-        assert_eq!(e.draft.decor[1].pos, vec3(10.0, 0.0, 2.0));
+        let on_ground = e.draft.decor[1].pos;
+        assert!(
+            on_ground.abs_diff_eq(vec3(10.0, BASE, 2.0), 1e-4),
+            "{on_ground}"
+        );
+        e.apply(EditorCmd::Level(1), &models, &assets);
+        assert!(e.click(down(12.0, 2.0), &models, &assets));
+        assert_eq!(
+            e.draft.decor[2].pos,
+            vec3(12.0, 2.0, 2.0),
+            "уровень 1 — сквозь землю"
+        );
         assert!(!e.click(down(5000.0, 2.0), &models, &assets));
-        assert_eq!(e.draft.decor.len(), 2);
+        assert_eq!(e.draft.decor.len(), 3);
     }
 
     #[test]

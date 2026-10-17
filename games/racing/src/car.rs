@@ -7,7 +7,7 @@ use engine::{
 };
 
 use crate::car_config::{Apply, CarConfig, CarError, Drive, TUNING, Wheel, Wheels, wheels};
-use crate::layout::{BARRIER, GRASS};
+use crate::layout::{BARRIER, GRASS, GROUND};
 
 /// Подшагов физики на тик 60 Гц.
 pub(crate) const SUBSTEPS: u32 = 4;
@@ -83,7 +83,11 @@ pub(crate) struct Car {
 
 /// Множитель сцепления поверхности по `tag`.
 fn surface_grip(tag: u32) -> f32 {
-    if tag == GRASS { GRASS_GRIP } else { 1.0 }
+    if matches!(tag, GRASS | GROUND) {
+        GRASS_GRIP
+    } else {
+        1.0
+    }
 }
 
 /// Угол колёс по рулю: от `steer_max` на месте до `steer_max·steer_at_speed` на `max_speed`.
@@ -548,6 +552,7 @@ mod tests {
         assert!((12.0..30.0).contains(&road), "{road}");
         let grass = braking_distance(GRASS);
         assert!(grass > 1.5 * road, "{grass} / {road}");
+        assert_eq!(braking_distance(GROUND), grass);
     }
 
     #[test]

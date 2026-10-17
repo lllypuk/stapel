@@ -29,4 +29,6 @@ exclude_re = [
     "replace (> with >=|< with <=) in Rpm::tick$",
     # Период цикла в тысячи раз длиннее: synth в каждом Racing::new вешает тесты гонок до таймаута, длину держит synth_is_one_revolution….
     "engine_sound.rs:36:(42: replace \\* with \\+|49: replace / with \\*) in synth$",
+    # Высота травы ровно на допуске от BASE — граница нулевой меры.
+    "replace < with <= in base_grass$",
 ]

@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 
 use engine::{
     Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Fog, Font, FontData,
-    Game, Gfx, Handle, IVec2, Input, KeyCode, LoopId, Mesh, MeshDraw, ModelDraw, MouseButton, Pose,
-    Scene, Sound, StaticWorld, Vec2, Vec3, Watcher, egui, vec2, vec3,
+    Game, Gfx, Handle, IVec2, Input, KeyCode, LoopId, Mat4, Mesh, MeshDraw, ModelDraw, MouseButton,
+    Pose, Scene, Sound, StaticWorld, Vec2, Vec3, Watcher, egui, vec2, vec3,
 };
 
 use crate::camera::Chase;
@@ -33,7 +33,7 @@ use crate::editor_panel::{EditorPanel, PanelCmd, Switch};
 use crate::engine_sound::{Rpm, SoundCmd};
 use crate::garage::{Garage, GarageCmd};
 use crate::ghost::{Ghost, Recorder};
-use crate::layout::{Layout, Models};
+use crate::layout::{BASE, Layout, Models, grass_color};
 use crate::pieces::KIT_SCALE;
 use crate::race::{Pass, Race, lap_time};
 use crate::track::{Checkpoint, TrackDraft, cell_at};
@@ -75,8 +75,12 @@ const RIGHT: &[KeyCode] = &[KeyCode::KeyD, KeyCode::ArrowRight];
 const FALL_Y: f32 = -10.0;
 /// Тиков колёсами вверх до респауна.
 const UPSIDE_DOWN_TICKS: u32 = 2 * TICK_HZ;
-/// Тиков вне клеток дороги своего уровня до респауна.
-const OFF_ROAD_TICKS: u32 = 3 * TICK_HZ;
+/// Тиков вне клеток дороги своего уровня до респауна; за них заводская машина не доезжает до края земли.
+const OFF_ROAD_TICKS: u32 = 10 * TICK_HZ;
+/// Конец тумана, м: дальше земля не видна.
+const FOG_END: f32 = 320.0;
+/// Земля рисуется ниже травы деталей, чтобы та не мерцала с ней, м.
+const GROUND_DROP: f32 = 0.02;
 /// Машина ставится чуть выше дороги и падает на колёса, м.
 const SPAWN_LIFT: f32 = 0.1;
 /// Луч к асфальту респауна — от стольких метров над уровнем: ниже настила моста (1,5 м), выше середины рампы.
@@ -225,8 +229,9 @@ struct Racing {
     garage: Garage,
     editor: Editor,
     panel: EditorPanel,
-    /// Квад клетки под курсором в редакторе.
+    /// Квад клетки под курсором в редакторе и земли.
     quad: Handle<Mesh>,
+    grass: Color,
     tuning: TuningPanel,
     /// Трасса заезда: последняя цельная с диска или черновик, с которым вышли из редактора.
     track: TrackDraft,
@@ -285,6 +290,7 @@ impl Racing {
                 ..EditorPanel::default()
             },
             quad: assets.add_mesh(vertices, indices),
+            grass: grass_color(&models, assets),
             tuning: TuningPanel::default(),
             layout: Layout::new(&track, &models, assets),
             models,
@@ -604,7 +610,7 @@ impl Racing {
             fog: Fog {
                 color: self.sky,
                 start: 80.0,
-                end: 320.0,
+                end: FOG_END,
             },
             sun: Some(DirectionalLight {
                 dir: vec3(0.4, -1.0, 0.3),
@@ -618,6 +624,22 @@ impl Racing {
             lights: Vec::new(),
             meshes: Vec::new(),
             models,
+        }
+    }
+
+    /// Земля под камерой до конца тумана.
+    fn ground(&self, camera: &Camera3D) -> MeshDraw {
+        let corner = vec3(
+            camera.pos.x - FOG_END,
+            BASE - GROUND_DROP,
+            camera.pos.z - FOG_END,
+        );
+        MeshDraw {
+            mesh: self.quad,
+            texture: Handle::WHITE,
+            color: self.grass,
+            transform: Mat4::from_translation(corner)
+                * Mat4::from_scale(vec3(2.0 * FOG_END, 1.0, 2.0 * FOG_END)),
         }
     }
 
@@ -656,14 +678,19 @@ impl Racing {
             tint: Color::WHITE,
         });
         self.draw_hud(&mut ctx.gfx, &ctx.assets);
-        self.scene(self.chase.camera(alpha, pos, rot), models)
+        let camera = self.chase.camera(alpha, pos, rot);
+        Scene {
+            meshes: vec![self.ground(&camera)],
+            ..self.scene(camera, models)
+        }
     }
 
     /// Черновик, деталь инструмента и клетка под курсором.
     fn draw_editor(&self, ctx: &Context, alpha: f32) -> Scene {
         let e = &self.editor;
+        let camera = e.camera(alpha);
         let mut models = e.draws();
-        let mut meshes = Vec::new();
+        let mut meshes = vec![self.ground(&camera)];
         if let Some(ray) = ctx.cursor_ray() {
             models.extend(e.preview(ray, &self.models));
             meshes.extend(e.cell_quad(ray).map(|transform| MeshDraw {
@@ -675,7 +702,7 @@ impl Racing {
         }
         Scene {
             meshes,
-            ..self.scene(e.camera(alpha), models)
+            ..self.scene(camera, models)
         }
     }
 
@@ -832,12 +859,12 @@ mod tests {
     use egui_kittest::kittest::Queryable;
     use engine::ElementState::{Pressed, Released};
     use engine::egui::accesskit::Role;
-    use engine::{Mat4, Quat, Ray, Sprite, Triangle, text};
+    use engine::{Quat, Ray, Sprite, Triangle, text};
 
     use super::*;
     use crate::editor::Tool;
     use crate::ghost::{Lap, Sample};
-    use crate::layout::{self, ROAD};
+    use crate::layout::{self, GROUND_MARGIN, ROAD};
     use crate::pieces::{LEVEL, decor_piece};
     use crate::track::{DraftError, Entry};
 
@@ -1231,6 +1258,10 @@ mod tests {
             let mut g = open(path.clone(), &mut ctx);
             for i in 0..g.race.checkpoints.len() {
                 let at = Spawn::at(&g.race.checkpoints[i], &g.layout.world);
+                let under = (g.layout.world)
+                    .raycast(at.pos + Vec3::Y, Vec3::NEG_Y, 2.0, |_| true)
+                    .map(|h| h.tag);
+                assert_eq!(under, Some(ROAD), "{} чекпоинт {i}", path.display());
                 g.spawn(at);
                 ctx.input.on_key(KeyCode::KeyS, Pressed, false);
                 for _ in 0..120 {
@@ -1266,6 +1297,19 @@ mod tests {
     }
 
     #[test]
+    fn stock_car_off_road_does_not_reach_ground_edge_before_respawn() {
+        let seconds = OFF_ROAD_TICKS as f32 / TICK_HZ as f32;
+        for car in load_cars(Path::new(CARS_DIR)) {
+            let reach = car.max_speed * seconds;
+            assert!(
+                reach < GROUND_MARGIN as f32 * KIT_SCALE,
+                "{}: {reach} м",
+                car.model
+            );
+        }
+    }
+
+    #[test]
     fn falling_below_ten_meters_respawns() {
         let mut ctx = Context::default();
         let mut g = racing(&mut ctx);
@@ -1296,14 +1340,14 @@ mod tests {
     }
 
     #[test]
-    fn off_road_of_own_level_for_three_seconds_respawns() {
+    fn off_road_of_own_level_for_ten_seconds_respawns() {
         let mut ctx = Context::default();
         let mut g = racing(&mut ctx);
         flat(&mut g, 0.0);
         // [3, 2] — внутри овала.
         let inside = vec3(14.0, 0.0, 10.0);
         g.car.place(inside, 0.0);
-        for t in 1..3 * 60 {
+        for t in 1..10 * 60 {
             tick(&mut g, &mut ctx);
             assert_eq!(g.off_road, t);
         }
@@ -1344,6 +1388,21 @@ mod tests {
         assert!(scene.sun.is_some_and(|s| s.dir.y < 0.0));
         assert!(scene.fog.end <= scene.camera.far);
         assert_eq!(ctx.gfx.clear_color, scene.fog.color);
+        let ground = g.ground(&scene.camera);
+        assert_eq!(scene.meshes, [ground]);
+        let at = |x, z| ground.transform.transform_point3(vec3(x, 0.0, z));
+        let eye = scene.camera.pos;
+        let mid = at(0.5, 0.5);
+        assert!(
+            mid.abs_diff_eq(vec3(eye.x, BASE - GROUND_DROP, eye.z), 1e-3),
+            "{mid} {eye}"
+        );
+        let side = at(1.0, 1.0) - at(0.0, 0.0);
+        assert!(
+            side.abs_diff_eq(vec3(2.0 * FOG_END, 0.0, 2.0 * FOG_END), 1e-3),
+            "{side}"
+        );
+        assert_eq!(ground.color, grass_color(&g.models, &ctx.assets));
     }
 
     fn hud(ctx: &Context) -> Vec<Sprite> {
@@ -1449,9 +1508,10 @@ mod tests {
         tap(&mut g, &mut ctx, KeyCode::PageUp);
         g.draw(&mut ctx, 1.0);
         let scene = ctx.gfx.scene.take().expect("сцена");
+        let ground = g.ground(&scene.camera);
         assert_eq!(
             (scene.models, scene.meshes),
-            (g.editor.layout.draws.clone(), vec![])
+            (g.editor.layout.draws.clone(), vec![ground])
         );
         show_editor(&g, &mut ctx);
         let ray = ctx.cursor_ray().expect("луч");
@@ -1470,7 +1530,7 @@ mod tests {
             color: CELL,
             transform: g.editor.cell_quad(ray).expect("квад"),
         };
-        assert_eq!(scene.meshes, [quad]);
+        assert_eq!(scene.meshes, [g.ground(&scene.camera), quad]);
         assert_eq!(ctx.assets.take_pending_meshes(), []);
     }
 
@@ -1785,6 +1845,10 @@ mod tests {
         hit.map(|h| h.point.y)
     }
 
+    fn on_ground(g: &Racing, x: f32, z: f32) -> bool {
+        ground(g, x, z).is_some_and(|y| (y - BASE).abs() < 1e-4)
+    }
+
     #[test]
     fn changed_track_rebuilds_world_with_same_models_and_restarts() {
         let mut ctx = Context::default();
@@ -1792,8 +1856,8 @@ mod tests {
         let mut g = open(path.clone(), &mut ctx);
         let straight = g.models.get("roadStraight");
         assert!(g.layout.draws.iter().any(|d| d.model == straight));
-        // Внешний угол поворота [0, 0] пуст.
-        assert_eq!(ground(&g, 2.0, 2.0), None);
+        // Во внешнем углу поворота [0, 0] — земля.
+        assert!(on_ground(&g, 2.0, 2.0));
         g.error = Some("прежняя".into());
         g.race.best = Some(100);
         g.ghost.best = Some(still_lap("race", Mat4::IDENTITY));
@@ -1839,7 +1903,7 @@ mod tests {
             assert_eq!(g.error.as_deref(), Some(error));
             assert_eq!(g.layout.draws, draws);
             assert!(g.car.body.pos.distance(pos) < 1.0, "рестартовала");
-            assert_eq!(ground(&g, 2.0, 2.0), None);
+            assert!(on_ground(&g, 2.0, 2.0));
             g.restart();
         }
         let oval = fs::read_to_string(OVAL).expect("овал");
