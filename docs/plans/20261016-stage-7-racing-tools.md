@@ -430,13 +430,13 @@
 - [x] мутанты по диффу (0: менялись только тесты), `make cov`, `make check`
 
 ### Task 18: Приёмка
-- [ ] все пункты Overview (сценарии — тестами; вид и звук — Post-Completion)
+- [x] все пункты Overview (сценарии — тестами; вид и звук — Post-Completion)
 - [ ] `make check`, `make cov` (порог не ниже текущего), `make mutants`
 
 ### Task 19: Документация
-- [ ] `games/racing/README.md`: управление гаража, редактора и панели; комментарии из `track01`–`03` перенесены сюда
-- [ ] `CLAUDE.md`: команда `make racing` — гараж, F1, F2
-- [ ] `docs/design.md`: таблица «Этапы» — строка 7 с движковой частью
+- [x] `games/racing/README.md`: управление гаража, редактора и панели; комментарии из `track01`–`03` перенесены сюда
+- [x] `CLAUDE.md`: команда `make racing` — гараж, F1, F2
+- [x] `docs/design.md`: таблица «Этапы» — строка 7 с движковой частью
 - [ ] `make check`; план — в `docs/plans/completed/`
 
 ## Post-Completion

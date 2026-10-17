@@ -13,7 +13,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 RUST_LOG=info cargo run -p clear-color                            # движок пишет FPS/TPS/worst/sprites раз в секунду
 RUST_LOG=info cargo run -p pong
 RUST_LOG=info cargo run -p platformer                             # F1 — редактор уровней из games/platformer/assets/levels/
-make racing                                                       # гонки: TRACK=track02 — другая трасса из games/racing/assets/tracks/, правка трассы видна на лету
+make racing                                                       # гонки: старт в гараже, F1 — редактор трасс, F2 — панель характеристик; TRACK=track02 — другая трасса из games/racing/assets/tracks/, правка трассы видна на лету
 make maze                                                         # 3D-лабиринт: клик — захват мыши, Esc отпускает, F1 — панель
 make asteroids                                                    # любая игра из games/, release; make test, make lint
 NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color
