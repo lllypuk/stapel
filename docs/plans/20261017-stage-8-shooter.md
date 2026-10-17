@@ -105,13 +105,14 @@
 **Files:**
 - Create: `games/shooter/Cargo.toml`, `games/shooter/src/main.rs`, `games/shooter/assets/CREDITS.md`
 - Create: `games/shooter/assets/{forest,blaster,characters,dungeon}/` с моделями и своими `Textures/`
-- Modify: `docs/design.md`
-- [ ] скопировать модели леса, трёх персонажей, двух бластеров, пули, обоймы, ящика; `key.glb` и `gate.glb` из `games/maze/assets`
-- [ ] тест: каждая модель грузится непустой, у персонажей есть все клипы по имени
-- [ ] тест: у моделей разных наборов разные `Handle<Texture>`; молчаливая поломка в «Игры» `docs/design.md`: одинаковый URI атласа у наборов в одном каталоге даёт всем одну текстуру
-- [ ] тест габаритов: после масштаба дерево и камень помещаются в клетку, персонаж ~1,8 м стоит на полу
-- [ ] `Shooter: Game` с пустой сценой; `make shooter` запускается
-- [ ] `cargo mutants -f games/shooter/src/main.rs`, `make cov`, `make check`
+- Modify: `docs/design.md`, `Cargo.toml` (фича `gltf` `KHR_materials_unlit`), `engine/src/model.rs`
+- ➕ персонажи Blocky требуют `KHR_materials_unlit` и без фичи `gltf` не грузились: фича включена, расширение не учитывается, тест в `model.rs`
+- [x] скопировать модели леса, трёх персонажей, двух бластеров, пули, обоймы, ящика; `key.glb` и `gate.glb` из `games/maze/assets`
+- [x] тест: каждая модель грузится непустой, у персонажей есть все клипы по имени
+- [x] тест: у моделей разных наборов разные `Handle<Texture>`; молчаливая поломка в «Игры» `docs/design.md`: одинаковый URI атласа у наборов в одном каталоге даёт всем одну текстуру
+- [x] тест габаритов: после масштаба дерево и камень помещаются в клетку, персонаж ~1,8 м стоит на полу
+- [x] `Shooter: Game` с пустой сценой; `make shooter` запускается
+- [x] `cargo mutants -f games/shooter/src/main.rs`, `make cov`, `make check`
 
 ### Task 4: Карта уровня
 **Files:**

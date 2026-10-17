@@ -1007,6 +1007,27 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn required_unlit_material_parses_and_stays_lit() {
+        let plain = parse(&patched("gate.glb", &[])).unwrap().model;
+        let unlit = parse(&patched(
+            "gate.glb",
+            &[
+                (
+                    r#""extensionsUsed":["KHR_texture_transform"]"#,
+                    r#""extensionsUsed":["KHR_texture_transform","KHR_materials_unlit"],"extensionsRequired":["KHR_materials_unlit"]"#,
+                ),
+                (
+                    r#""name":"colormap"}"#,
+                    r#""name":"colormap","extensions":{"KHR_materials_unlit":{}}}"#,
+                ),
+            ],
+        ))
+        .unwrap()
+        .model;
+        assert_eq!(unlit, plain);
+    }
+
+    #[test]
     fn non_linear_interpolation_is_an_error() {
         for interp in ["STEP", "CUBICSPLINE"] {
             let e = parse_err(
