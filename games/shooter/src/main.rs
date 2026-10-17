@@ -1,4 +1,5 @@
 mod map;
+mod obstacle;
 
 use std::fs;
 
