@@ -4,15 +4,18 @@ mod obstacle;
 mod player;
 mod weapon;
 
-use std::fs;
+use std::{fs, mem};
 
 use engine::{
-    Aabb3, Assets, Config, Context, Game, Handle, KeyCode, Mat4, Model, MouseButton, Scene, Vec3,
+    Aabb3, Assets, Config, Context, Game, Handle, IVec2, KeyCode, Mat4, Model, MouseButton, Scene,
+    Vec2, Vec3,
 };
 
+use crate::enemy::Enemy;
 use crate::map::Map;
 use crate::obstacle::Obstacles;
-use crate::player::Player;
+use crate::player::{MAX_HP, Player, RADIUS, forward};
+use crate::weapon::{Arsenal, Impact, Projectile, Shot, Target};
 
 const TICK_HZ: u32 = 60;
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
@@ -27,6 +30,14 @@ const FOREST_SCALE: f32 = CELL;
 /// Рост Blocky Characters — 2,7 единицы, персонаж — 1,8 м.
 #[cfg_attr(not(test), expect(dead_code, reason = "сцена — в следующих задачах"))]
 const CHARACTER_SCALE: f32 = 1.8 / 2.7;
+/// Здоровье от аптечки.
+const MEDKIT: i32 = 25;
+/// Патроны пачки по оружиям `Arsenal::weapons`.
+const AMMO_PACK: [u32; 2] = [20, 5];
+/// Расстояние от центра игрока до центра клетки предмета, с которого он берётся, клетки.
+const PICKUP: f32 = 0.5;
+/// Игрок с ключом открывает дверь вплотную: упор в неё — ровно `RADIUS`.
+const DOOR_REACH: f32 = RADIUS + 0.05;
 
 /// Клипы, которые враги ищут по имени.
 #[cfg(test)]
@@ -89,22 +100,199 @@ fn standing(model: &Model, scale: f32) -> Mat4 {
     Mat4::from_translation(Vec3::Y * lift) * Mat4::from_scale(Vec3::splat(scale))
 }
 
-struct Shooter {
-    #[cfg_attr(not(test), expect(dead_code, reason = "сцена — в следующих задачах"))]
-    models: Models,
-    #[cfg_attr(not(test), expect(dead_code, reason = "рестарт — в следующих задачах"))]
-    map: Map,
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Door {
+    cell: IVec2,
+    /// Секунд с открытия ключом.
+    opened: Option<f32>,
+}
+
+/// Состояние уровня, которое сбрасывает рестарт.
+#[derive(Clone, Debug, PartialEq)]
+struct Level {
     obstacles: Obstacles,
     player: Player,
+    arsenal: Arsenal,
+    enemies: Vec<Enemy>,
+    projectiles: Vec<Projectile>,
+    /// Не взятые.
+    keys: Vec<IVec2>,
+    /// Ключ в руках; один открывает все двери.
+    key: bool,
+    doors: Vec<Door>,
+    /// Не взятые.
+    medkits: Vec<IVec2>,
+    /// Не взятые.
+    ammo: Vec<IVec2>,
+    won: bool,
+}
+
+impl Level {
+    fn new(map: &Map, models: &Models) -> Self {
+        let centre = |cell: IVec2| cell.as_vec2() + 0.5;
+        Self {
+            obstacles: Obstacles::new(map),
+            player: Player::new(centre(map.player), map.facing.yaw()),
+            arsenal: Arsenal::new(models.blaster, models.launcher),
+            enemies: map
+                .enemies
+                .iter()
+                .map(|&(kind, cell)| Enemy::new(kind, centre(cell)))
+                .collect(),
+            projectiles: Vec::new(),
+            keys: map.keys.clone(),
+            key: false,
+            doors: map
+                .doors
+                .iter()
+                .map(|&cell| Door { cell, opened: None })
+                .collect(),
+            medkits: map.medkits.clone(),
+            ammo: map.ammo.clone(),
+            won: false,
+        }
+    }
+
+    fn fire(&mut self) {
+        let (targets, ids) = targets(&self.enemies);
+        let p = &self.player;
+        match (self.arsenal).fire(p.pos, forward(p.yaw), &self.obstacles, &targets) {
+            Some(Shot::Hit { target, damage }) => self.enemies[ids[target]].hurt(damage),
+            Some(Shot::Launch(projectile)) => self.projectiles.push(projectile),
+            Some(Shot::Miss) | None => {}
+        }
+    }
+
+    fn pick_up(&mut self) {
+        let pos = self.player.pos;
+        let near = |cell: &IVec2| pos.distance(cell.as_vec2() + 0.5) < PICKUP;
+        let keys = self.keys.len();
+        self.keys.retain(|c| !near(c));
+        self.key |= self.keys.len() < keys;
+        let hp = &mut self.player.hp;
+        if *hp < MAX_HP
+            && let Some(i) = self.medkits.iter().position(near)
+        {
+            self.medkits.remove(i);
+            *hp = (*hp + MEDKIT).min(MAX_HP);
+        }
+        let packs = self.ammo.len();
+        self.ammo.retain(|c| !near(c));
+        for _ in self.ammo.len()..packs {
+            for (w, n) in self.arsenal.weapons.iter_mut().zip(AMMO_PACK) {
+                w.ammo += n;
+            }
+        }
+    }
+
+    /// Дверь открывает касание с ключом и пропускает только после `open_secs` анимации.
+    fn doors(&mut self, dt: f32, open_secs: f32) {
+        let pos = self.player.pos;
+        for door in &mut self.doors {
+            match &mut door.opened {
+                Some(t) => {
+                    *t += dt;
+                    if *t >= open_secs {
+                        self.obstacles.open(door.cell);
+                    }
+                }
+                None if self.key && touches_cell(pos, door.cell) => door.opened = Some(0.0),
+                None => {}
+            }
+        }
+    }
+
+    /// Снаряды за тик; попавший пропадает.
+    fn fly(&mut self, dt: f32) {
+        let player = Target {
+            pos: self.player.pos,
+            radius: RADIUS,
+        };
+        let (targets, ids) = targets(&self.enemies);
+        let mut projectiles = mem::take(&mut self.projectiles);
+        projectiles.retain_mut(|p| match p.step(dt, &self.obstacles, player, &targets) {
+            None => true,
+            Some(Impact::Wall) => false,
+            Some(Impact::Player) => {
+                self.player.hurt(p.damage);
+                false
+            }
+            Some(Impact::Enemy(i)) => {
+                self.enemies[ids[i]].hurt(p.damage);
+                false
+            }
+        });
+        self.projectiles = projectiles;
+    }
+}
+
+/// Цели живых врагов и их индексы в `enemies`.
+fn targets(enemies: &[Enemy]) -> (Vec<Target>, Vec<usize>) {
+    enemies
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| Some((e.target()?, i)))
+        .unzip()
+}
+
+/// Центр игрока `pos` у самой клетки `cell`.
+fn touches_cell(pos: Vec2, cell: IVec2) -> bool {
+    let min = cell.as_vec2();
+    pos.distance(pos.clamp(min, min + 1.0)) <= DOOR_REACH
+}
+
+struct Shooter {
+    models: Models,
+    map: Map,
+    /// Длительность анимации `open` двери, с.
+    open_secs: f32,
+    level: Level,
 }
 
 impl Shooter {
     fn new(map: Map, assets: &mut Assets) -> Self {
+        let models = Models::load(assets);
+        let open_secs = (assets.model(models.gate).animations.iter())
+            .find(|a| a.name == "open")
+            .expect("у двери есть open")
+            .duration;
         Self {
-            models: Models::load(assets),
-            obstacles: Obstacles::new(&map),
-            player: Player::new(map.player.as_vec2() + 0.5, map.facing.yaw()),
+            level: Level::new(&map, &models),
+            models,
             map,
+            open_secs,
+        }
+    }
+
+    /// Тик до победы; мёртвый игрок стоит, а мир идёт.
+    fn play(&mut self, ctx: &Context) {
+        let dt = ctx.time.step.as_secs_f32();
+        let l = &mut self.level;
+        l.player.update(&ctx.input, dt, &l.obstacles);
+        l.arsenal.update(&ctx.input, dt);
+        if l.player.alive() {
+            // Клик захвата курсора — не выстрел.
+            if ctx.grabbed && ctx.input.mouse_down(MouseButton::Left) {
+                l.fire();
+            }
+            l.pick_up();
+        }
+        l.doors(dt, self.open_secs);
+        for e in &mut l.enemies {
+            l.projectiles
+                .extend(e.update(dt, &mut l.player, &l.obstacles));
+        }
+        l.fly(dt);
+        l.won = l.player.alive() && l.player.pos.floor().as_ivec2() == self.map.exit;
+        if l.won {
+            // `play` больше не позовётся, и `draw` качал бы тела между `prev` и `pos` каждый кадр.
+            l.player.prev = l.player.pos;
+            for e in &mut l.enemies {
+                e.prev = e.pos;
+            }
+            for p in &mut l.projectiles {
+                p.prev = p.pos;
+            }
         }
     }
 }
@@ -124,13 +312,23 @@ impl Game for Shooter {
         if ctx.input.just_pressed(KeyCode::Escape) {
             ctx.cursor_grab = false;
         }
-        let dt = ctx.time.step.as_secs_f32();
-        self.player.update(&ctx.input, dt, &self.obstacles);
+        let l = &self.level;
+        if (l.won || !l.player.alive()) && ctx.input.just_pressed(KeyCode::Enter) {
+            self.level = Level::new(&self.map, &self.models);
+        } else if !l.won {
+            self.play(ctx);
+        }
     }
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
+        // После выхода `update` не крутит игрока, и непотреблённый сдвиг дёргал бы камеру до тика.
+        let delta = if self.level.won {
+            Vec2::ZERO
+        } else {
+            ctx.input.mouse_delta()
+        };
         ctx.gfx.scene = Some(Scene {
-            camera: self.player.camera(alpha, ctx.input.mouse_delta()),
+            camera: self.level.player.camera(alpha, delta),
             ..Scene::default()
         });
     }
@@ -153,12 +351,13 @@ mod tests {
     use engine::{
         Camera3D,
         ElementState::{Pressed, Released},
-        FixedClock, Texture, vec2, vec3,
+        FixedClock, Texture, ivec2, vec2, vec3,
     };
 
     use super::*;
-    use crate::map::Dir;
-    use crate::player::{EYE, RADIUS, SENSITIVITY, SPEED};
+    use crate::enemy::{State, stats};
+    use crate::map::{Dir, EnemyKind};
+    use crate::player::{EYE, SENSITIVITY, SPEED};
 
     fn all(m: &Models) -> [Handle<Model>; 15] {
         [
@@ -269,8 +468,8 @@ mod tests {
     #[test]
     fn player_starts_at_cell_centre_facing_open_neighbour() {
         let (g, _) = shooter(ROOM);
-        assert_eq!(g.player.pos, vec2(1.5, 1.5));
-        assert_eq!(g.player.yaw, Dir::E.yaw());
+        assert_eq!(g.level.player.pos, vec2(1.5, 1.5));
+        assert_eq!(g.level.player.yaw, Dir::E.yaw());
     }
 
     #[test]
@@ -278,41 +477,41 @@ mod tests {
         let (mut g, mut ctx) = shooter(ROOM);
         ctx.input.on_key(KeyCode::KeyW, Pressed, false);
         g.update(&mut ctx);
-        assert_eq!(g.player.pos, vec2(1.5 + SPEED / TICK_HZ as f32, 1.5));
+        assert_eq!(g.level.player.pos, vec2(1.5 + SPEED / TICK_HZ as f32, 1.5));
     }
 
     #[test]
     fn closed_door_holds_player() {
         let (mut g, mut ctx) = shooter("######\n#PD.X#\n#k...#\n######\n");
-        g.player.yaw = Dir::E.yaw();
+        g.level.player.yaw = Dir::E.yaw();
         ctx.input.on_key(KeyCode::KeyW, Pressed, false);
         for _ in 0..120 {
             g.update(&mut ctx);
         }
         assert!(
-            (g.player.pos.x - (2.0 - RADIUS)).abs() < 1e-5,
+            (g.level.player.pos.x - (2.0 - RADIUS)).abs() < 1e-5,
             "{:?}",
-            g.player.pos
+            g.level.player.pos
         );
     }
 
     #[test]
     fn update_consumes_mouse_and_draw_adds_rest() {
         let (mut g, mut ctx) = shooter(ROOM);
-        let yaw = g.player.yaw;
+        let yaw = g.level.player.yaw;
         ctx.input.on_mouse_motion(vec2(100.0, -40.0));
         g.update(&mut ctx);
         ctx.input.end_tick();
-        assert_eq!(g.player.yaw, yaw - 100.0 * SENSITIVITY);
+        assert_eq!(g.level.player.yaw, yaw - 100.0 * SENSITIVITY);
         g.draw(&mut ctx, 1.0);
-        assert_eq!(camera(&ctx).yaw, g.player.yaw);
+        assert_eq!(camera(&ctx).yaw, g.level.player.yaw);
         assert_eq!(camera(&ctx).pitch, 40.0 * SENSITIVITY);
 
-        let before = g.player;
+        let before = g.level.player;
         ctx.input.on_mouse_motion(vec2(50.0, 0.0));
         g.draw(&mut ctx, 1.0);
         assert_eq!(camera(&ctx).yaw, before.yaw - 50.0 * SENSITIVITY);
-        assert_eq!(g.player, before);
+        assert_eq!(g.level.player, before);
         assert_eq!(camera(&ctx).pos, vec3(1.5 * CELL, EYE, 1.5 * CELL));
     }
 
@@ -340,5 +539,242 @@ mod tests {
         ctx.input.on_key(KeyCode::Escape, Pressed, false);
         g.update(&mut ctx);
         assert!(!ctx.cursor_grab);
+    }
+
+    fn tick(g: &mut Shooter, ctx: &mut Context) {
+        g.update(ctx);
+        ctx.input.end_tick();
+    }
+
+    fn until(g: &mut Shooter, ctx: &mut Context, done: impl Fn(&Shooter) -> bool) {
+        for _ in 0..TICK_HZ * 10 {
+            if done(g) {
+                return;
+            }
+            tick(g, ctx);
+        }
+        panic!("за 10 с не дождались");
+    }
+
+    fn walk_east(g: &mut Shooter, ctx: &mut Context) {
+        g.level.player.yaw = Dir::E.yaw();
+        ctx.input.on_key(KeyCode::KeyW, Pressed, false);
+    }
+
+    #[test]
+    fn key_is_taken_once_by_touch() {
+        let (mut g, mut ctx) = shooter("#######\n#P.k.X#\n#######\n");
+        g.level.player.pos = vec2(3.5 - PICKUP, 1.5);
+        tick(&mut g, &mut ctx);
+        assert!(!g.level.key, "ровно на PICKUP не берётся");
+        g.level.player.pos = vec2(1.5, 1.5);
+        walk_east(&mut g, &mut ctx);
+        until(&mut g, &mut ctx, |g| g.level.key);
+        assert_eq!(g.level.keys, []);
+        let d = g.level.player.pos.distance(vec2(3.5, 1.5));
+        assert!(d < PICKUP && d >= PICKUP - SPEED / TICK_HZ as f32, "{d}");
+        until(&mut g, &mut ctx, |g| g.level.won);
+        assert!(g.level.key);
+    }
+
+    #[test]
+    fn key_opens_door_and_door_holds_until_animation_ends() {
+        let (mut g, mut ctx) = shooter("#######\n#kPD.X#\n#######\n");
+        let door = ivec2(3, 1);
+        walk_east(&mut g, &mut ctx);
+        for _ in 0..TICK_HZ {
+            tick(&mut g, &mut ctx);
+        }
+        assert_eq!(g.level.doors[0].opened, None, "без ключа");
+        assert!((g.level.player.pos.x - (3.0 - RADIUS)).abs() < 1e-5);
+
+        g.level.player.yaw = Dir::W.yaw();
+        until(&mut g, &mut ctx, |g| g.level.key);
+        assert_eq!(g.level.doors[0].opened, None, "ключ издалека не открывает");
+        g.level.player.yaw = Dir::E.yaw();
+        until(&mut g, &mut ctx, |g| g.level.doors[0].opened.is_some());
+        assert!(g.level.player.pos.x <= 3.0 - RADIUS);
+        let dt = 1.0 / TICK_HZ as f32;
+        while g.level.obstacles.solid(door) {
+            let t = g.level.doors[0].opened.unwrap();
+            assert!(t < g.open_secs, "{t}");
+            assert!(g.level.player.pos.x <= 3.0 - RADIUS + 1e-5);
+            tick(&mut g, &mut ctx);
+        }
+        let t = g.level.doors[0].opened.unwrap();
+        assert!(t >= g.open_secs && t - dt < g.open_secs, "{t}");
+        until(&mut g, &mut ctx, |g| g.level.won);
+    }
+
+    #[test]
+    fn medkit_heals_up_to_max_and_waits_at_full_health() {
+        let (mut g, mut ctx) = shooter("#########\n#P+.+.+X#\n#########\n");
+        walk_east(&mut g, &mut ctx);
+        until(&mut g, &mut ctx, |g| g.level.player.pos.x > 3.0);
+        assert_eq!(g.level.medkits.len(), 3, "при полном здоровье не берётся");
+        g.level.player.hp = MAX_HP - 10;
+        until(&mut g, &mut ctx, |g| g.level.medkits.len() == 2);
+        assert_eq!(g.level.player.hp, MAX_HP);
+        assert_eq!(g.level.medkits, [ivec2(2, 1), ivec2(6, 1)]);
+        g.level.player.hp = 50;
+        until(&mut g, &mut ctx, |g| g.level.medkits.len() == 1);
+        assert_eq!(g.level.player.hp, 50 + MEDKIT);
+    }
+
+    #[test]
+    fn dead_player_takes_nothing() {
+        let (mut g, mut ctx) = shooter("#######\n#P+akX#\n#######\n");
+        for cell in [2.5, 3.5, 4.5] {
+            g.level.player.pos = vec2(cell, 1.5);
+            g.level.player.hp = 0;
+            tick(&mut g, &mut ctx);
+        }
+        assert_eq!(
+            g.level,
+            Level {
+                player: g.level.player,
+                ..Level::new(&g.map, &g.models)
+            }
+        );
+    }
+
+    #[test]
+    fn ammo_pack_adds_to_both_weapons() {
+        let (mut g, mut ctx) = shooter("######\n#Pa.X#\n######\n");
+        let before = g.level.arsenal.weapons.map(|w| w.ammo);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.level.ammo, [ivec2(2, 1)], "издалека не берётся");
+        walk_east(&mut g, &mut ctx);
+        until(&mut g, &mut ctx, |g| g.level.ammo.is_empty());
+        let after = g.level.arsenal.weapons.map(|w| w.ammo);
+        assert_eq!(after, [before[0] + AMMO_PACK[0], before[1] + AMMO_PACK[1]]);
+    }
+
+    #[test]
+    fn exit_wins_and_enter_restarts_level() {
+        let (mut g, mut ctx) = shooter("######\n#P..X#\n#..f.#\n######\n");
+        walk_east(&mut g, &mut ctx);
+        ctx.input.on_key(KeyCode::Enter, Pressed, false);
+        tick(&mut g, &mut ctx);
+        assert_ne!(
+            g.level.player.pos,
+            vec2(1.5, 1.5),
+            "Enter до победы не рестартит"
+        );
+        ctx.input.on_key(KeyCode::Enter, Released, false);
+
+        until(&mut g, &mut ctx, |g| g.level.won);
+        assert_eq!(g.level.player.pos.floor().as_ivec2(), g.map.exit);
+        assert_eq!(g.level.player.prev, g.level.player.pos);
+        assert!(g.level.enemies.iter().all(|e| e.prev == e.pos));
+        let won = g.level.clone();
+        for _ in 0..10 {
+            tick(&mut g, &mut ctx);
+        }
+        assert_eq!(g.level, won, "после победы мир стоит");
+
+        ctx.input.on_key(KeyCode::Enter, Pressed, false);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.level, Level::new(&g.map, &g.models));
+    }
+
+    #[test]
+    fn dead_player_on_exit_does_not_win() {
+        let (mut g, mut ctx) = shooter(ROOM);
+        g.level.player.pos = vec2(3.5, 1.5);
+        g.level.player.hp = 0;
+        tick(&mut g, &mut ctx);
+        assert!(!g.level.won);
+    }
+
+    #[test]
+    fn death_waits_for_enter_and_restarts_full_level() {
+        let (mut g, mut ctx) = shooter("########\n#Pm+a.X#\n########\n");
+        ctx.grabbed = true;
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        for _ in 0..TICK_HZ / 2 {
+            tick(&mut g, &mut ctx);
+        }
+        ctx.input.on_button(MouseButton::Left, Released);
+        assert!(g.level.enemies[0].hp < stats(EnemyKind::Brawler).hp);
+        ctx.input.on_key(KeyCode::Enter, Pressed, false);
+        tick(&mut g, &mut ctx);
+        ctx.input.on_key(KeyCode::Enter, Released, false);
+        assert!(g.level.player.hp < MAX_HP, "живого Enter не рестартит");
+
+        until(&mut g, &mut ctx, |g| !g.level.player.alive());
+        let ammo = g.level.arsenal.weapons[0].ammo;
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        for _ in 0..TICK_HZ {
+            tick(&mut g, &mut ctx);
+        }
+        assert_eq!(g.level.arsenal.weapons[0].ammo, ammo, "мёртвый не стреляет");
+        assert!(!g.level.player.alive() && !g.level.won);
+
+        ctx.input.on_key(KeyCode::Enter, Pressed, false);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.level, Level::new(&g.map, &g.models));
+    }
+
+    #[test]
+    fn hitscan_needs_grab_and_skips_dead_enemy() {
+        let (mut g, mut ctx) = shooter("########\n#P.m.m.#\n#X.....#\n########\n");
+        g.level.enemies[0].hurt(1000);
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        tick(&mut g, &mut ctx);
+        assert_eq!(
+            g.level.arsenal.weapons[0].ammo, 40,
+            "клик захвата — не выстрел"
+        );
+        ctx.grabbed = true;
+        tick(&mut g, &mut ctx);
+        let w = g.level.arsenal.weapons[0];
+        assert_eq!(w.ammo, 39);
+        assert_eq!(
+            g.level.enemies[1].hp,
+            stats(EnemyKind::Brawler).hp - w.damage
+        );
+        assert_eq!(g.level.enemies[1].state, State::Chase);
+    }
+
+    #[test]
+    fn launcher_projectile_flies_past_dead_enemy_into_live_one() {
+        let (mut g, mut ctx) = shooter("########\n#P.m.m.#\n#X.....#\n########\n");
+        g.level.enemies[0].hurt(1000);
+        ctx.grabbed = true;
+        ctx.input.on_key(KeyCode::Digit2, Pressed, false);
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        tick(&mut g, &mut ctx);
+        ctx.input.on_button(MouseButton::Left, Released);
+        assert_eq!(g.level.projectiles.len(), 1);
+        until(&mut g, &mut ctx, |g| g.level.projectiles.is_empty());
+        let w = g.level.arsenal.weapons[1];
+        assert_eq!(
+            g.level.enemies[1].hp,
+            stats(EnemyKind::Brawler).hp - w.damage
+        );
+    }
+
+    #[test]
+    fn gunner_bolt_hurts_player_and_wall_stops_bolt() {
+        let (mut g, mut ctx) = shooter("#######\n#P...s#\n#X....#\n#######\n");
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.level.projectiles.len(), 1);
+        until(&mut g, &mut ctx, |g| g.level.player.hp < MAX_HP);
+        assert_eq!(g.level.player.hp, MAX_HP - stats(EnemyKind::Gunner).damage);
+        assert_eq!(g.level.projectiles, []);
+    }
+
+    #[test]
+    fn projectile_vanishes_at_wall() {
+        let (mut g, mut ctx) = shooter(ROOM);
+        g.level.player.yaw = Dir::N.yaw();
+        ctx.grabbed = true;
+        ctx.input.on_key(KeyCode::Digit2, Pressed, false);
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        tick(&mut g, &mut ctx);
+        ctx.input.on_button(MouseButton::Left, Released);
+        assert_eq!(g.level.projectiles.len(), 1);
+        until(&mut g, &mut ctx, |g| g.level.projectiles.is_empty());
     }
 }

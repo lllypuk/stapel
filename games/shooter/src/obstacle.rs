@@ -1,8 +1,3 @@
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "препятствия читают следующие задачи")
-)]
-
 use std::collections::VecDeque;
 
 use engine::{IVec2, Vec2};
@@ -12,7 +7,7 @@ use crate::map::{Dir, Map, Tile};
 /// Единственный запрос препятствий для хода, взгляда, выстрела, снарядов и пути.
 ///
 /// План в клетках: клетка `(x, y)` — квадрат `[x, x+1)×[y, y+1)`. Вне карты всё твёрдо.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Obstacles {
     solid: Vec<bool>,
     size: IVec2,

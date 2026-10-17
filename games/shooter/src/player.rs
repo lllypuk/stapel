@@ -39,10 +39,6 @@ impl Player {
         self.hp > 0
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "урон наносят враги следующих задач")
-    )]
     pub(crate) fn hurt(&mut self, damage: i32) {
         self.hp = (self.hp - damage).max(0);
     }
@@ -88,10 +84,14 @@ fn wish(input: &Input, yaw: f32) -> Vec2 {
     let axis = |plus, minus| {
         f32::from(u8::from(input.is_down(plus))) - f32::from(u8::from(input.is_down(minus)))
     };
-    let forward = Vec2::new(-yaw.sin(), -yaw.cos());
     let right = Vec2::new(yaw.cos(), -yaw.sin());
-    (forward * axis(KeyCode::KeyW, KeyCode::KeyS) + right * axis(KeyCode::KeyD, KeyCode::KeyA))
+    (forward(yaw) * axis(KeyCode::KeyW, KeyCode::KeyS) + right * axis(KeyCode::KeyD, KeyCode::KeyA))
         .normalize_or_zero()
+}
+
+/// Единичный взгляд `yaw` на плане.
+pub(crate) fn forward(yaw: f32) -> Vec2 {
+    Vec2::new(-yaw.sin(), -yaw.cos())
 }
 
 /// Позиция круга `radius` после шага `step` со скольжением вдоль твёрдых клеток.
