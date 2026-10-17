@@ -1,7 +1,16 @@
+mod map;
+
+use std::fs;
+
 use engine::{Aabb3, Assets, Config, Context, Game, Handle, Mat4, Model, Scene, Vec3};
+
+use crate::map::Map;
 
 const TICK_HZ: u32 = 60;
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
+const LEVEL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/levels/level01.txt");
+#[cfg(test)]
+const LEVEL01: &str = include_str!("../assets/levels/level01.txt");
 /// Сторона клетки карты, м.
 #[cfg_attr(not(test), expect(dead_code, reason = "карта — в следующих задачах"))]
 const CELL: f32 = 2.0;
@@ -76,12 +85,16 @@ fn standing(model: &Model, scale: f32) -> Mat4 {
 struct Shooter {
     #[cfg_attr(not(test), expect(dead_code, reason = "сцена — в следующих задачах"))]
     models: Models,
+    #[cfg_attr(not(test), expect(dead_code, reason = "карту читают следующие задачи"))]
+    map: Map,
 }
 
 impl Game for Shooter {
     fn init(ctx: &mut Context) -> Self {
+        let text = fs::read_to_string(LEVEL).unwrap_or_else(|e| panic!("{LEVEL}: {e}"));
         Self {
             models: Models::load(&mut ctx.assets),
+            map: Map::parse(&text).unwrap_or_else(|e| panic!("{LEVEL}: {e}")),
         }
     }
 
@@ -193,6 +206,13 @@ mod tests {
             assert!((1.7..1.9).contains(&b.max.y), "{b:?}");
             assert!(b.max.x - b.min.x < CELL, "{b:?}");
         }
+    }
+
+    #[test]
+    fn init_reads_level_from_disk() {
+        let mut ctx = Context::default();
+        let g = Shooter::init(&mut ctx);
+        assert_eq!(g.map, Map::parse(LEVEL01).unwrap());
     }
 
     #[test]
