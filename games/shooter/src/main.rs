@@ -662,7 +662,9 @@ impl Shooter {
     /// Тик до победы; мёртвый игрок стоит, а мир идёт.
     fn play(&mut self, ctx: &Context) {
         let dt = ctx.time.step.as_secs_f32();
-        let trigger = ctx.grabbed && !self.grab_click && ctx.input.mouse_down(MouseButton::Left);
+        let lmb = ctx.input.mouse_down(MouseButton::Left)
+            || ctx.input.mouse_just_pressed(MouseButton::Left);
+        let trigger = ctx.grabbed && !self.grab_click && lmb;
         let l = &mut self.level;
         let enemy_hp: Vec<i32> = l.enemies.iter().map(|e| e.hp).collect();
         l.player.update(&ctx.input, dt, &l.obstacles);
@@ -1178,6 +1180,7 @@ mod tests {
         ctx.input.on_button(MouseButton::Left, Released);
         tick(&mut g, &mut ctx);
         ctx.input.on_button(MouseButton::Left, Pressed);
+        ctx.input.on_button(MouseButton::Left, Released);
         tick(&mut g, &mut ctx);
         let w = g.level.arsenal.weapons[0];
         assert_eq!(w.ammo, 39);
