@@ -54,10 +54,12 @@ impl Player {
             return;
         }
         (self.yaw, self.pitch) = turned(self.yaw, self.pitch, input.mouse_delta());
-        let step = wish(input, self.yaw) * SPEED * dt;
-        let solid = |c| obstacles.solid(c);
-        self.pos.x = slide(self.pos, step.x, 0, solid);
-        self.pos.y = slide(self.pos, step.y, 1, solid);
+        self.pos = walk(
+            self.pos,
+            wish(input, self.yaw) * SPEED * dt,
+            RADIUS,
+            obstacles,
+        );
     }
 
     /// Камера кадра: угол с ещё не потреблённым сдвигом `delta`, позиция между тиками.
@@ -92,10 +94,17 @@ fn wish(input: &Input, yaw: f32) -> Vec2 {
         .normalize_or_zero()
 }
 
+/// Позиция круга `radius` после шага `step` со скольжением вдоль твёрдых клеток.
+pub(crate) fn walk(pos: Vec2, step: Vec2, radius: f32, obstacles: &Obstacles) -> Vec2 {
+    let solid = |c| obstacles.solid(c);
+    let x = slide(pos, step.x, 0, radius, solid);
+    Vec2::new(x, slide(Vec2::new(x, pos.y), step.y, 1, radius, solid))
+}
+
 /// Координата `axis` после сдвига на `d`, зажатая между твёрдыми клетками по обе стороны круга.
-fn slide(pos: Vec2, d: f32, axis: usize, solid: impl Fn(IVec2) -> bool) -> f32 {
+fn slide(pos: Vec2, d: f32, axis: usize, radius: f32, solid: impl Fn(IVec2) -> bool) -> f32 {
     let other = 1 - axis;
-    let mut span = Vec2::splat(RADIUS);
+    let mut span = Vec2::splat(radius);
     span[axis] += d.abs();
     let (lo, hi) = (
         (pos - span).floor().as_ivec2(),
@@ -109,10 +118,10 @@ fn slide(pos: Vec2, d: f32, axis: usize, solid: impl Fn(IVec2) -> bool) -> f32 {
             let off = (across - pos[other])
                 .max(pos[other] - across - 1.0)
                 .max(0.0);
-            if off >= RADIUS || !solid(cell) {
+            if off >= radius || !solid(cell) {
                 continue;
             }
-            let reach = (RADIUS * RADIUS - off * off).sqrt();
+            let reach = (radius * radius - off * off).sqrt();
             let edge = cell[axis] as f32;
             if edge > pos[axis] {
                 max = max.min(edge - reach);

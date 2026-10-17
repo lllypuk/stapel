@@ -1,3 +1,4 @@
+mod enemy;
 mod map;
 mod obstacle;
 mod player;

@@ -37,6 +37,11 @@ impl Obstacles {
         self.doors.retain(|&d| d != door);
     }
 
+    /// Двери только открываются: смена числа — смена путей.
+    pub(crate) fn closed_doors(&self) -> usize {
+        self.doors.len()
+    }
+
     pub(crate) fn solid(&self, cell: IVec2) -> bool {
         self.index(cell).is_none_or(|i| self.solid[i]) || self.doors.contains(&cell)
     }
@@ -165,8 +170,10 @@ mod tests {
         for c in [ivec2(-1, 0), ivec2(4, 0), ivec2(0, -1), ivec2(0, 2)] {
             assert!(o.solid(c), "{c}");
         }
+        assert_eq!(o.closed_doors(), 1);
         o.open(ivec2(2, 1));
         assert!(!o.solid(ivec2(2, 1)));
+        assert_eq!(o.closed_doors(), 0);
     }
 
     #[test]
