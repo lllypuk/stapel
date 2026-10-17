@@ -829,8 +829,8 @@ mod tests {
         let missing = assets.load_sound(temp_path("missing.wav"));
         assert_eq!(a, b);
         assert_ne!(a, missing);
-        assert!(!assets.sound(a).frames.is_empty());
-        assert!(assets.sound(missing).frames.is_empty());
+        assert!(!assets.sound(a).is_empty());
+        assert!(assets.sound(missing).is_empty());
     }
 
     #[test]

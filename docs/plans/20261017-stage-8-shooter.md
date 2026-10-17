@@ -176,11 +176,11 @@
 ### Task 11: Звук игры
 **Files:**
 - Create: `games/shooter/src/sound.rs`, `games/shooter/assets/sounds/`
-- Modify: `games/shooter/assets/CREDITS.md`, `.cargo/mutants.toml`
-- [ ] звуки Kenney (CC0): выстрелы, попадание, смерть, подбор, дверь; `decode` их читает; записать в `CREDITS.md`
-- [ ] тесты `SoundCmd`: выстрел — одна команда на выстрел, звук врага справа даёт `right > left`, вне `range` ничего не шлёт
-- [ ] `update_sound` шлёт команды в `Audio`; исключение `in Shooter::update_sound$` в `.cargo/mutants.toml` с причиной, как у racing
-- [ ] `cargo mutants -f games/shooter/src/sound.rs`, `make cov`, `make check`
+- Modify: `games/shooter/assets/CREDITS.md`, `.cargo/mutants.toml`, `engine/src/audio/mod.rs` (➕ `Sound::is_empty`: игре нечем проверить, что декод прочитал файл)
+- [x] звуки Kenney (CC0): выстрелы, попадание, смерть, подбор, дверь; `decode` их читает; записать в `CREDITS.md`
+- [x] тесты `SoundCmd`: выстрел — одна команда на выстрел, звук врага справа даёт `right > left`, вне `range` ничего не шлёт
+- [x] `update_sound` шлёт команды в `Audio`; исключение `in Shooter::update_sound$` в `.cargo/mutants.toml` с причиной, как у racing
+- [x] `cargo mutants -f games/shooter/src/sound.rs`, `make cov`, `make check`
 
 ### Task 12: Бот и сквозные тесты
 **Files:**

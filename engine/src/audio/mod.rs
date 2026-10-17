@@ -24,6 +24,13 @@ pub struct Sound {
     pub(crate) frames: Arc<[f32]>,
 }
 
+impl Sound {
+    /// Заглушка ошибки загрузки.
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+}
+
 /// Громкости левого и правого канала эффекта.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stereo {

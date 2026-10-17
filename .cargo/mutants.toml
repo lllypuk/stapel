@@ -35,6 +35,9 @@ exclude_re = [
     # Audio в тестах игры немой: голос не стартует, и Set со Stop недостижимы; решение — в проверенном command.
     " in Racing::update_sound$",
     "replace Racing::update_sound with \\(\\)$",
+    # Audio в тестах игры немой: отправку не наблюдать; команды проверены в sound_commands.
+    " in Shooter::update_sound$",
+    "replace Shooter::update_sound with \\(\\)$",
     # Обороты ровно на пороге переключения — граница нулевой меры.
     "replace (> with >=|< with <=) in Rpm::tick$",
     # Период цикла в тысячи раз длиннее: synth в каждом Racing::new вешает тесты гонок до таймаута, длину держит synth_is_one_revolution….

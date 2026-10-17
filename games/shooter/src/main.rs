@@ -2,10 +2,11 @@ mod enemy;
 mod map;
 mod obstacle;
 mod player;
+mod sound;
 mod weapon;
 
 use std::f32::consts::FRAC_PI_2;
-use std::{fs, mem};
+use std::{fs, iter, mem};
 
 use engine::{
     Aabb3, Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Fog, Font,
@@ -17,6 +18,7 @@ use crate::enemy::{Clips, Enemy};
 use crate::map::{Dir, EnemyKind, Map, Tile};
 use crate::obstacle::Obstacles;
 use crate::player::{MAX_HP, Player, RADIUS, forward};
+use crate::sound::{Event, Sfx, SoundCmd, Sounds};
 use crate::weapon::{Arsenal, Impact, Projectile, Shot, Target};
 
 const TICK_HZ: u32 = 60;
@@ -207,6 +209,8 @@ struct Level {
     won: bool,
     /// Секунд до конца вспышки выстрела.
     flash: f32,
+    /// Звуки последнего тика.
+    sounds: Vec<Event>,
 }
 
 impl Level {
@@ -233,6 +237,7 @@ impl Level {
             ammo: map.ammo.clone(),
             won: false,
             flash: 0.0,
+            sounds: Vec::new(),
         }
     }
 
@@ -244,6 +249,8 @@ impl Level {
             return;
         };
         self.flash = FLASH;
+        let sfx = [Sfx::Blaster, Sfx::Launcher][self.arsenal.current];
+        self.sounds.push((sfx, self.player.pos));
         match shot {
             Shot::Hit { target, damage } => self.enemies[ids[target]].hurt(damage),
             Shot::Launch(projectile) => self.projectiles.push(projectile),
@@ -256,16 +263,21 @@ impl Level {
         let near = |cell: &IVec2| pos.distance(cell.as_vec2() + 0.5) < PICKUP;
         let keys = self.keys.len();
         self.keys.retain(|c| !near(c));
-        self.key |= self.keys.len() < keys;
+        let mut taken = keys - self.keys.len();
+        self.key |= taken > 0;
         let hp = &mut self.player.hp;
         if *hp < MAX_HP
             && let Some(i) = self.medkits.iter().position(near)
         {
             self.medkits.remove(i);
             *hp = (*hp + MEDKIT).min(MAX_HP);
+            taken += 1;
         }
         let packs = self.ammo.len();
         self.ammo.retain(|c| !near(c));
+        taken += packs - self.ammo.len();
+        self.sounds
+            .extend(iter::repeat_n((Sfx::Pickup, pos), taken));
         for _ in self.ammo.len()..packs {
             for (w, n) in self.arsenal.weapons.iter_mut().zip(AMMO_PACK) {
                 w.ammo += n;
@@ -284,7 +296,10 @@ impl Level {
                         self.obstacles.open(door.cell);
                     }
                 }
-                None if self.key && touches_cell(pos, door.cell) => door.opened = Some(0.0),
+                None if self.key && touches_cell(pos, door.cell) => {
+                    door.opened = Some(0.0);
+                    self.sounds.push((Sfx::Door, door.cell.as_vec2() + 0.5));
+                }
                 None => {}
             }
         }
@@ -428,6 +443,7 @@ struct Shooter {
     /// Анимация `open` двери и её длительность, с.
     open: usize,
     open_secs: f32,
+    sounds: Sounds,
     level: Level,
 }
 
@@ -445,6 +461,7 @@ impl Shooter {
             statics: statics(&map, &models, assets),
             font: assets.load_font(FONT_PATH, HUD_PX),
             ground: assets.add_mesh(vertices, indices),
+            sounds: Sounds::load(assets),
             clips,
             models,
             map,
@@ -634,10 +651,26 @@ impl Shooter {
         }
     }
 
+    /// Команды звуков последнего тика от глаза игрока.
+    fn sound_commands(&self) -> Vec<SoundCmd> {
+        sound::commands(
+            &self.level.sounds,
+            &self.level.player.camera(1.0, Vec2::ZERO),
+        )
+    }
+
+    fn update_sound(&self, ctx: &mut Context) {
+        for cmd in self.sound_commands() {
+            let sound = ctx.assets.sound(self.sounds.get(cmd.sfx));
+            ctx.audio.play_stereo(sound, cmd.gains);
+        }
+    }
+
     /// Тик до победы; мёртвый игрок стоит, а мир идёт.
     fn play(&mut self, ctx: &Context) {
         let dt = ctx.time.step.as_secs_f32();
         let l = &mut self.level;
+        let enemy_hp: Vec<i32> = l.enemies.iter().map(|e| e.hp).collect();
         l.player.update(&ctx.input, dt, &l.obstacles);
         l.arsenal.update(&ctx.input, dt);
         l.flash = (l.flash - dt).max(0.0);
@@ -648,12 +681,22 @@ impl Shooter {
             }
             l.pick_up();
         }
+        // После аптечки: иначе лечение и урон одного тика гасили бы друг друга.
+        let player_hp = l.player.hp;
         l.doors(dt, self.open_secs);
         for e in &mut l.enemies {
-            l.projectiles
-                .extend(e.update(dt, &mut l.player, &l.obstacles));
+            if let Some(bolt) = e.update(dt, &mut l.player, &l.obstacles) {
+                l.projectiles.push(bolt);
+                l.sounds.push((Sfx::Bolt, e.pos));
+            }
         }
         l.fly(dt);
+        let enemies = l.enemies.iter().zip(enemy_hp);
+        l.sounds.extend(
+            enemies
+                .filter_map(|(e, hp)| sound::wound(hp, e.hp, e.pos))
+                .chain(sound::wound(player_hp, l.player.hp, l.player.pos)),
+        );
         l.won = l.player.alive() && l.player.pos.floor().as_ivec2() == self.map.exit;
         if l.won {
             // `play` больше не позовётся, и `draw` качал бы тела между `prev` и `pos` каждый кадр.
@@ -684,12 +727,14 @@ impl Game for Shooter {
         if ctx.input.just_pressed(KeyCode::Escape) {
             ctx.cursor_grab = false;
         }
+        self.level.sounds.clear();
         let l = &self.level;
         if (l.won || !l.player.alive()) && ctx.input.just_pressed(KeyCode::Enter) {
             self.level = Level::new(&self.map, &self.models);
         } else if !l.won {
             self.play(ctx);
         }
+        self.update_sound(ctx);
     }
 
     fn draw(&mut self, ctx: &mut Context, alpha: f32) {
@@ -1138,6 +1183,86 @@ mod tests {
         until(&mut g, &mut ctx, |g| g.level.player.hp < MAX_HP);
         assert_eq!(g.level.player.hp, MAX_HP - stats(EnemyKind::Gunner).damage);
         assert_eq!(g.level.projectiles, []);
+    }
+
+    fn sfx(g: &Shooter) -> Vec<Sfx> {
+        g.sound_commands().iter().map(|c| c.sfx).collect()
+    }
+
+    #[test]
+    fn one_sound_per_shot_of_current_weapon() {
+        let (mut g, mut ctx) = shooter("########\n#P....X#\n########\n");
+        ctx.grabbed = true;
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        let mut shots = 0;
+        for _ in 0..TICK_HZ {
+            tick(&mut g, &mut ctx);
+            shots += sfx(&g).iter().filter(|&&s| s == Sfx::Blaster).count();
+            assert!(sfx(&g).iter().all(|&s| s == Sfx::Blaster));
+        }
+        assert_eq!(shots, (40 - g.level.arsenal.weapons[0].ammo) as usize);
+        assert!(shots > 1);
+        ctx.input.on_key(KeyCode::Digit2, Pressed, false);
+        until(&mut g, &mut ctx, |g| !g.level.sounds.is_empty());
+        assert_eq!(sfx(&g), [Sfx::Launcher]);
+    }
+
+    #[test]
+    fn gunner_on_the_right_sounds_louder_on_the_right() {
+        let (mut g, mut ctx) = shooter("#####\n#P..#\n#...#\n#..s#\n#X..#\n#####\n");
+        g.level.player.yaw = Dir::E.yaw();
+        until(&mut g, &mut ctx, |g| !g.level.sounds.is_empty());
+        let cmds = g.sound_commands();
+        assert_eq!(cmds.iter().map(|c| c.sfx).collect::<Vec<_>>(), [Sfx::Bolt]);
+        assert!(cmds[0].gains.right > cmds[0].gains.left, "{cmds:?}");
+    }
+
+    #[test]
+    fn enemy_hit_then_death_sound_at_enemy() {
+        let (mut g, mut ctx) = shooter("#########\n#P.....m#\n#X......#\n#########\n");
+        g.level.enemies[0].hp = 30;
+        ctx.grabbed = true;
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        tick(&mut g, &mut ctx);
+        let at = |g: &Shooter| g.level.enemies[0].pos;
+        assert_eq!(
+            g.level.sounds,
+            [(Sfx::Blaster, vec2(1.5, 1.5)), (Sfx::Hit, at(&g))]
+        );
+        tick(&mut g, &mut ctx);
+        until(&mut g, &mut ctx, |g| !g.level.sounds.is_empty());
+        assert_eq!(
+            g.level.sounds,
+            [(Sfx::Blaster, vec2(1.5, 1.5)), (Sfx::Death, at(&g))]
+        );
+    }
+
+    #[test]
+    fn player_hit_then_death_sound_at_player() {
+        let (mut g, mut ctx) = shooter("#####\n#Pm.#\n#X..#\n#####\n");
+        until(&mut g, &mut ctx, |g| !g.level.sounds.is_empty());
+        assert_eq!(g.level.sounds, [(Sfx::Hit, g.level.player.pos)]);
+        g.level.player.hp = 1;
+        tick(&mut g, &mut ctx);
+        until(&mut g, &mut ctx, |g| !g.level.sounds.is_empty());
+        assert_eq!(g.level.sounds, [(Sfx::Death, g.level.player.pos)]);
+    }
+
+    #[test]
+    fn pickups_and_door_sound_once_each() {
+        let (mut g, mut ctx) = shooter("########\n#Pka+D.#\n#X.....#\n########\n");
+        g.level.player.hp = MAX_HP - 1;
+        walk_east(&mut g, &mut ctx);
+        let mut heard = Vec::new();
+        while g.level.doors[0].opened.is_none() {
+            tick(&mut g, &mut ctx);
+            heard.extend(g.sound_commands().iter().map(|c| c.sfx));
+            if let Some(&(Sfx::Pickup, at)) = g.level.sounds.first() {
+                assert_eq!(at, g.level.player.pos);
+            }
+        }
+        assert_eq!(heard, [Sfx::Pickup, Sfx::Pickup, Sfx::Pickup, Sfx::Door]);
+        assert_eq!(g.level.sounds, [(Sfx::Door, vec2(5.5, 1.5))]);
     }
 
     #[test]
