@@ -192,11 +192,11 @@
 - [x] `cargo mutants -f games/shooter/src/bot.rs`, `make test`, `make cov`, `make check`
 
 ### Task 13: Приёмка и документация
-- [ ] пункты «Готово, когда»; `make mutants-diff`, `REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine`, `make test` с долгими
-- [ ] `docs/design.md`: строка 8 в «Этапы», «8+» → «9+»
-- [ ] `CLAUDE.md`: `make shooter` в «Команды»
-- [ ] `games/shooter/README.md`: управление, легенда карты
-- [ ] план — в `docs/plans/completed/`
+- [x] пункты «Готово, когда»; `make mutants-diff`, `REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine`, `make test` с долгими (⚠️ мутанты, не дающие открыть дверь, вешали тесты до таймаута — ожидания двери ограничены тиками)
+- [x] `docs/design.md`: строка 8 в «Этапы», «8+» → «9+»
+- [x] `CLAUDE.md`: `make shooter` в «Команды»
+- [x] `games/shooter/README.md`: управление, легенда карты
+- [x] план — в `docs/plans/completed/`
 
 ## Post-Completion
 - Запуск `make shooter`: оружие не дёргается и не уходит в деревья, враги различимы по поведению, звук слышен с правильной стороны в наушниках, вспышка видна.

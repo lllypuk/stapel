@@ -1018,9 +1018,12 @@ mod tests {
         until(&mut g, &mut ctx, |g| g.level.doors[0].opened.is_some());
         assert!(g.level.player.pos.x <= 3.0 - RADIUS);
         let dt = 1.0 / TICK_HZ as f32;
-        while g.level.obstacles.solid(door) {
+        for i in 0.. {
+            if !g.level.obstacles.solid(door) {
+                break;
+            }
             let t = g.level.doors[0].opened.unwrap();
-            assert!(t < g.open_secs, "{t}");
+            assert!(t < g.open_secs && t >= i as f32 * dt - 1e-4, "{t}");
             assert!(g.level.player.pos.x <= 3.0 - RADIUS + 1e-5);
             tick(&mut g, &mut ctx);
         }
