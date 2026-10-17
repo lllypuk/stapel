@@ -85,11 +85,11 @@
 ### Task 1: Пространственный звук эффектов
 **Files:**
 - Modify: `engine/src/audio/mod.rs`, `engine/src/audio/mixer.rs`, `engine/src/lib.rs`, `docs/design.md`, `CLAUDE.md`
-- [ ] тест `Stereo::at`: справа `right > left`, слева наоборот, спереди поровну по `volume·√½`, в глазу без NaN, за `range` ноль, сумма квадратов постоянна по углу, наклон камеры не меняет каналы
-- [ ] тест микшера: `play_stereo` со `Stereo { 1, 0 }` звучит только слева; стерео-файл спереди и чуть сбоку даёт непрерывные L и R; NaN в одном канале — тишина только в нём; `play` звучит как раньше
-- [ ] `Stereo`, `Stereo::at`, `play_stereo`, `Command::Play { gains, downmix }`
-- [ ] `docs/design.md` «Звук»: решение и молчаливая поломка «сведение по равенству громкостей даёт скачок образа на оси → тест»; `CLAUDE.md` «Архитектура»: `play_stereo`
-- [ ] `cargo mutants -f engine/src/audio/mod.rs -f engine/src/audio/mixer.rs`, `make cov`, `make check`
+- [x] тест `Stereo::at`: справа `right > left`, слева наоборот, спереди поровну по `volume·√½`, в глазу без NaN, за `range` ноль, сумма квадратов постоянна по углу, наклон камеры не меняет каналы
+- [x] тест микшера: `play_stereo` со `Stereo { 1, 0 }` звучит только слева; стерео-файл спереди и чуть сбоку даёт непрерывные L и R; NaN в одном канале — тишина только в нём; `play` звучит как раньше
+- [x] `Stereo`, `Stereo::at`, `play_stereo`, `Command::Play { gains, downmix }`
+- [x] `docs/design.md` «Звук»: решение и молчаливая поломка «сведение по равенству громкостей даёт скачок образа на оси → тест»; `CLAUDE.md` «Архитектура»: `play_stereo`
+- [x] `cargo mutants -f engine/src/audio/mod.rs -f engine/src/audio/mixer.rs`, `make cov`, `make check`
 
 ### Task 2: Слой оружия — второй 3D-проход
 **Files:**

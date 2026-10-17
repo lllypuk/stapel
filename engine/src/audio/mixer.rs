@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use rtrb::Consumer;
 
+use super::Stereo;
+
 /// Голосов эффектов; музыка — отдельный слот сверх них.
 const VOICES: usize = 32;
 /// Длящихся голосов, отдельно от эффектов.
@@ -19,8 +21,12 @@ const MASTER: f32 = 0.5;
 
 /// Команда игры аудиопотоку; `frames` — стерео-интерлив.
 pub(crate) enum Command {
-    /// Эффект в свободный голос.
-    Play { frames: Arc<[f32]>, volume: f32 },
+    /// Эффект в свободный голос; `downmix` — сначала свести файл в моно.
+    Play {
+        frames: Arc<[f32]>,
+        gains: Stereo,
+        downmix: bool,
+    },
     /// Музыка по кругу вместо играющей.
     Music { frames: Arc<[f32]>, volume: f32 },
     /// Длящийся голос в `slot` вместо прежнего.
@@ -79,17 +85,19 @@ struct Voice {
     pos: usize,
     /// Фреймов с первого старта, до `FADE`: на стыке цикла не сбрасывается.
     age: usize,
-    volume: f32,
+    gains: [f32; 2],
+    downmix: bool,
     looping: bool,
 }
 
 impl Voice {
-    fn new(frames: Arc<[f32]>, volume: f32, looping: bool) -> Option<Self> {
+    fn new(frames: Arc<[f32]>, gains: Stereo, downmix: bool, looping: bool) -> Option<Self> {
         (!frames.is_empty()).then_some(Self {
             frames,
             pos: 0,
             age: 0,
-            volume: gain(volume),
+            gains: [gain(gains.left), gain(gains.right)],
+            downmix,
             looping,
         })
     }
@@ -103,9 +111,16 @@ impl Voice {
             } else {
                 len - 1 - self.pos
             };
-            let gain = self.volume * self.age.min(tail) as f32 / FADE as f32;
-            frame[0] += self.frames[2 * self.pos] * gain;
-            frame[1] += self.frames[2 * self.pos + 1] * gain;
+            let age = self.age.min(tail) as f32;
+            let (l, r) = (self.frames[2 * self.pos], self.frames[2 * self.pos + 1]);
+            let (l, r) = if self.downmix {
+                let mono = f32::midpoint(l, r);
+                (mono, mono)
+            } else {
+                (l, r)
+            };
+            frame[0] += l * (self.gains[0] * age / FADE as f32);
+            frame[1] += r * (self.gains[1] * age / FADE as f32);
             self.age = (self.age + 1).min(FADE);
             self.pos += 1;
             if self.pos == len {
@@ -242,8 +257,12 @@ impl Mixer {
 
     fn start(&mut self, command: Command) {
         match command {
-            Command::Play { frames, volume } => {
-                let Some(voice) = Voice::new(frames, volume, false) else {
+            Command::Play {
+                frames,
+                gains,
+                downmix,
+            } => {
+                let Some(voice) = Voice::new(frames, gains, downmix, false) else {
                     return;
                 };
                 // Без кражи голоса: обрыв играющего щёлкает.
@@ -255,7 +274,7 @@ impl Mixer {
                 }
             }
             Command::Music { frames, volume } => {
-                if let Some(voice) = Voice::new(frames, volume, true) {
+                if let Some(voice) = Voice::new(frames, Stereo::both(volume), false, true) {
                     self.music = Some(voice);
                 }
             }
@@ -300,6 +319,8 @@ impl Mixer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::camera::Camera3D;
+    use glam::Vec3;
     use rtrb::{Producer, RingBuffer};
 
     fn setup() -> (Producer<Command>, Mixer) {
@@ -322,8 +343,17 @@ mod tests {
     }
 
     fn play(tx: &mut Producer<Command>, frames: &Arc<[f32]>, volume: f32) {
+        push_play(tx, frames, Stereo::both(volume), false);
+    }
+
+    fn push_play(tx: &mut Producer<Command>, frames: &Arc<[f32]>, gains: Stereo, downmix: bool) {
         let frames = frames.clone();
-        assert!(tx.push(Command::Play { frames, volume }).is_ok());
+        let command = Command::Play {
+            frames,
+            gains,
+            downmix,
+        };
+        assert!(tx.push(command).is_ok());
     }
 
     fn music(tx: &mut Producer<Command>, frames: &Arc<[f32]>, volume: f32) {
@@ -352,6 +382,53 @@ mod tests {
             let g = envelope(i, 200) * 0.25;
             assert_eq!(&out[2 * i..2 * i + 2], [0.4 * g, -0.2 * g], "frame {i}");
         }
+    }
+
+    #[test]
+    fn stereo_gains_of_one_and_zero_play_only_left() {
+        let (mut tx, mut mixer) = setup();
+        let gains = Stereo {
+            left: 1.0,
+            right: 0.0,
+        };
+        push_play(&mut tx, &constant(200, 0.4, 0.2), gains, true);
+        let out = render(&mut mixer, 200);
+        assert!((out[200] - 0.15).abs() < 1e-6, "{}", out[200]);
+        assert!(out.iter().skip(1).step_by(2).all(|&r| r == 0.0));
+    }
+
+    #[test]
+    fn stereo_file_image_is_continuous_across_center() {
+        let listener = Camera3D::default();
+        let sample = |x: f32| {
+            let (mut tx, mut mixer) = setup();
+            let gains = Stereo::at(&listener, Vec3::new(x, 0.0, -5.0), 1.0, 100.0);
+            push_play(&mut tx, &constant(200, 1.0, 0.0), gains, true);
+            let out = render(&mut mixer, 200);
+            [out[200], out[201]]
+        };
+        let [l, r] = sample(0.0);
+        assert!((l - r).abs() < 1e-6, "{l} {r}");
+        for x in [-0.01, 0.01] {
+            let [sl, sr] = sample(x);
+            assert!(
+                (sl - l).abs() < 1e-3 && (sr - r).abs() < 1e-3,
+                "{x}: {sl} {sr}"
+            );
+        }
+    }
+
+    #[test]
+    fn nan_in_one_channel_silences_only_it() {
+        let (mut tx, mut mixer) = setup();
+        let gains = Stereo {
+            left: f32::NAN,
+            right: 1.0,
+        };
+        push_play(&mut tx, &constant(200, 0.4, 0.4), gains, true);
+        let out = render(&mut mixer, 200);
+        assert!(out.iter().step_by(2).all(|&l| l == 0.0));
+        assert_eq!(out[201], 0.2);
     }
 
     #[test]

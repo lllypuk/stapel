@@ -2,11 +2,15 @@ pub(crate) mod decode;
 pub(crate) mod device;
 mod mixer;
 
+use std::f32::consts::FRAC_PI_4;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use glam::Vec3;
 use rtrb::{Producer, RingBuffer};
+
+use crate::camera::Camera3D;
 
 pub use mixer::MAX_RATE;
 use mixer::{Command, Counters, LOOPS, Mixer};
@@ -18,6 +22,38 @@ const QUEUE: usize = 256;
 #[derive(Clone, Debug)]
 pub struct Sound {
     pub(crate) frames: Arc<[f32]>,
+}
+
+/// Громкости левого и правого канала эффекта.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stereo {
+    /// Громкость левого канала.
+    pub left: f32,
+    /// Громкость правого канала.
+    pub right: f32,
+}
+
+impl Stereo {
+    /// Эффект в `source` для `listener`: панорама равной мощности по `yaw`, затухание `max(1 − d/range, 0)²`.
+    pub fn at(listener: &Camera3D, source: Vec3, volume: f32, range: f32) -> Self {
+        let to = source - listener.pos;
+        let right = Vec3::new(listener.yaw.cos(), 0.0, -listener.yaw.sin());
+        let pan = to.normalize_or_zero().dot(right);
+        let fade = (1.0 - to.length() / range).max(0.0);
+        let gain = volume * fade * fade;
+        let angle = (pan + 1.0) * FRAC_PI_4;
+        Self {
+            left: gain * angle.cos(),
+            right: gain * angle.sin(),
+        }
+    }
+
+    pub(crate) fn both(volume: f32) -> Self {
+        Self {
+            left: volume,
+            right: volume,
+        }
+    }
 }
 
 /// Длящийся голос: слот микшера и поколение его занятия.
@@ -64,9 +100,22 @@ impl Audio {
 
     /// Эффект поверх остальных; все голоса заняты — отбрасывается.
     pub fn play(&mut self, sound: &Sound, volume: f32) {
+        self.effect(sound, Stereo::both(volume), false);
+    }
+
+    /// Эффект в пространстве: файл сводится в моно и звучит с громкостями `gains`.
+    pub fn play_stereo(&mut self, sound: &Sound, gains: Stereo) {
+        self.effect(sound, gains, true);
+    }
+
+    fn effect(&mut self, sound: &Sound, gains: Stereo, downmix: bool) {
         self.flush();
         let frames = sound.frames.clone();
-        self.send(Command::Play { frames, volume });
+        self.send(Command::Play {
+            frames,
+            gains,
+            downmix,
+        });
     }
 
     /// Музыка по кругу; играющую обрывает со щелчком — звать из `init`.
@@ -227,6 +276,7 @@ pub(crate) fn fill<S: DeviceSample>(
 
 #[cfg(test)]
 mod tests {
+    use std::f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2, TAU};
     use std::iter;
 
     use rtrb::Consumer;
@@ -470,6 +520,97 @@ mod tests {
     }
 
     #[test]
+    fn play_keeps_file_channels_and_play_stereo_downmixes() {
+        let (mut audio, mut mixer) = Audio::open();
+        let s = sound(&[[0.0, 0.0], [1.0, -0.5], [0.0, 0.0]]);
+        audio.play(&s, 64.0);
+        let mut out = [0.0; 6];
+        mixer.render(&mut out);
+        assert_eq!(out[2..4], [0.5, -0.25]);
+
+        let gains = Stereo {
+            left: 64.0,
+            right: 32.0,
+        };
+        audio.play_stereo(&s, gains);
+        mixer.render(&mut out);
+        assert_eq!(out[2..4], [0.125, 0.0625]);
+    }
+
+    fn eye(yaw: f32, pitch: f32) -> Camera3D {
+        Camera3D {
+            pos: Vec3::new(1.0, 2.0, 3.0),
+            yaw,
+            pitch,
+            ..Camera3D::default()
+        }
+    }
+
+    /// Источник на расстоянии 5 под углом `angle` от взгляда, против часовой сверху.
+    fn around(listener: &Camera3D, angle: f32) -> Stereo {
+        let yaw = listener.yaw + angle;
+        let dir = Vec3::new(-yaw.sin(), 0.0, -yaw.cos());
+        Stereo::at(listener, listener.pos + dir * 5.0, 2.0, 10.0)
+    }
+
+    #[test]
+    fn source_on_the_right_is_louder_in_right_channel() {
+        for yaw in [0.0, 1.0, -2.5] {
+            let right = around(&eye(yaw, 0.0), -0.5);
+            assert!(right.right > right.left, "{yaw}: {right:?}");
+            let left = around(&eye(yaw, 0.0), 0.5);
+            assert!(left.left > left.right, "{yaw}: {left:?}");
+        }
+        let side = around(&eye(0.3, 0.0), -FRAC_PI_2);
+        assert!(side.left.abs() < 1e-6, "{side:?}");
+        assert!((side.right - 0.5).abs() < 1e-6, "{side:?}");
+    }
+
+    #[test]
+    fn source_ahead_splits_equal_power_with_light_falloff() {
+        let ahead = around(&eye(0.7, 0.0), 0.0);
+        let expected = 2.0 * 0.25 * FRAC_1_SQRT_2;
+        assert!((ahead.left - expected).abs() < 1e-6, "{ahead:?}");
+        assert!((ahead.right - expected).abs() < 1e-6, "{ahead:?}");
+    }
+
+    #[test]
+    fn source_in_the_eye_is_centered_at_full_volume() {
+        let listener = eye(0.7, 0.0);
+        let at = Stereo::at(&listener, listener.pos, 2.0, 10.0);
+        assert!((at.left - 2.0 * FRAC_1_SQRT_2).abs() < 1e-6, "{at:?}");
+        assert!((at.right - 2.0 * FRAC_1_SQRT_2).abs() < 1e-6, "{at:?}");
+    }
+
+    #[test]
+    fn source_at_or_beyond_range_is_silent() {
+        let listener = eye(0.0, 0.0);
+        for z in [-10.0, -11.0, -100.0] {
+            let at = Stereo::at(&listener, listener.pos + Vec3::new(0.0, 0.0, z), 2.0, 10.0);
+            assert_eq!(at, Stereo::both(0.0), "{z}");
+        }
+    }
+
+    #[test]
+    fn power_is_constant_around_listener() {
+        let listener = eye(0.4, 0.0);
+        for k in 0..16 {
+            let at = around(&listener, k as f32 * TAU / 16.0);
+            let power = at.left.powi(2) + at.right.powi(2);
+            assert!((power - 0.25).abs() < 1e-6, "{k}: {at:?}");
+        }
+    }
+
+    #[test]
+    fn pitch_does_not_change_channels() {
+        let source = Vec3::new(4.0, 0.0, -1.0);
+        let level = Stereo::at(&eye(0.4, 0.0), source, 2.0, 10.0);
+        for pitch in [1.2, -1.2] {
+            assert_eq!(Stereo::at(&eye(0.4, pitch), source, 2.0, 10.0), level);
+        }
+    }
+
+    #[test]
     fn full_queue_drops_play_with_counter() {
         let (mut audio, _mixer) = Audio::open();
         let s = ramp(10);
@@ -510,6 +651,7 @@ mod tests {
         let mut out = [0.0_f32; 1024];
         let info = allocation_counter::measure(|| {
             audio.play(&short, 1.0);
+            audio.play_stereo(&short, Stereo::both(1.0));
             audio.play_music(&music, 1.0);
             audio.play_music(&next_music, 1.0);
             let voices: [LoopId; LOOPS] =
