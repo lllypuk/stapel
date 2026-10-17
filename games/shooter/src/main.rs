@@ -1257,7 +1257,10 @@ mod tests {
         g.level.player.hp = MAX_HP - 1;
         walk_east(&mut g, &mut ctx);
         let mut heard = Vec::new();
-        while g.level.doors[0].opened.is_none() {
+        for _ in 0..TICK_HZ * 10 {
+            if g.level.doors[0].opened.is_some() {
+                break;
+            }
             tick(&mut g, &mut ctx);
             heard.extend(g.sound_commands().iter().map(|c| c.sfx));
             if let Some(&(Sfx::Pickup, at)) = g.level.sounds.first() {
