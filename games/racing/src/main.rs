@@ -755,10 +755,11 @@ impl Racing {
 
     /// Тик машины с управлением `controls`: чекпоинты, респаун, запись круга, камера.
     fn drive(&mut self, controls: Controls) {
+        let (throttle, _) = car::pedals(controls, self.car.forward_speed());
         self.car.tick(&self.layout.world, controls);
         let speed = self.car.forward_speed().abs() / self.car.config.max_speed;
         let grounded = self.car.wheels.iter().any(|w| w.ground.is_some());
-        self.rpm.tick(speed, controls.throttle, grounded);
+        self.rpm.tick(speed, throttle.abs(), grounded);
         let pass = self.pass_checkpoint();
         self.auto_respawn();
         // Сэмпл — после респауна: в кадре машина уже на новом месте.
@@ -985,6 +986,18 @@ mod tests {
         assert_eq!(g.voice, None);
         let sound = engine_sound::command(g.mode, &g.rpm, g.voice.is_some());
         assert_eq!(sound, SoundCmd::Start);
+    }
+
+    #[test]
+    fn reverse_drives_back_and_revs_motor() {
+        let mut ctx = Context::default();
+        let mut g = racing(&mut ctx);
+        ticks(&mut g, &mut ctx, 30);
+        let idle = g.rpm.rate();
+        ctx.input.on_key(KeyCode::KeyS, Pressed, false);
+        ticks(&mut g, &mut ctx, 60);
+        assert!(g.car.forward_speed() < -1.0, "{}", g.car.forward_speed());
+        assert!(g.rpm.rate() > 1.5 * idle, "{} vs {idle}", g.rpm.rate());
     }
 
     #[test]
@@ -1264,7 +1277,7 @@ mod tests {
                     .map(|h| h.tag);
                 assert_eq!(under, Some(ROAD), "{} чекпоинт {i}", path.display());
                 g.spawn(at);
-                ctx.input.on_key(KeyCode::KeyS, Pressed, false);
+                ctx.input.on_key(KeyCode::Space, Pressed, false);
                 for _ in 0..120 {
                     tick(&mut g, &mut ctx);
                     let body = &g.car.body;
@@ -1276,7 +1289,7 @@ mod tests {
                         body.pos
                     );
                 }
-                ctx.input.on_key(KeyCode::KeyS, Released, false);
+                ctx.input.on_key(KeyCode::Space, Released, false);
             }
         }
     }

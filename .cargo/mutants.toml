@@ -44,4 +44,6 @@ exclude_re = [
     "engine_sound.rs:36:(42: replace \\* with \\+|49: replace / with \\*) in synth$",
     # Высота травы ровно на допуске от BASE — граница нулевой меры.
     "replace < with <= in base_grass$",
+    # При нулевом газе обе ветки дают силу 0.
+    "replace < with <= in drive_force$",
 ]

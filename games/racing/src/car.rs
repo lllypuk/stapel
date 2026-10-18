@@ -22,6 +22,10 @@ const BUMP_STOP: f32 = 10.0;
 const ROLLING: f32 = 0.015;
 /// Ниже этой скорости тяга не растёт: `power / v` уходит в бесконечность.
 const MIN_DRIVE_SPEED: f32 = 1.0;
+/// Скорость, м/с, ниже которой тормоз становится газом назад.
+pub(crate) const STOP: f32 = 0.5;
+/// Предел заднего хода, м/с; не выше `max_speed`.
+const REVERSE_SPEED: f32 = 8.0;
 /// Сцепление травы относительно асфальта.
 const GRASS_GRIP: f32 = 0.5;
 pub(crate) const BODY_RADIUS: f32 = 0.25;
@@ -96,12 +100,26 @@ pub(crate) fn steer_angle(config: &CarConfig, steer: f32, speed: f32) -> f32 {
     steer * config.steer_max.to_radians() * (1.0 + (config.steer_at_speed - 1.0) * k)
 }
 
-/// Сила мотора на машину при скорости `speed` вперёд, Н.
+/// Газ −1..1 (минус — назад) и тормоз по скорости вперёд `speed`: педаль против хода тормозит.
+pub(crate) fn pedals(controls: Controls, speed: f32) -> (f32, f32) {
+    if speed < -STOP || (speed <= STOP && controls.throttle == 0.0) {
+        (-controls.brake, controls.throttle)
+    } else {
+        (controls.throttle, controls.brake)
+    }
+}
+
+/// Сила мотора на машину при газе `throttle` −1..1 и скорости `speed` вперёд, Н.
 fn drive_force(config: &CarConfig, throttle: f32, speed: f32) -> f32 {
-    if speed >= config.max_speed {
+    let (along, max) = if throttle < 0.0 {
+        (-speed, REVERSE_SPEED.min(config.max_speed))
+    } else {
+        (speed, config.max_speed)
+    };
+    if along >= max {
         return 0.0;
     }
-    throttle * config.power / speed.max(MIN_DRIVE_SPEED)
+    throttle * config.power / along.max(MIN_DRIVE_SPEED)
 }
 
 fn driven(drive: Drive, wheel: usize) -> bool {
@@ -280,7 +298,8 @@ impl Car {
         }
         let grounded = self.wheels.iter().filter(|w| w.ground.is_some()).count() as f32;
         let drive_count = (0..4).filter(|&i| driven(cfg.drive, i)).count() as f32;
-        let drive = drive_force(cfg, controls.throttle, speed) / drive_count;
+        let (throttle, brake) = pedals(controls, speed);
+        let drive = drive_force(cfg, throttle, speed) / drive_count;
         let inv_inertia = body.inv_inertia_world();
         for (i, (state, mount)) in self.wheels.iter_mut().zip(&self.mounts).enumerate() {
             let Some(hit) = state.ground else {
@@ -305,7 +324,7 @@ impl Car {
             let resist = if controls.handbrake && i >= 2 {
                 f32::INFINITY
             } else {
-                controls.brake * cfg.brake / 4.0 + ROLLING * state.load
+                brake * cfg.brake / 4.0 + ROLLING * state.load
             };
             let mut long = (-m_long * v_long / dt).clamp(-resist, resist);
             if driven(cfg.drive, i) {
@@ -535,14 +554,13 @@ mod tests {
             ..Controls::default()
         };
         for _ in 0..5 * 60 {
+            if car.forward_speed() <= STOP {
+                return car.body.pos.distance(start);
+            }
             car.tick(&world, brake);
             assert!(car.forward_speed() > -0.05, "{}", car.forward_speed());
         }
-        for _ in 0..60 {
-            car.tick(&world, brake);
-            assert!(car.body.vel.length() < 1e-3, "{}", car.body.vel);
-        }
-        car.body.pos.distance(start)
+        panic!("за 5 с не встала: {}", car.forward_speed());
     }
 
     #[test]
@@ -553,6 +571,78 @@ mod tests {
         let grass = braking_distance(GRASS);
         assert!(grass > 1.5 * road, "{grass} / {road}");
         assert_eq!(braking_distance(GROUND), grass);
+    }
+
+    #[test]
+    fn brake_near_stop_and_backwards_is_reverse_and_gas_backwards_is_brake() {
+        let c = |throttle, brake| Controls {
+            throttle,
+            brake,
+            ..Controls::default()
+        };
+        let cases = [
+            (c(1.0, 0.0), 10.0, (1.0, 0.0)),
+            (c(0.0, 1.0), 10.0, (0.0, 1.0)),
+            (c(1.0, 1.0), 10.0, (1.0, 1.0)),
+            (c(0.0, 1.0), STOP + 0.01, (0.0, 1.0)),
+            (c(0.0, 1.0), STOP, (-1.0, 0.0)),
+            (c(0.0, 1.0), 0.0, (-1.0, 0.0)),
+            (c(1.0, 0.0), 0.0, (1.0, 0.0)),
+            (c(1.0, 1.0), 0.0, (1.0, 1.0)),
+            (c(1.0, 0.0), -STOP, (1.0, 0.0)),
+            (c(1.0, 0.0), -STOP - 0.01, (0.0, 1.0)),
+            (c(0.0, 1.0), -5.0, (-1.0, 0.0)),
+            (c(1.0, 1.0), -5.0, (-1.0, 1.0)),
+            (c(0.0, 0.0), -5.0, (0.0, 0.0)),
+        ];
+        for (controls, speed, want) in cases {
+            assert_eq!(pedals(controls, speed), want, "{controls:?} {speed}");
+        }
+    }
+
+    #[test]
+    fn reverse_is_capped_by_reverse_speed_and_max_speed() {
+        let mut cfg = config("race");
+        let force = |cfg: &CarConfig, speed| drive_force(cfg, -1.0, speed);
+        assert_eq!(force(&cfg, 0.0), -cfg.power / MIN_DRIVE_SPEED);
+        assert_eq!(force(&cfg, -4.0), -cfg.power / 4.0);
+        assert_eq!(
+            force(&cfg, -REVERSE_SPEED + 0.01),
+            -cfg.power / (REVERSE_SPEED - 0.01)
+        );
+        assert_eq!(force(&cfg, -REVERSE_SPEED), 0.0);
+        assert_eq!(force(&cfg, 5.0), -cfg.power / MIN_DRIVE_SPEED);
+        cfg.max_speed = REVERSE_SPEED / 2.0;
+        assert_eq!(force(&cfg, -REVERSE_SPEED / 2.0), 0.0);
+        assert!(force(&cfg, -REVERSE_SPEED / 2.0 + 0.01) < 0.0);
+    }
+
+    #[test]
+    fn holding_brake_after_stop_drives_back_and_gas_stops_it() {
+        let world = world(plane(ROAD));
+        let mut car = settled("race", &world);
+        let brake = Controls {
+            brake: 1.0,
+            ..Controls::default()
+        };
+        let mut low = 0.0f32;
+        for _ in 0..10 * 60 {
+            car.tick(&world, brake);
+            low = low.min(car.forward_speed());
+        }
+        let v = car.forward_speed();
+        assert!(
+            v < -REVERSE_SPEED + 0.5 && low > -REVERSE_SPEED - 0.1,
+            "{v} {low}"
+        );
+        let gas = Controls {
+            throttle: 1.0,
+            ..Controls::default()
+        };
+        for _ in 0..60 {
+            car.tick(&world, gas);
+        }
+        assert!(car.forward_speed() > 0.0, "{}", car.forward_speed());
     }
 
     #[test]
