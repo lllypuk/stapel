@@ -350,6 +350,7 @@ impl MeshPipeline {
             let camera = Camera3D {
                 fov_y: vm.fov_y,
                 near: vm.near,
+                ortho: None,
                 ..scene.camera
             };
             let models = ExpandedModels::new(&vm.models, assets);
@@ -1436,11 +1437,21 @@ mod tests {
         let Some((device, queue)) = gpu() else {
             return;
         };
-        let frame = |viewmodel: Box<dyn FnOnce(_) -> _>| {
-            let mut assets = Assets::default();
-            let gfx = wall_and_orc(&mut assets, "vm-outside", Color::BLACK, viewmodel);
-            render(&device, &queue, &mut assets, &gfx)
-        };
+        // Ортосцена: слой со своим `fov_y` остаётся перспективным.
+        for ortho in [None, Some(2.0)] {
+            let frame = |viewmodel: Layer| {
+                let mut assets = Assets::default();
+                let mut gfx = wall_and_orc(&mut assets, "vm-outside", Color::BLACK, viewmodel);
+                gfx.scene.as_mut().unwrap().camera.ortho = ortho;
+                render(&device, &queue, &mut assets, &gfx)
+            };
+            outside_viewmodel_matches(&frame, &format!("ortho {ortho:?}"));
+        }
+    }
+
+    type Layer = Box<dyn FnOnce(Vec<crate::ModelDraw>) -> Option<Viewmodel>>;
+
+    fn outside_viewmodel_matches(frame: &dyn Fn(Layer) -> Vec<u8>, what: &str) {
         let base = frame(Box::new(|_| None));
         let fov = Camera3D::default().fov_y;
         let mut covered = Vec::new();
@@ -1455,20 +1466,51 @@ mod tests {
                 if p == [0, 0, 0] {
                     model += 1;
                 } else {
-                    assert_eq!(p, b, "fov {fov_y}, pixel ({x}, {y})");
+                    assert_eq!(p, b, "{what}, fov {fov_y}, pixel ({x}, {y})");
                     wall += usize::from(p == [255, 0, 0]);
                 }
             }
             assert!(
                 model > 0 && wall > 0,
-                "fov {fov_y}: model {model}, wall {wall}"
+                "{what}, fov {fov_y}: model {model}, wall {wall}"
             );
             covered.push(model);
         }
         assert!(
             covered[1] > covered[0],
-            "narrower layer fov zooms: {covered:?}"
+            "{what}: narrower layer fov zooms: {covered:?}"
         );
+    }
+
+    #[test]
+    fn ortho_model_size_does_not_depend_on_distance() {
+        let Some((device, queue)) = gpu() else {
+            return;
+        };
+        let red_pixels = |z: f32, ortho: Option<f32>| {
+            let mut assets = Assets::default();
+            let cube = cube(&mut assets);
+            let red = load_png(&mut assets, "mesh-ortho", 1, 1, &[255, 0, 0, 255]);
+            let scene = Scene {
+                ambient: Color::WHITE,
+                camera: Camera3D {
+                    ortho,
+                    ..Default::default()
+                },
+                meshes: vec![at(cube, red, z, 1.0)],
+                ..Default::default()
+            };
+            let img = render(&device, &queue, &mut assets, &gfx(scene));
+            (0..SIZE * SIZE)
+                .filter(|i| crate::gpu_test::pixel(&img, i % SIZE, i / SIZE) == [255, 0, 0])
+                .count()
+        };
+        // Куб 1 м при высоте кадра 4 м — четверть стороны кадра.
+        let side = (SIZE / 4) as usize;
+        for z in [-3.0, -20.0] {
+            assert_eq!(red_pixels(z, Some(4.0)), side * side, "z {z}");
+        }
+        assert!(red_pixels(-3.0, None) > red_pixels(-20.0, None));
     }
 
     #[test]

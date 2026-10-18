@@ -37,7 +37,7 @@ impl Camera2D {
 /// Предел `|pitch|`: на `π/2` взгляд параллелен «верху» и вид вырождается.
 pub const MAX_PITCH: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
 
-/// Перспективная камера от первого лица, Y вверх; yaw 0 смотрит по −Z, положительный — влево.
+/// Камера от первого лица, Y вверх; yaw 0 смотрит по −Z, положительный — влево.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera3D {
     /// Позиция глаза.
@@ -52,6 +52,8 @@ pub struct Camera3D {
     pub near: f32,
     /// Дальняя плоскость отсечения.
     pub far: f32,
+    /// Видимая высота кадра в мире для ортографии; `None` — перспектива по `fov_y`.
+    pub ortho: Option<f32>,
 }
 
 impl Default for Camera3D {
@@ -63,6 +65,7 @@ impl Default for Camera3D {
             fov_y: 70f32.to_radians(),
             near: 0.05,
             far: 100.0,
+            ortho: None,
         }
     }
 }
@@ -91,8 +94,14 @@ impl Camera3D {
 
     /// Мир → NDC с глубиной `near` → 0, `far` → 1.
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
-        directx::perspective(self.fov_y, aspect, self.near, self.far)
-            * look_to_mat4(self.pos, self.forward(), Vec3::Y)
+        let proj = match self.ortho {
+            Some(height) => {
+                let (w, h) = (height * aspect / 2.0, height / 2.0);
+                directx::orthographic(-w, w, -h, h, self.near, self.far)
+            }
+            None => directx::perspective(self.fov_y, aspect, self.near, self.far),
+        };
+        proj * look_to_mat4(self.pos, self.forward(), Vec3::Y)
     }
 
     /// Луч из точки `ndc` экрана (Y вверх) от ближней плоскости вглубь.
@@ -597,6 +606,64 @@ mod tests {
         let wide = ndc3(&cam, 2.0, p);
         assert!((wide.x - square.x / 2.0).abs() < EPS, "{square} {wide}");
         assert!((wide.y - square.y).abs() < EPS, "{square} {wide}");
+    }
+
+    fn iso() -> Camera3D {
+        Camera3D {
+            ortho: Some(4.0),
+            ..eye()
+        }
+    }
+
+    /// Точка в `up` метрах над осью взгляда и `along` метрах вдоль неё.
+    fn off_axis(cam: &Camera3D, along: f32, up: f32) -> Vec3 {
+        let right = cam.forward().cross(Vec3::Y).normalize();
+        let up_dir = right.cross(cam.forward());
+        cam.pos + cam.forward() * along + up_dir * up
+    }
+
+    #[test]
+    fn ortho_edge_stays_at_ndc_edge_at_any_distance() {
+        let cam = iso();
+        for along in [1.0, 7.0, 60.0] {
+            let p = ndc3(&cam, 1.5, off_axis(&cam, along, 2.0));
+            assert!((p.y - 1.0).abs() < 1e-4, "{along}: {p}");
+            assert!(p.x.abs() < 1e-4, "{along}: {p}");
+        }
+        let right = cam.forward().cross(Vec3::Y).normalize();
+        let p = ndc3(&cam, 1.5, cam.pos + cam.forward() * 5.0 + right * 3.0);
+        assert!((p.x - 1.0).abs() < 1e-4, "width = height · aspect: {p}");
+    }
+
+    #[test]
+    fn perspective_edge_shrinks_with_distance() {
+        let cam = eye();
+        let [near, far] = [2.0, 4.0].map(|along| ndc3(&cam, 1.5, off_axis(&cam, along, 2.0)).y);
+        assert!((near - 2.0 * far).abs() < 1e-4, "{near} {far}");
+    }
+
+    #[test]
+    fn ortho_near_is_depth_zero_far_is_one() {
+        let cam = iso();
+        let near = ndc3(&cam, 1.5, cam.pos + cam.forward() * cam.near);
+        let far = ndc3(&cam, 1.5, cam.pos + cam.forward() * cam.far);
+        assert!(near.abs_diff_eq(Vec3::ZERO, 1e-4), "{near}");
+        assert!(far.abs_diff_eq(Vec3::Z, 1e-4), "{far}");
+    }
+
+    #[test]
+    fn ortho_rays_are_parallel_from_spread_origins() {
+        let cam = iso();
+        let (a, b) = (cam.ray(vec2(-0.5, 0.2), 1.5), cam.ray(vec2(0.5, -0.8), 1.5));
+        assert!(a.dir.abs_diff_eq(cam.forward(), 1e-4), "{a:?}");
+        assert!(b.dir.abs_diff_eq(cam.forward(), 1e-4), "{b:?}");
+        let gap = b.origin - a.origin;
+        assert!(gap.dot(cam.forward()).abs() < 1e-4, "{gap}");
+        // ΔNDC (1, −1) при высоте 4 и aspect 1,5 — (3, −2) в мире.
+        assert!(
+            (gap.length() - vec2(3.0, 2.0).length()).abs() < 1e-3,
+            "{gap}"
+        );
     }
 
     #[test]

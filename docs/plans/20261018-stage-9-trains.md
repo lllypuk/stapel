@@ -215,16 +215,16 @@
 **Files:**
 - Modify: `engine/src/camera.rs`, `engine/src/mesh_pipeline.rs`, `docs/design.md`, `CLAUDE.md`
 
-- [ ] тесты:
+- [x] тесты:
   - `ortho: Some(h)`: точка на краю `h/2` уходит в NDC y = 1 на любом расстоянии вдоль взгляда;
   - `near` → 0, `far` → 1;
   - `ray` из двух точек экрана даёт параллельные лучи, начала которых разнесены;
   - `None` — прежняя перспектива;
-- [ ] `ortho` в `Camera3D` и `view_proj`;
-- [ ] камера слоя оружия — с `ortho: None`; случай ортосцены — в существующем тесте слоя (`mesh_pipeline.rs:1410`–`:1530`);
-- [ ] офскрин-тест: модель на двух расстояниях от ортокамеры даёт одинаковый размер в пикселях;
-- [ ] `docs/design.md`: решение и молчаливая поломка «слой оружия унаследует ортографию» → тест слоя; `CLAUDE.md` «Архитектура»: ортокамера;
-- [ ] `cargo mutants -f engine/src/camera.rs -f engine/src/mesh_pipeline.rs`, `REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine`, `make cov`, `make check`
+- [x] `ortho` в `Camera3D` и `view_proj`;
+- [x] камера слоя оружия — с `ortho: None`; случай ортосцены — в существующем тесте слоя (`mesh_pipeline.rs:1410`–`:1530`);
+- [x] офскрин-тест: модель на двух расстояниях от ортокамеры даёт одинаковый размер в пикселях;
+- [x] `docs/design.md`: решение и молчаливая поломка «слой оружия унаследует ортографию» → тест слоя; `CLAUDE.md` «Архитектура»: ортокамера;
+- [x] `cargo mutants -f engine/src/camera.rs -f engine/src/mesh_pipeline.rs`, `REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine`, `make cov`, `make check`
 
 ### Task 2: Каркас игры и ассеты
 
