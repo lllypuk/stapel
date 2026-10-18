@@ -39,6 +39,8 @@ pub(crate) struct Train {
     pub(crate) tail: f32,
     /// Плюс — к голове.
     pub(crate) speed: f32,
+    /// Последний ход — задний; на старте — вперёд.
+    pub(crate) reverse: bool,
     pub(crate) cars: Vec<Car>,
 }
 
@@ -61,6 +63,7 @@ impl Train {
             head,
             tail,
             speed: 0.0,
+            reverse: false,
             cars,
         })
     }
@@ -82,6 +85,9 @@ impl Train {
     pub(crate) fn advance(&mut self, dt: f32, track: &Track) {
         let dist = self.speed * dt;
         let back = dist < 0.0;
+        if dist != 0.0 {
+            self.reverse = back;
+        }
         if back {
             self.flip(track);
         }
@@ -395,6 +401,19 @@ mod tests {
         let t = moved(t, -1.0, 1.0, &f);
         assert_eq!(t.route, [(1, false), (2, true)]);
         assert!(near(t.tail, 4.0 - MARGIN), "{t:?}");
+    }
+
+    #[test]
+    fn last_move_direction_outlives_stop() {
+        let l = line();
+        let mut t = Train::new(&l, (2, true), 0.0, cars(1, 2.0)).expect("состав");
+        assert!(!t.reverse);
+        t = moved(t, -1.0, DT, &l);
+        assert!(t.reverse);
+        t = moved(t, 0.0, DT, &l);
+        assert!(t.reverse);
+        t = moved(t, 1.0, DT, &l);
+        assert!(!t.reverse);
     }
 
     #[test]
