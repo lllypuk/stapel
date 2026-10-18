@@ -313,12 +313,15 @@
 **Files:**
 - Modify: `games/trains/src/train.rs`, `games/trains/src/consist.rs`
 
-- [ ] тест: тележки на оси пути на своих отступах, кузов по хорде между ними, сцепка по хорде на длину зазора;
-- [ ] тест габаритного коридора на тестовом пути из `corner-large` и `corner-small`:
+- [x] тест: тележки на оси пути на своих отступах, кузов по хорде между ними, сцепка по хорде на длину зазора;
+- [x] тест габаритного коридора на тестовом пути из `corner-large` и `corner-small`:
   - прямоугольники кузовов соседних машин не пересекаются при `GAP` для всех моделей игры;
   - если на `corner-small` при разумном `GAP` пересекаются — ⚠️, и деталь не используется в карте;
-- [ ] `cars_at`;
-- [ ] `cargo mutants -f games/trains/src/train.rs -f games/trains/src/consist.rs`, `make cov`, `make check`
+  - ⚠️ `GAP = 0,5`: `corner-large` и S-детали требуют 0,48, `corner-small` — 0,66; `corner-small` в карте запрещена тестом;
+  - ➕ тестовый путь — все повороты `level01` (`corner-large`, S-деталь и её зеркало), тест сверяет это с картой;
+- [x] `cars_at`;
+  - ➕ `Car::front` — z переднего края модели: начало модели на пути; молчаливая поломка «`GAP` не для `corner-small`» → `docs/design.md`;
+- [x] `cargo mutants -f games/trains/src/train.rs -f games/trains/src/consist.rs`, `make cov`, `make check`
 
 ### Task 9: Стрелки — клавиша и клик
 

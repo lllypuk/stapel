@@ -2,8 +2,8 @@ use engine::{Handle, Model};
 
 /// Вагонов за локомотивом не больше.
 pub(crate) const MAX_CARS: usize = 5;
-/// Зазор между кузовами соседних машин.
-pub(crate) const GAP: f32 = 0.3;
+/// Зазор между кузовами соседних машин: наименьший, при котором они не касаются на `corner-large`.
+pub(crate) const GAP: f32 = 0.5;
 
 /// Машина состава; перед — +Z модели.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -11,6 +11,8 @@ pub(crate) struct Car {
     pub(crate) model: Handle<Model>,
     /// Габарит модели по z.
     pub(crate) length: f32,
+    /// z переднего края в осях модели.
+    pub(crate) front: f32,
     /// Отступы передней и задней тележки от переднего края.
     pub(crate) bogies: [f32; 2],
 }
@@ -36,6 +38,7 @@ impl Car {
         Some(Self {
             model: handle,
             length: bounds.max.z - bounds.min.z,
+            front: bounds.max.z,
             bogies: [bounds.max.z - front, bounds.max.z - back],
         })
     }
@@ -88,16 +91,19 @@ mod tests {
     fn length_and_bogies_from_front_edge() {
         let mut assets = Assets::default();
         let table = [
-            ("train-carriage-box", 2.7, [0.75, 1.95]),
-            ("train-diesel-box-a", 2.6232, [0.7732, 1.8732]),
-            ("train-locomotive-a", 2.6, [0.7, 1.6928]),
-            ("train-electric-double-a", 2.5, [1.05, 1.85]),
+            ("train-carriage-box", 2.7, 1.35, [0.75, 1.95]),
+            ("train-diesel-box-a", 2.6232, 1.4732, [0.7732, 1.8732]),
+            ("train-locomotive-a", 2.6, 1.3, [0.7, 1.6928]),
+            ("train-electric-double-a", 2.5, 1.25, [1.05, 1.85]),
         ];
-        for (name, length, [front, back]) in table {
+        for (name, length, front, bogies) in table {
             let c = car(&mut assets, name);
-            assert!(near(c.length, length), "{name}: {c:?}");
             assert!(
-                near(c.bogies[0], front) && near(c.bogies[1], back),
+                near(c.length, length) && near(c.front, front),
+                "{name}: {c:?}"
+            );
+            assert!(
+                near(c.bogies[0], bogies[0]) && near(c.bogies[1], bogies[1]),
                 "{name}: {c:?}"
             );
         }

@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 
-use crate::consist::{self, Car};
+use engine::Vec2;
+
+use crate::consist::{self, Car, GAP};
 use crate::track::{MARGIN, Pass, Track};
 
 /// Предел скорости в обе стороны, м/с.
@@ -11,6 +13,20 @@ const ACCEL: f32 = 3.0;
 const BRAKE: f32 = 4.0;
 /// Замедление накатом без педали, м/с².
 const ROLLING: f32 = 0.3;
+
+/// Машина на пути в плоскости карты.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Placed {
+    /// Передняя и задняя тележки на оси пути и касательные к голове.
+    pub(crate) bogies: [(Vec2, Vec2); 2],
+    /// Начало модели.
+    pub(crate) pos: Vec2,
+    /// +Z модели — хорда от задней тележки к передней.
+    pub(crate) dir: Vec2,
+}
+
+/// Сцепка — от заднего края машины до переднего края следующей.
+pub(crate) type Coupler = [Vec2; 2];
 
 /// Состав на пути.
 #[derive(Clone, Debug, PartialEq)]
@@ -108,6 +124,53 @@ impl Train {
         blocked
     }
 
+    /// Машины от головы и сцепки между ними.
+    pub(crate) fn cars_at(&self, track: &Track) -> (Vec<Placed>, Vec<Coupler>) {
+        let mut back = 0.0;
+        let placed: Vec<_> = self
+            .cars
+            .iter()
+            .map(|car| {
+                let bogies = car.bogies.map(|b| self.at(track, back + b));
+                back += car.length + GAP;
+                let dir = (bogies[0].0 - bogies[1].0).normalize();
+                Placed {
+                    bogies,
+                    pos: bogies[0].0 - dir * (car.front - car.bogies[0]),
+                    dir,
+                }
+            })
+            .collect();
+        let couplers = placed
+            .windows(2)
+            .zip(self.cars.windows(2))
+            .map(|(p, c)| {
+                [
+                    p[0].pos + p[0].dir * (c[0].front - c[0].length),
+                    p[1].pos + p[1].dir * c[1].front,
+                ]
+            })
+            .collect();
+        (placed, couplers)
+    }
+
+    /// Точка оси и касательная к голове на `back` позади головы.
+    fn at(&self, track: &Track, back: f32) -> (Vec2, Vec2) {
+        let mut s = self.head - back;
+        for (i, &(edge, forward)) in self.route.iter().enumerate().rev() {
+            if s >= 0.0 || i == 0 {
+                let edge = &track.edges[edge];
+                if forward {
+                    return edge.rail.point_at(s);
+                }
+                let (p, d) = edge.rail.point_at(edge.len() - s);
+                return (p, -d);
+            }
+            s += track.edges[self.route[i - 1].0].len();
+        }
+        unreachable!("маршрут не пуст")
+    }
+
     /// Хвост и голова меняются местами: задний ход — тот же ход головой.
     fn flip(&mut self, track: &Track) {
         let len = |p: Pass| track.edges[p.0].len();
@@ -128,18 +191,25 @@ fn toward_zero(v: f32, by: f32) -> f32 {
 mod tests {
     use std::fmt::Write as _;
 
-    use engine::Assets;
+    use engine::{Assets, vec2};
 
     use super::*;
+    use crate::piece::Piece;
+    use crate::track::LEVEL01;
 
     const DT: f32 = 1.0 / 60.0;
 
     fn track(rails: &[(&str, [i32; 2], i64)]) -> Track {
+        let rails: Vec<_> = rails.iter().map(|&(p, c, r)| (p, c, r, false)).collect();
+        mirrored(&rails)
+    }
+
+    fn mirrored(rails: &[(&str, [i32; 2], i64, bool)]) -> Track {
         let mut text = String::from("depot = { rail = 0 }\n");
-        for (piece, [x, z], rot) in rails {
+        for (piece, [x, z], rot, mirror) in rails {
             writeln!(
                 text,
-                "[[rail]]\npiece = \"{piece}\"\ncell = [{x}, {z}]\nrot = {rot}"
+                "[[rail]]\npiece = \"{piece}\"\ncell = [{x}, {z}]\nrot = {rot}\nmirror = {mirror}"
             )
             .expect("строка");
         }
@@ -178,6 +248,29 @@ mod tests {
         (a - b).abs() < 1e-4
     }
 
+    fn near2(a: Vec2, b: Vec2) -> bool {
+        a.distance(b) < 1e-4
+    }
+
+    /// Машина игры по имени GLB и прямоугольник её габаритов `[min, max]` по (x, z) модели.
+    fn car(assets: &mut Assets, name: &str) -> (Car, [Vec2; 2]) {
+        let h = assets.load_model(format!("{}{name}.glb", crate::ASSETS));
+        let model = assets.model(h);
+        let b = model.bounds().expect("габариты");
+        let car = Car::new(h, model).expect(name);
+        (car, [vec2(b.min.x, b.min.z), vec2(b.max.x, b.max.z)])
+    }
+
+    /// Все машины игры.
+    fn catalog() -> Vec<(Car, [Vec2; 2])> {
+        let mut assets = Assets::default();
+        crate::MODELS
+            .iter()
+            .filter(|n| n.starts_with("train/train-") && **n != "train/train-connector")
+            .map(|n| car(&mut assets, n))
+            .collect()
+    }
+
     /// Голова и хвост от начала прямой `line`.
     fn along(t: &Train) -> (f32, f32) {
         let at = |p: Pass, d: f32| {
@@ -201,7 +294,7 @@ mod tests {
         let l = line();
         let t = Train::new(&l, (0, true), 1.0, cars(3, 2.0)).expect("состав");
         assert_eq!(t.route, [(0, true), (1, true)]);
-        assert!(near(t.head, 3.6) && near(t.tail, 1.0), "{t:?}");
+        assert!(near(t.head, 3.0 + 2.0 * GAP) && near(t.tail, 1.0), "{t:?}");
         assert_eq!(t.speed, 0.0);
         let t = Train::new(&l, (0, true), 2.0, cars(1, 2.0)).expect("состав");
         assert_eq!((t.route, t.head), ([(0, true)].into(), 4.0));
@@ -210,7 +303,7 @@ mod tests {
         f.switches[0].active = 1;
         let t = Train::new(&f, (0, true), 1.0, cars(4, 2.0)).expect("состав");
         assert_eq!(t.route, [(0, true), (1, false), (3, true)]);
-        assert!(near(t.head, 1.9), "{t:?}");
+        assert!(near(t.head, 1.0 + 3.0 * GAP), "{t:?}");
     }
 
     #[test]
@@ -361,5 +454,173 @@ mod tests {
         t.speed = 0.001;
         t.drive(0.0, DT);
         assert_eq!(t.speed, 0.0);
+    }
+
+    #[test]
+    fn cars_stand_on_axis_at_bogie_offsets() {
+        let mut assets = Assets::default();
+        let (loco, _) = car(&mut assets, "train/train-locomotive-a");
+        let (wagon, _) = car(&mut assets, "train/train-carriage-tank");
+        let l = line();
+        let len = consist::len(&[loco, wagon]);
+        let cases = [
+            ((0, true), vec2(0.0, 1.0 + len), Vec2::Y),
+            ((5, false), vec2(0.0, 23.0 - len), Vec2::NEG_Y),
+        ];
+        for (start, head, dir) in cases {
+            let t = Train::new(&l, start, 1.0, vec![loco, wagon]).expect("состав");
+            let (placed, couplers) = t.cars_at(&l);
+            let mut back = 0.0;
+            for (p, c) in placed.iter().zip([loco, wagon]) {
+                for (b, off) in p.bogies.iter().zip(c.bogies) {
+                    assert!(near2(b.0, head - dir * (back + off)), "{p:?}");
+                    assert!(near2(b.1, dir), "{p:?}");
+                }
+                assert!(near2(p.pos, head - dir * (back + c.front)), "{p:?}");
+                assert!(near2(p.dir, dir), "{p:?}");
+                back += c.length + GAP;
+            }
+            let [[from, to]] = couplers[..] else {
+                panic!("{couplers:?}")
+            };
+            assert!(near2(from, head - dir * loco.length), "{from}");
+            assert!(near2(to, head - dir * (loco.length + GAP)), "{to}");
+        }
+    }
+
+    #[test]
+    fn body_follows_chord_between_bogies_on_corner() {
+        let mut assets = Assets::default();
+        let (wagon, _) = car(&mut assets, "train/train-carriage-box");
+        let c = track(&[("straight", [0, 0], 0), ("corner-large", [0, 2], 0)]);
+        let tail = 5.0 - wagon.length;
+        let t = Train::new(&c, (0, true), tail, vec![wagon]).expect("состав");
+        assert_eq!(t.route, [(0, true), (1, true)]);
+        let (placed, couplers) = t.cars_at(&c);
+        let [p] = placed[..] else {
+            panic!("{placed:?}")
+        };
+        assert!(couplers.is_empty(), "{couplers:?}");
+        let want = [
+            c.edges[1].rail.point_at(1.0 - wagon.bogies[0]),
+            c.edges[0].rail.point_at(5.0 - wagon.bogies[1]),
+        ];
+        for (b, w) in p.bogies.iter().zip(want) {
+            assert!(near2(b.0, w.0) && near2(b.1, w.1), "{b:?} {w:?}");
+        }
+        let [front, back] = p.bogies.map(|b| b.0);
+        assert!(near2(p.dir, (front - back).normalize()), "{p:?}");
+        assert!(
+            near2(p.pos + p.dir * (wagon.front - wagon.bogies[0]), front),
+            "{p:?}"
+        );
+    }
+
+    /// Четыре угла габаритного прямоугольника машины на пути.
+    fn corners(p: &Placed, [min, max]: [Vec2; 2]) -> [Vec2; 4] {
+        let right = vec2(p.dir.y, -p.dir.x);
+        [
+            (min.x, min.y),
+            (max.x, min.y),
+            (max.x, max.y),
+            (min.x, max.y),
+        ]
+        .map(|(x, z)| p.pos + right * x + p.dir * z)
+    }
+
+    /// Выпуклые многоугольники разделены осью одной из сторон.
+    fn apart(a: &[Vec2; 4], b: &[Vec2; 4]) -> bool {
+        [a, b].iter().any(|poly| {
+            (0..4).any(|i| {
+                let n = (poly[(i + 1) % 4] - poly[i]).perp();
+                let range = |q: &[Vec2; 4]| {
+                    let d = q.map(|v| v.dot(n));
+                    (
+                        d.into_iter().fold(f32::MAX, f32::min),
+                        d.into_iter().fold(f32::MIN, f32::max),
+                    )
+                };
+                let (a0, a1) = range(a);
+                let (b0, b1) = range(b);
+                a1 <= b0 + 1e-4 || b1 <= a0 + 1e-4
+            })
+        })
+    }
+
+    /// Каждая пара машин игры проезжает путь от тупика до тупика; `Err` — первое касание кузовов.
+    fn corridor(t: &Track) -> Result<(), String> {
+        let catalog = catalog();
+        for (a, ra) in &catalog {
+            for (b, rb) in &catalog {
+                let mut train = Train::new(t, (0, true), 0.0, vec![*a, *b]).expect("состав");
+                for tick in 0.. {
+                    assert!(tick < 2000, "не доехал: {train:?}");
+                    let (p, _) = train.cars_at(t);
+                    if !apart(&corners(&p[0], *ra), &corners(&p[1], *rb)) {
+                        return Err(format!("{a:?} {b:?} {train:?}"));
+                    }
+                    train.speed = MAX_SPEED;
+                    train.advance(DT, t);
+                    if train.speed == 0.0 {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Прямые, `corner-large`, прямые, S-деталь и зеркальная S-деталь: повороты `level01`.
+    fn bends() -> Track {
+        mirrored(&[
+            ("straight", [0, -4], 0, false),
+            ("straight", [0, -2], 0, false),
+            ("corner-large", [0, 0], 0, false),
+            ("straight", [-2, 2], 270, false),
+            ("straight", [-4, 2], 270, false),
+            ("curve", [-6, 2], 270, false),
+            ("straight", [-8, 1], 270, false),
+            ("curve", [-10, 1], 270, true),
+            ("straight", [-12, 2], 270, false),
+            ("straight", [-14, 2], 270, false),
+        ])
+    }
+
+    fn sharp() -> Track {
+        track(&[
+            ("straight", [0, -4], 0),
+            ("straight", [0, -2], 0),
+            ("corner-small", [0, 0], 0),
+            ("straight", [-1, 1], 270),
+            ("straight", [-3, 1], 270),
+        ])
+    }
+
+    #[test]
+    fn neighbour_bodies_never_touch_on_level01_bends() {
+        let t = bends();
+        assert!((1..t.edges.len()).all(|i| t.next((i - 1, true)) == Some((i, true))));
+        let level = Track::parse(LEVEL01, 0.0).expect("level01");
+        let kind = |e: &crate::track::Edge| (e.rail.piece, e.rail.mirror);
+        assert!(
+            level
+                .edges
+                .iter()
+                .all(|e| t.edges.iter().any(|b| kind(b) == kind(e))),
+            "поворот карты не проверен"
+        );
+        assert_eq!(corridor(&t), Ok(()));
+    }
+
+    #[test]
+    fn corner_small_is_too_sharp_for_gap_and_not_on_map() {
+        assert!(corridor(&sharp()).is_err());
+        let level = Track::parse(LEVEL01, 0.0).expect("level01");
+        assert!(
+            level
+                .edges
+                .iter()
+                .all(|e| e.rail.piece != Piece::CornerSmall)
+        );
     }
 }
