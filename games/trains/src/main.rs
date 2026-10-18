@@ -22,6 +22,14 @@ mod piece;
     )
 )]
 mod track;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "состав подключается к управлению и сцене в следующих задачах"
+    )
+)]
+mod train;
 
 use std::collections::BTreeMap;
 use std::f32::consts::FRAC_PI_4;
