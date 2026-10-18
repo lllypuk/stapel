@@ -1,3 +1,12 @@
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "путь подключается к карте и сцене в следующих задачах"
+    )
+)]
+mod piece;
+
 use std::collections::BTreeMap;
 use std::f32::consts::FRAC_PI_4;
 
