@@ -237,6 +237,7 @@ Cargo workspace: `engine/` (библиотека), `games/<имя>/` (бинар
 - Хвост состава `trains` идёт по своему списку рёбер, а не по `Track::next`: по графу стрелка, переведённая под составом, молча увела бы хвост на другую ветку, и состав разорвался бы. Задний ход переворачивает список на время шага, и голова идёт тем же списком. → тесты `train::switch_thrown_under_train_keeps_tail_on_its_branch`, `train::reverse_leads_with_tail_and_keeps_route_order`
 - Зазор `GAP` между машинами `trains` подобран под повороты карты (`corner-large`, S-деталь): на `corner-small` кузова соседних машин при нём пересекаются, и карта с этой деталью молча показала бы вагоны друг в друге. → тесты `train::neighbour_bodies_never_touch_on_level01_bends`, `train::corner_small_is_too_sharp_for_gap_and_not_on_map`
 - Стрелка впереди `trains` ищется по последнему направлению хода `Train::reverse`, а не по знаку скорости: упор обнуляет скорость, и E после остановки задним ходом перед стрелкой молча перевёл бы стрелку впереди головы. → тест `switch::key_finds_nearest_switch_ahead_by_last_direction`
+- Пересборка в депо `trains` ставит состав в начало депо заново, а газ при открытом депо выключен: иначе состав уехал бы с открытой панелью, и следующая команда панели молча перенесла бы его скачком обратно. Открывает депо Tab только у стоящего состава целиком на рёбрах пути депо. → тесты `trains::depot_is_open_at_start_and_blocks_gas`, `trains::tab_opens_depot_only_for_standing_train_on_depot_path`, `trains::rebuild_puts_consist_at_depot_start`
 
 
 ## Этапы

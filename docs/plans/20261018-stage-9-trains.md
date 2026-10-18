@@ -345,14 +345,16 @@
 - Create: `games/trains/src/depot.rs`
 - Modify: `games/trains/src/main.rs`, `games/trains/Cargo.toml` (`egui_kittest`)
 
-- [ ] тесты:
+- [x] тесты:
   - команды панели меняют состав;
   - больше `MAX_CARS` вагонов не добавить;
   - «Ехать» закрывает депо;
   - Tab открывает депо только у стоящего поезда на пути депо;
   - пересборка ставит состав в начало депо;
-- [ ] панель egui с очередью команд;
-- [ ] `cargo mutants -f games/trains/src/depot.rs`, `make cov`, `make check`
+- [x] панель egui с очередью команд;
+  - ➕ депо открыто на старте, газ при открытом депо выключен, Tab при открытом закрывает; кириллица панели — `engine::ui::set_font`; молчаливая поломка «газ при открытом депо» → `docs/design.md`;
+- [x] `cargo mutants -f games/trains/src/depot.rs`, `make cov`, `make check`
+  - ➕ мутанты и `main.rs`: живы только витрина `draw` и `camera` задачи 2, как в задаче 9
 
 ### Task 11: Сцена, камера, HUD
 

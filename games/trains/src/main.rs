@@ -6,6 +6,7 @@
     )
 )]
 mod consist;
+mod depot;
 #[cfg_attr(
     not(test),
     expect(
@@ -37,11 +38,12 @@ use std::f32::consts::FRAC_PI_4;
 
 use engine::{
     Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Font, FontData, Game,
-    Gfx, Handle, Input, KeyCode, Mat4, Model, ModelDraw, MouseButton, Scene, Vec2, Vec3, vec2,
-    vec3,
+    Gfx, Handle, Input, KeyCode, Mat4, Model, ModelDraw, MouseButton, Scene, Vec2, Vec3, egui,
+    vec2, vec3,
 };
 
 use consist::Car;
+use depot::Depot;
 use track::{LEVEL01, MARGIN, Track};
 use train::Train;
 
@@ -131,8 +133,11 @@ const SKY: Color = Color {
 
 struct Trains {
     models: BTreeMap<&'static str, Handle<Model>>,
+    /// Локомотивы и вагоны по имени модели.
+    cars: BTreeMap<&'static str, Car>,
     track: Track,
     train: Train,
+    depot: Depot,
     font: Handle<Font>,
     /// Тиков до конца надписи об отказе стрелки.
     busy: u32,
@@ -153,6 +158,12 @@ fn catalog(
     (models.iter())
         .filter_map(|(&n, &h)| Some((n, Car::new(h, assets.model(h))?)))
         .collect()
+}
+
+/// Состав по именам в начале депо: хвост у тупика.
+fn in_depot(track: &Track, cars: &BTreeMap<&'static str, Car>, consist: &[&str]) -> Train {
+    let cars = consist.iter().map(|n| cars[n]).collect();
+    Train::new(track, track.depot[0], MARGIN, cars).expect("депо вмещает состав")
 }
 
 fn pressed(input: &Input, keys: &[KeyCode]) -> f32 {
@@ -184,12 +195,14 @@ impl Game for Trains {
         let cars = catalog(&models, &ctx.assets);
         let all: Vec<_> = cars.values().copied().collect();
         let track = Track::parse(LEVEL01, consist::max_len(&all)).expect("level01");
-        let start = START.iter().map(|n| cars[n]).collect();
-        let train = Train::new(&track, track.depot[0], MARGIN, start).expect("депо вмещает состав");
+        let depot = Depot::new(START.to_vec());
+        let train = in_depot(&track, &cars, &depot.consist);
         Self {
             models,
+            cars,
             track,
             train,
+            depot,
             font: ctx.assets.load_font(FONT_PATH, HUD_PX),
             busy: 0,
         }
@@ -197,6 +210,12 @@ impl Game for Trains {
 
     fn update(&mut self, ctx: &mut Context) {
         let input = &ctx.input;
+        if self.depot.apply() {
+            self.train = in_depot(&self.track, &self.cars, &self.depot.consist);
+        }
+        if input.just_pressed(KeyCode::Tab) {
+            self.depot.open = !self.depot.open && depot::can_open(&self.track, &self.train);
+        }
         let ahead = (input.just_pressed(KeyCode::KeyE))
             .then(|| switch::ahead(&self.track, &self.train))
             .flatten();
@@ -210,7 +229,11 @@ impl Game for Trains {
                 self.busy = TICK_HZ;
             }
         }
-        let pedal = pressed(input, GAS) - pressed(input, BACK);
+        let pedal = if self.depot.open {
+            0.0
+        } else {
+            pressed(input, GAS) - pressed(input, BACK)
+        };
         self.train.drive(pedal, DT);
         self.train.advance(DT, &self.track);
     }
@@ -248,6 +271,14 @@ impl Game for Trains {
         });
         self.draw_hud(&mut ctx.gfx, &ctx.assets);
     }
+
+    fn ui(&mut self, ui: &egui::Context) {
+        engine::ui::set_font(ui, FONT_PATH);
+        if self.depot.open {
+            let catalog: Vec<_> = self.cars.keys().copied().collect();
+            self.depot.ui(ui, &catalog);
+        }
+    }
 }
 
 impl Trains {
@@ -277,9 +308,12 @@ fn main() -> Result<(), engine::EventLoopError> {
 
 #[cfg(test)]
 mod tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
     use engine::{ElementState, IVec2, Shown, ShownScene, Sprite, Texture, UVec2, Viewport, text};
 
     use super::*;
+    use crate::depot::DepotCmd;
     use crate::piece::Piece;
 
     fn texture(
@@ -493,6 +527,7 @@ mod tests {
     fn keys_drive_train_out_of_depot_and_back() {
         let mut ctx = Context::default();
         let mut g = Trains::init(&mut ctx);
+        g.depot.open = false;
         let start = g.train.clone();
         for key in GAS {
             ctx.input.on_key(*key, ElementState::Pressed, false);
@@ -511,5 +546,143 @@ mod tests {
             assert!(g.train.speed < 0.99, "тормоз, а не накат: {key:?}");
             ctx.input.on_key(*key, ElementState::Released, false);
         }
+    }
+
+    fn press(ctx: &mut Context, key: KeyCode) {
+        ctx.input.on_key(key, ElementState::Pressed, false);
+        ctx.input.on_key(key, ElementState::Released, false);
+    }
+
+    #[test]
+    fn depot_is_open_at_start_and_blocks_gas() {
+        let mut ctx = Context::default();
+        let mut g = Trains::init(&mut ctx);
+        assert!(g.depot.open);
+        let start = g.train.clone();
+        ctx.input
+            .on_key(KeyCode::KeyW, ElementState::Pressed, false);
+        tick(&mut g, &mut ctx);
+        assert_eq!(g.train, start);
+    }
+
+    #[test]
+    fn go_closes_depot_and_train_drives_off_from_where_it_stands() {
+        let mut ctx = Context::default();
+        let mut g = Trains::init(&mut ctx);
+        g.train.speed = 1.0;
+        g.train.advance(1.0, &g.track);
+        g.train.speed = 0.0;
+        let stood = g.train.clone();
+        g.depot.queue.push(DepotCmd::Go);
+        tick(&mut g, &mut ctx);
+        assert!(!g.depot.open);
+        assert_eq!(g.train, stood, "без пересборки состав на месте");
+        ctx.input
+            .on_key(KeyCode::KeyW, ElementState::Pressed, false);
+        tick(&mut g, &mut ctx);
+        assert!(g.train.speed > 0.0);
+    }
+
+    #[test]
+    fn tab_opens_depot_only_for_standing_train_on_depot_path() {
+        let mut ctx = Context::default();
+        let mut g = Trains::init(&mut ctx);
+        press(&mut ctx, KeyCode::Tab);
+        tick(&mut g, &mut ctx);
+        assert!(!g.depot.open, "Tab закрывает");
+        g.train.speed = 1.0;
+        press(&mut ctx, KeyCode::Tab);
+        tick(&mut g, &mut ctx);
+        assert!(!g.depot.open, "состав едет");
+        g.train.speed = 0.0;
+        tick(&mut g, &mut ctx);
+        assert!(!g.depot.open, "без Tab");
+        press(&mut ctx, KeyCode::Tab);
+        tick(&mut g, &mut ctx);
+        assert!(g.depot.open);
+        press(&mut ctx, KeyCode::Tab);
+        tick(&mut g, &mut ctx);
+        let last = g.track.depot[g.track.depot.len() - 1];
+        let out = g.track.next(last).expect("за стрелкой D");
+        assert!(!g.track.depot.iter().any(|&(e, _)| e == out.0));
+        let cars = g.train.cars.clone();
+        g.train = Train::new(&g.track, last, 0.0, cars.clone()).expect("за D");
+        assert!(g.train.route.contains(&out), "{:?}", g.train.route);
+        press(&mut ctx, KeyCode::Tab);
+        tick(&mut g, &mut ctx);
+        assert!(!g.depot.open, "голова за D");
+        g.train = Train::new(&g.track, out, 0.0, cars).expect("за D");
+        press(&mut ctx, KeyCode::Tab);
+        tick(&mut g, &mut ctx);
+        assert!(!g.depot.open, "состав на петле");
+    }
+
+    #[test]
+    fn rebuild_puts_consist_at_depot_start() {
+        let mut ctx = Context::default();
+        let mut g = Trains::init(&mut ctx);
+        let start = g.train.clone();
+        g.depot.open = false;
+        ctx.input
+            .on_key(KeyCode::KeyW, ElementState::Pressed, false);
+        for _ in 0..60 {
+            tick(&mut g, &mut ctx);
+        }
+        ctx.input
+            .on_key(KeyCode::KeyW, ElementState::Released, false);
+        g.train.speed = 0.0;
+        g.train.reverse = true;
+        assert_ne!(
+            (g.train.route[0], g.train.tail),
+            (start.route[0], start.tail)
+        );
+        press(&mut ctx, KeyCode::Tab);
+        tick(&mut g, &mut ctx);
+        assert!(g.depot.open);
+        let tank = "train/train-carriage-tank";
+        g.depot.queue.push(DepotCmd::Add(tank));
+        tick(&mut g, &mut ctx);
+        let mut names = START.to_vec();
+        names.push(tank);
+        let cars: Vec<_> = names.iter().map(|n| g.cars[n]).collect();
+        let want = Train::new(&g.track, g.track.depot[0], MARGIN, cars).expect("депо");
+        assert_eq!(g.train, want);
+        assert_eq!((want.route[0], want.tail), (start.route[0], start.tail));
+        assert!(g.depot.open, "пересборка депо не закрывает");
+    }
+
+    fn harness(g: Trains) -> Harness<'static, Trains> {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 720.0))
+            .build_ui_state(|ui, g: &mut Trains| g.ui(ui.ctx()), g);
+        h.run();
+        h
+    }
+
+    #[test]
+    fn depot_window_only_while_open_with_cyrillic_font_and_whole_catalog() {
+        let mut ctx = Context::default();
+        let mut g = Trains::init(&mut ctx);
+        g.depot.open = false;
+        let h = harness(g);
+        assert!(h.query_by_label("Депо").is_none());
+        let mut h = harness(Trains::init(&mut ctx));
+        assert!(
+            h.ctx
+                .fonts(|f| f.definitions().font_data.contains_key(FONT_PATH))
+        );
+        let names: Vec<_> = h.state().cars.keys().copied().collect();
+        for name in names {
+            let label = name.strip_prefix("train/train-").expect(name);
+            let label = if depot::is_wagon(name) {
+                format!("+ {label}")
+            } else {
+                label.to_owned()
+            };
+            assert!(h.query_by_label(&label).is_some(), "{label}");
+        }
+        h.get_by_label("Ехать").click();
+        h.run();
+        assert_eq!(h.state().depot.queue, [DepotCmd::Go]);
     }
 }
