@@ -10,6 +10,7 @@ use crate::piece::{self, Piece};
 pub(crate) const CELL: f32 = 2.0;
 /// Запас ведущего конца состава до тупика и стрелки: кузов выступает за тележку.
 pub(crate) const MARGIN: f32 = 0.5;
+pub(crate) const LEVEL01: &str = include_str!("../assets/maps/level01.toml");
 
 /// Ребро и направление проезда: `true` — по возрастанию `s`.
 pub(crate) type Pass = (usize, bool);
@@ -418,7 +419,10 @@ fn graph(rails: Vec<Rail>) -> Result<(Vec<Edge>, Vec<Port>), TrackError> {
 
 #[cfg(test)]
 mod tests {
+    use engine::Assets;
+
     use super::*;
+    use crate::consist::{self, Car};
 
     const DEPOT0: &str = "depot = { rail = 0 }\n";
 
@@ -813,5 +817,102 @@ mod tests {
         for (error, text) in cases {
             assert_eq!(error.to_string(), text);
         }
+    }
+
+    fn game_max_len() -> f32 {
+        let mut assets = Assets::default();
+        let cars: Vec<_> = (crate::MODELS.iter())
+            .filter(|m| m.starts_with("train/train-"))
+            .filter_map(|m| {
+                let h = assets.load_model(format!("{}{m}.glb", crate::ASSETS));
+                Car::new(h, assets.model(h))
+            })
+            .collect();
+        assert_eq!(cars.len(), 13);
+        consist::max_len(&cars)
+    }
+
+    fn edge(t: &Track, piece: Piece, cell: [i32; 2]) -> usize {
+        (t.edges.iter())
+            .position(|e| e.rail.piece == piece && e.rail.cell == IVec2::from(cell))
+            .unwrap_or_else(|| panic!("{piece:?} {cell:?}"))
+    }
+
+    /// Ставит стрелку в `at` на ветку-S-деталь или на прямую.
+    fn set(t: &mut Track, at: Vec2, curve: bool) {
+        let s = (t.switches.iter_mut())
+            .find(|s| t.ports[s.port].pos == at)
+            .unwrap_or_else(|| panic!("{at}"));
+        s.active = (s.branches.iter())
+            .position(|&b| (t.edges[b].rail.piece == Piece::Curve) == curve)
+            .expect("ветка");
+    }
+
+    /// Стрелки по пути от `start` и порт остановки; `None` — вернулись в `start`.
+    fn walk(t: &Track, start: Pass) -> (Vec<Vec2>, Option<Vec2>) {
+        let mut seen = Vec::new();
+        let mut pass = start;
+        for _ in 0..2 * t.edges.len() {
+            let port = t.edges[pass.0].ends[usize::from(pass.1)].0;
+            let Some(next) = t.next(pass) else {
+                return (seen, Some(t.ports[port].pos));
+            };
+            if t.switches.iter().any(|s| s.port == port) {
+                seen.push(t.ports[port].pos);
+            }
+            if next == start {
+                return (seen, None);
+            }
+            pass = next;
+        }
+        panic!("{start:?}: путь не кончается")
+    }
+
+    #[test]
+    fn level01_follows_scheme() {
+        const A: Vec2 = vec2(8.0, 0.0);
+        const B: Vec2 = vec2(32.0, 0.0);
+        const C: Vec2 = vec2(16.0, -2.0);
+        const D: Vec2 = vec2(12.0, 16.0);
+        const T: Vec2 = vec2(28.0, -4.0);
+        let max_len = game_max_len();
+        let mut t = Track::parse(LEVEL01, max_len).expect("level01");
+        let mut at: Vec<_> = t.switches.iter().map(|s| t.ports[s.port].pos).collect();
+        at.sort_by(|a, b| a.x.total_cmp(&b.x));
+        assert_eq!(at, [A, D, C, B]);
+        let depot: f32 = t.depot.iter().map(|&(e, _)| t.edges[e].len()).sum();
+        assert!(depot >= max_len + MARGIN, "{depot} < {max_len}");
+        let out = t.depot[t.depot.len() - 1];
+        assert_eq!(walk(&t, out), (vec![D, A, B], Some(D)));
+        let back = (edge(&t, Piece::Straight, [6, 8]), false);
+        assert_eq!(walk(&t, back), (vec![D], Some(vec2(36.0, 18.0))));
+        set(&mut t, D, false);
+        let bottom = (edge(&t, Piece::Straight, [2, 0]), true);
+        let cases = [
+            ([false, false, false], vec![A, B, D], None),
+            ([true, false, true], vec![A, C, B, D], None),
+            ([true, true, false], vec![A, C], Some(T)),
+            ([true, false, false], vec![A, C], Some(B)),
+        ];
+        for ([a, c, b], seen, stop) in cases {
+            set(&mut t, A, a);
+            set(&mut t, C, c);
+            set(&mut t, B, b);
+            assert_eq!(walk(&t, bottom), (seen, stop), "A {a}, C {c}, B {b}");
+        }
+    }
+
+    #[test]
+    fn level01_quarter_is_inside_loop() {
+        let t = Track::parse(LEVEL01, 0.0).expect("level01");
+        let inside = |p: Vec2| p.cmpge(vec2(2.0, 2.0)).all() && p.cmple(vec2(38.0, 14.0)).all();
+        for r in &t.roads {
+            let p = r.cell.as_vec2() * CELL;
+            assert!(inside(p) && inside(p + CELL), "{r:?}");
+        }
+        for b in &t.buildings {
+            assert!(inside(b.pos), "{b:?}");
+        }
+        assert!(!t.roads.is_empty() && !t.buildings.is_empty());
     }
 }

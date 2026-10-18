@@ -1,0 +1,104 @@
+# Стрелки: A, B — обгонный путь, C — отросток к тупику T, D — депо.
+depot = { rail = 5 }
+
+rail = [
+    # Депо: S-деталь от стрелки D (12, 16) на +Z, путь на +X до тупика (36, 18).
+    { piece = "curve", cell = [6, 8], rot = 90 },
+    { piece = "straight", cell = [8, 9], rot = 90 },
+    { piece = "straight", cell = [10, 9], rot = 90 },
+    { piece = "straight", cell = [12, 9], rot = 90 },
+    { piece = "straight", cell = [14, 9], rot = 90 },
+    { piece = "straight", cell = [16, 9], rot = 90 },
+    # Петля. Низ z = 0 по +X: A (8, 0), B (32, 0).
+    { piece = "straight", cell = [2, 0], rot = 90 },
+    { piece = "straight", cell = [4, 0], rot = 90 },
+    { piece = "straight", cell = [6, 0], rot = 90 },
+    { piece = "straight", cell = [8, 0], rot = 90 },
+    { piece = "straight", cell = [10, 0], rot = 90 },
+    { piece = "straight", cell = [12, 0], rot = 90 },
+    { piece = "straight", cell = [14, 0], rot = 90 },
+    { piece = "straight", cell = [16, 0], rot = 90 },
+    { piece = "corner-large", cell = [18, 0], rot = 90 },
+    # Край x = 40 по +Z.
+    { piece = "straight", cell = [20, 2] },
+    { piece = "straight", cell = [20, 4] },
+    { piece = "corner-large", cell = [20, 6] },
+    # Верх z = 16 по −X: D (12, 16).
+    { piece = "straight", cell = [18, 8], rot = 270 },
+    { piece = "straight", cell = [16, 8], rot = 270 },
+    { piece = "straight", cell = [14, 8], rot = 270 },
+    { piece = "straight", cell = [12, 8], rot = 270 },
+    { piece = "straight", cell = [10, 8], rot = 270 },
+    { piece = "straight", cell = [8, 8], rot = 270 },
+    { piece = "straight", cell = [6, 8], rot = 270 },
+    { piece = "straight", cell = [4, 8], rot = 270 },
+    { piece = "corner-large", cell = [2, 8], rot = 270 },
+    # Край x = 0 по −Z.
+    { piece = "straight", cell = [0, 6], rot = 180 },
+    { piece = "straight", cell = [0, 4], rot = 180 },
+    { piece = "corner-large", cell = [0, 2], rot = 180 },
+    # Обгонный z = −2: съезд у A, C (16, −2), въезд у B.
+    { piece = "curve", cell = [4, 0], rot = 90, mirror = true },
+    { piece = "straight", cell = [6, -1], rot = 90 },
+    { piece = "straight", cell = [8, -1], rot = 90 },
+    { piece = "straight", cell = [10, -1], rot = 90 },
+    { piece = "straight", cell = [12, -1], rot = 90 },
+    { piece = "curve", cell = [14, -1], rot = 90 },
+    # Отросток от C до тупика T (28, −4).
+    { piece = "curve", cell = [8, -1], rot = 90, mirror = true },
+    { piece = "straight", cell = [10, -2], rot = 90 },
+    { piece = "straight", cell = [12, -2], rot = 90 },
+]
+
+road = [
+    # Улица по ряду 3, поперечные — по столбцам 7 и 12. Клетка [x, z] — квадрат (2x, 2z)…(2x + 2, 2z + 2).
+    { tile = "road-end", cell = [2, 3] },
+    { tile = "road-straight", cell = [3, 3] },
+    { tile = "road-straight", cell = [4, 3] },
+    { tile = "road-straight", cell = [5, 3] },
+    { tile = "road-straight", cell = [6, 3] },
+    { tile = "road-crossing", cell = [7, 3] },
+    { tile = "road-straight", cell = [8, 3] },
+    { tile = "road-straight", cell = [9, 3] },
+    { tile = "road-straight", cell = [10, 3] },
+    { tile = "road-straight", cell = [11, 3] },
+    { tile = "road-crossing", cell = [12, 3] },
+    { tile = "road-straight", cell = [13, 3] },
+    { tile = "road-straight", cell = [14, 3] },
+    { tile = "road-straight", cell = [15, 3] },
+    { tile = "road-straight", cell = [16, 3] },
+    { tile = "road-end", cell = [17, 3], rot = 180 },
+    { tile = "road-end", cell = [7, 1], rot = 270 },
+    { tile = "road-straight", cell = [7, 2], rot = 90 },
+    { tile = "road-straight", cell = [7, 4], rot = 90 },
+    { tile = "road-straight", cell = [7, 5], rot = 90 },
+    { tile = "road-end", cell = [7, 6], rot = 90 },
+    { tile = "road-end", cell = [12, 1], rot = 270 },
+    { tile = "road-straight", cell = [12, 2], rot = 90 },
+    { tile = "road-straight", cell = [12, 4], rot = 90 },
+    { tile = "road-straight", cell = [12, 5], rot = 90 },
+    { tile = "road-end", cell = [12, 6], rot = 90 },
+    # Пруд, бассейн, площадь.
+    { tile = "pond", cell = [4, 1] },
+    { tile = "pool", cell = [15, 1] },
+    { tile = "plaza", cell = [9, 4] },
+    { tile = "plaza", cell = [10, 4] },
+    { tile = "plaza", cell = [9, 5] },
+    { tile = "plaza", cell = [10, 5] },
+]
+
+building = [
+    # Южный ряд фасадом к улице, северный повёрнут.
+    { model = "building-a", pos = [5.0, 4.5] },
+    { model = "building-b", pos = [11.0, 4.5] },
+    { model = "building-c", pos = [18.5, 4.5] },
+    { model = "building-e", pos = [21.5, 4.5] },
+    { model = "building-d", pos = [28.0, 4.5] },
+    { model = "building-f", pos = [34.0, 4.5] },
+    { model = "building-skyscraper-a", pos = [5.0, 10.5], rot = 180.0 },
+    { model = "building-c", pos = [8.0, 10.5], rot = 180.0 },
+    { model = "building-skyscraper-b", pos = [11.0, 10.5], rot = 180.0 },
+    { model = "building-e", pos = [28.0, 10.5], rot = 180.0 },
+    { model = "building-a", pos = [31.0, 10.5], rot = 180.0 },
+    { model = "building-skyscraper-a", pos = [34.0, 10.5], rot = 180.0 },
+]
