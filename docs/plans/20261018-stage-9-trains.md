@@ -389,8 +389,8 @@
 - [x] `cargo mutants -f games/trains/src/bot.rs -f games/trains/src/main.rs`, `make cov`, `make check`
 
 ### Task 13: Приёмка
-- [ ] пункты «Готово, когда»;
-- [ ] `make mutants-diff`, `REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine`, `make test` с долгими
+- [x] пункты «Готово, когда»;
+- [x] `make mutants-diff`, `REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine`, `make test` с долгими
 
 ### Task 14: [Final] Документация
 - [ ] `docs/design.md`: строка 9 в «Этапы», «9+» → «10+», молчаливые поломки — в свои слои;

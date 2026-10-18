@@ -691,6 +691,12 @@ mod tests {
                 d.transform.transform_point3(vec3(0.0, 0.0, b.max.z)),
                 flat(c[1], RAIL_TOP),
             );
+            near(d.transform.transform_vector3(Vec3::Y), Vec3::Y);
+            let across = (c[1] - c[0]).perp().normalize();
+            near(
+                d.transform.transform_vector3(Vec3::X).abs(),
+                flat(across, 0.0).abs(),
+            );
         }
     }
 
