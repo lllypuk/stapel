@@ -6,7 +6,7 @@
 
 | Источник | Лицензия | Что там |
 |---|---|---|
-| [Kenney](https://kenney.nl/assets) | CC0 | наборы в одном стиле, GLB: Racing и Car Kit, Mini Dungeon, Mini Forest, Blaster Kit, Blocky Characters (уже в играх), City, Nature, Space, Castle, Furniture, Tower Defense, Platformer, Mini Characters (со скелетом) |
+| [Kenney](https://kenney.nl/assets) | CC0 | наборы в одном стиле, GLB: Racing и Car Kit, Mini Dungeon, Mini Forest, Blaster Kit, Blocky Characters, Train Kit, 3D Road Tiles, City Kit Commercial (уже в играх), остальные City Kit, Nature, Space, Castle, Furniture, Tower Defense, Platformer, Mini Characters (со скелетом) |
 | [Quaternius](https://quaternius.com) | CC0 | лоупольные паки, персонажи со скелетом и анимациями; glTF |
 | [KayKit](https://kaylousberg.itch.io) | CC0 (бесплатная часть) | паки в стиле Kenney: подземелья, персонажи, города |
 | [Poly Pizza](https://poly.pizza) | своя у модели: CC0 или CC-BY | каталог лоупольных моделей, архив Google Poly |

@@ -393,11 +393,11 @@
 - [x] `make mutants-diff`, `REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine`, `make test` с долгими
 
 ### Task 14: [Final] Документация
-- [ ] `docs/design.md`: строка 9 в «Этапы», «9+» → «10+», молчаливые поломки — в свои слои;
-- [ ] `CLAUDE.md`: `make trains` в «Команды»;
-- [ ] `games/trains/README.md`: управление, формат карты;
-- [ ] `docs/assets.md`: Train Kit, Road Tiles, City Kit — в игре;
-- [ ] план — в `docs/plans/completed/`
+- [x] `docs/design.md`: строка 9 в «Этапы», «9+» → «10+», молчаливые поломки — в свои слои;
+- [x] `CLAUDE.md`: `make trains` в «Команды»;
+- [x] `games/trains/README.md`: управление, формат карты;
+- [x] `docs/assets.md`: Train Kit, Road Tiles, City Kit — в игре;
+- [x] план — в `docs/plans/completed/` (переносит харнесс после всех задач)
 
 ## Post-Completion
 - Запуск `make trains`:
@@ -406,3 +406,4 @@
   - читаемость изометрии;
   - сцепки на поворотах;
   - клик по стрелке.
+- Решение по виду: `train-connector` — переходная площадка 0,9×0,9, а не тонкая сцепка, и между низкими грузовыми вагонами видна тёмной коробкой выше кузова. Оставить, заменить другой моделью или не ставить между грузовыми.
