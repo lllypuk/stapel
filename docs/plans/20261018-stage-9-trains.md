@@ -377,14 +377,16 @@
 **Files:**
 - Create: `games/trains/src/bot.rs`
 
-- [ ] `bot` вне `cfg(test)` с `cfg_attr(not(test), expect(dead_code))`; ожидания ограничены числом тиков;
-- [ ] сквозные тесты на `level01`:
+- [x] `bot` вне `cfg(test)` с `cfg_attr(not(test), expect(dead_code))`; ожидания ограничены числом тиков;
+  - ➕ бот — очередь отрезков `Leg { back, switches, until }`: `Until::Clear(стрелка)` или `Until::Stop`, после отрезка — торможение; стрелки — E, когда нужная впереди и не в том положении; депо закрывает Tab
+- [x] сквозные тесты на `level01`:
   - петля при обоих положениях A;
   - задний ход через A;
   - возврат в депо через D;
   - состав всё время на пути;
-- [ ] сквозные тесты остановки состава целиком: перед тупиком T и перед B на другой ветке;
-- [ ] `cargo mutants -f games/trains/src/bot.rs -f games/trains/src/main.rs`, `make cov`, `make check`
+  - ➕ «на пути» — каждый тик маршрут связен по `Track::next`, концы на своих рёбрах, длина маршрута — длина состава
+- [x] сквозные тесты остановки состава целиком: перед тупиком T и перед B на другой ветке;
+- [x] `cargo mutants -f games/trains/src/bot.rs -f games/trains/src/main.rs`, `make cov`, `make check`
 
 ### Task 13: Приёмка
 - [ ] пункты «Готово, когда»;

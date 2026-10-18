@@ -1,3 +1,5 @@
+#[cfg_attr(not(test), expect(dead_code, reason = "бот ездит только в тестах"))]
+mod bot;
 mod consist;
 mod depot;
 mod piece;
