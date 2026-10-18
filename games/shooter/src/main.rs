@@ -19,9 +19,9 @@ use engine::{
 use crate::enemy::{Clips, Enemy};
 use crate::map::{Dir, EnemyKind, Map, Tile};
 use crate::obstacle::Obstacles;
-use crate::player::{MAX_HP, Player, RADIUS, forward};
+use crate::player::{EYE, MAX_HP, Player, RADIUS, forward};
 use crate::sound::{Event, Sfx, SoundCmd, Sounds};
-use crate::weapon::{Arsenal, Impact, Projectile, Shot, Target};
+use crate::weapon::{Arsenal, Impact, Owner, Projectile, Shot, Target};
 
 const TICK_HZ: u32 = 60;
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/");
@@ -103,6 +103,19 @@ const MUZZLE: Color = Color {
 const MUZZLE_RANGE: f32 = 6.0;
 /// Вспышка перед глазом, м.
 const MUZZLE_AHEAD: f32 = 0.8;
+/// Дула оружия `Arsenal` в осях модели: середина переднего торца.
+const BARRELS: [Vec3; 2] = [Vec3::new(0.0, 0.08, -0.37), Vec3::new(0.0, 0.08, -0.32)];
+/// Путь, за который снаряд игрока от дула сходится с линией полёта, клетки.
+const CONVERGE: f32 = 2.0;
+/// Толщина следа мгновенного выстрела, м.
+const BEAM_WIDTH: f32 = 0.03;
+/// Ярче единицы: и теневая сторона следа светится.
+const BEAM: Color = Color {
+    r: 4.0,
+    g: 2.8,
+    b: 1.2,
+    a: 1.0,
+};
 /// Угол обзора слоя оружия: уже сцены, чтобы ствол не растягивался к краю.
 const GUN_FOV: f32 = 55.0 * std::f32::consts::PI / 180.0;
 const GUN_NEAR: f32 = 0.01;
@@ -199,6 +212,8 @@ struct Level {
     won: bool,
     /// Секунд до конца вспышки выстрела.
     flash: f32,
+    /// Конец луча последнего мгновенного выстрела на плане, клетки; виден, пока длится вспышка.
+    beam: Option<Vec2>,
     /// Звуки последнего тика.
     sounds: Vec<Event>,
 }
@@ -227,25 +242,35 @@ impl Level {
             ammo: map.ammo.clone(),
             won: false,
             flash: 0.0,
+            beam: None,
             sounds: Vec::new(),
         }
     }
 
     fn fire(&mut self) {
         let (targets, ids) = targets(&self.enemies);
-        let p = &self.player;
-        let Some(shot) = (self.arsenal).fire(p.pos, forward(p.yaw), &self.obstacles, &targets)
-        else {
+        let (from, dir) = (self.player.pos, forward(self.player.yaw));
+        let Some(shot) = (self.arsenal).fire(from, dir, &self.obstacles, &targets) else {
             return;
         };
         self.flash = FLASH;
         let sfx = [Sfx::Blaster, Sfx::Launcher][self.arsenal.current];
         self.sounds.push((sfx, self.player.pos));
-        match shot {
-            Shot::Hit { target, damage } => self.enemies[ids[target]].hurt(damage),
-            Shot::Launch(projectile) => self.projectiles.push(projectile),
-            Shot::Miss => {}
-        }
+        self.beam = match shot {
+            Shot::Hit {
+                target,
+                damage,
+                dist,
+            } => {
+                self.enemies[ids[target]].hurt(damage);
+                Some(from + dir * dist)
+            }
+            Shot::Miss { dist } => Some(from + dir * dist),
+            Shot::Launch(projectile) => {
+                self.projectiles.push(projectile);
+                None
+            }
+        };
     }
 
     fn pick_up(&mut self) {
@@ -421,11 +446,39 @@ fn quad() -> (Vec<Vertex>, Vec<u32>) {
     (vertices, vec![0, 1, 2, 0, 2, 3])
 }
 
+/// Брусок 1×1×1: по X и Y от −0,5 до 0,5, по Z от 0 до 1.
+fn cube() -> (Vec<Vertex>, Vec<u32>) {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for axis in 0..3 {
+        for side in [-0.5_f32, 0.5] {
+            let mut normal = [0.0; 3];
+            normal[axis] = side * 2.0;
+            let base = u32::try_from(vertices.len()).expect("24 вершины");
+            for (u, v) in [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)] {
+                let mut pos = [0.0; 3];
+                pos[axis] = side;
+                pos[(axis + 1) % 3] = u;
+                pos[(axis + 2) % 3] = v;
+                pos[2] += 0.5;
+                vertices.push(Vertex {
+                    pos,
+                    normal,
+                    ..Vertex::default()
+                });
+            }
+            indices.extend([0, 1, 2, 0, 2, 3].map(|i| base + i));
+        }
+    }
+    (vertices, indices)
+}
+
 struct Shooter {
     models: Models,
     map: Map,
     font: Handle<Font>,
     ground: Handle<Mesh>,
+    beam: Handle<Mesh>,
     /// Клетки карты: за уровень не меняются.
     statics: Vec<ModelDraw>,
     /// Клипы персонажей по `EnemyKind`.
@@ -453,6 +506,10 @@ impl Shooter {
             statics: statics(&map, &models, assets),
             font: assets.load_font(FONT_PATH, HUD_PX),
             ground: assets.add_mesh(vertices, indices),
+            beam: {
+                let (vertices, indices) = cube();
+                assets.add_mesh(vertices, indices)
+            },
             sounds: Sounds::load(assets),
             clips,
             models,
@@ -510,14 +567,20 @@ impl Shooter {
             }
         }));
         models.extend(self.characters(alpha, dt, assets));
+        let muzzle = self.muzzle(&camera);
         models.extend(l.projectiles.iter().map(|p| {
             let dir = vec3(p.vel.x, 0.0, p.vel.y).normalize();
+            let at = p.prev.lerp(p.pos, alpha);
+            let mut pos = world(at, SHOT_HEIGHT);
+            if p.owner == Owner::Player {
+                pos = muzzle.lerp(pos, (p.origin.distance(at) / CONVERGE).min(1.0));
+            }
             ModelDraw {
                 model: m.bullet,
                 transform: Mat4::from_scale_rotation_translation(
                     Vec3::splat(BULLET_SCALE),
                     Quat::from_rotation_arc(Vec3::Y, dir),
-                    world(p.prev.lerp(p.pos, alpha), SHOT_HEIGHT),
+                    pos,
                 ),
                 pose: None,
                 tint: Color::WHITE,
@@ -542,7 +605,7 @@ impl Shooter {
             fog: FOG,
             sun: Some(SUN),
             lights,
-            meshes: vec![MeshDraw {
+            meshes: iter::once(MeshDraw {
                 mesh: self.ground,
                 texture: Handle::WHITE,
                 color: GROUND,
@@ -551,7 +614,9 @@ impl Shooter {
                     Quat::IDENTITY,
                     Vec3::NEG_Y * GROUND_DROP,
                 ),
-            }],
+            })
+            .chain(self.beam(&camera))
+            .collect(),
             models,
             viewmodel: self.viewmodel(&camera),
         }
@@ -569,7 +634,7 @@ impl Shooter {
             let clips = self.clips[e.kind as usize];
             let mut pose = Pose::default();
             e.pose(model, clips, ahead, &mut pose);
-            let transform = e.transform(alpha, model);
+            let transform = e.transform(alpha, model, &pose);
             if e.kind == EnemyKind::Gunner {
                 out.push(ModelDraw {
                     model: self.models.blaster,
@@ -586,6 +651,32 @@ impl Shooter {
             });
         }
         out
+    }
+
+    /// След мгновенного выстрела от дула до конца луча на высоте глаза.
+    fn beam(&self, camera: &Camera3D) -> Option<MeshDraw> {
+        let l = &self.level;
+        let end = world(l.beam.filter(|_| l.flash > 0.0)?, EYE);
+        let from = self.muzzle(camera);
+        let along = end - from;
+        Some(MeshDraw {
+            mesh: self.beam,
+            texture: Handle::WHITE,
+            color: BEAM,
+            transform: Mat4::from_scale_rotation_translation(
+                vec3(BEAM_WIDTH, BEAM_WIDTH, along.length()),
+                Quat::from_rotation_arc(Vec3::Z, along.normalize()),
+                from,
+            ),
+        })
+    }
+
+    /// Дуло оружия в руках, перенесённое в мир на ту же точку экрана, что в слое оружия.
+    fn muzzle(&self, camera: &Camera3D) -> Vec3 {
+        let a = &self.level.arsenal;
+        let gun = GUN_AT + a.kick() + BARRELS[a.current] * GUN_SCALE;
+        let k = (camera.fov_y / 2.0).tan() / (GUN_FOV / 2.0).tan();
+        camera.pos + view(camera) * vec3(gun.x * k, gun.y * k, gun.z)
     }
 
     /// Оружие в руках живого игрока с отдачей.
@@ -767,6 +858,7 @@ fn main() -> Result<(), engine::EventLoopError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
     use std::time::Duration;
 
     use engine::{
@@ -776,9 +868,8 @@ mod tests {
 
     use super::*;
     use crate::bot::{Bot, press};
-    use crate::enemy::{State, stats};
-    use crate::player::{EYE, SENSITIVITY, SPEED};
-    use crate::weapon::Owner;
+    use crate::enemy::{self, State, stats};
+    use crate::player::{SENSITIVITY, SPEED};
 
     fn all(m: &Models) -> [Handle<Model>; 15] {
         [
@@ -1500,7 +1591,7 @@ mod tests {
                 let mut want = Pose::default();
                 e.pose(model, clips, ahead, &mut want);
                 let d = draws(s, handle)[0];
-                assert_eq!(d.transform, e.transform(0.25, model));
+                assert_eq!(d.transform, e.transform(0.25, model, &want));
                 assert_eq!(d.pose.as_ref(), Some(&want), "{:?}", e.kind);
                 if e.kind == EnemyKind::Gunner {
                     let b = draws(s, g.models.blaster)[0];
@@ -1537,15 +1628,48 @@ mod tests {
         ctx.input.on_key(KeyCode::Digit2, Pressed, false);
         ctx.input.on_button(MouseButton::Left, Pressed);
         tick(&mut g, &mut ctx);
+        ctx.input.on_button(MouseButton::Left, Released);
         tick(&mut g, &mut ctx);
+        let drawn = |g: &mut Shooter, ctx: &mut Context| {
+            g.draw(ctx, 0.5);
+            let d = draws(scene(ctx), g.models.bullet)[0];
+            let nose = d.transform.transform_vector3(Vec3::Y) / BULLET_SCALE;
+            let p = g.level.projectiles[0];
+            assert!(nose.abs_diff_eq(vec3(p.vel.x, 0.0, p.vel.y).normalize(), 1e-5));
+            d.transform.w_axis.truncate()
+        };
         let p = g.level.projectiles[0];
         assert_ne!(p.prev, p.pos);
-        g.draw(&mut ctx, 0.5);
-        let d = draws(scene(&ctx), g.models.bullet)[0];
-        let at = world(p.prev.lerp(p.pos, 0.5), SHOT_HEIGHT);
-        assert!(d.transform.w_axis.truncate().abs_diff_eq(at, 1e-5));
-        let nose = d.transform.transform_vector3(Vec3::Y);
-        assert!(nose.abs_diff_eq(Vec3::X * BULLET_SCALE, 1e-5), "{nose:?}");
+        let at = p.prev.lerp(p.pos, 0.5);
+        let part = p.origin.distance(at) / CONVERGE;
+        assert!(0.0 < part && part < 1.0, "{part}");
+        let pos = drawn(&mut g, &mut ctx);
+        let muzzle = g.muzzle(&camera(&ctx));
+        assert!(pos.abs_diff_eq(muzzle.lerp(world(at, SHOT_HEIGHT), part), 1e-5));
+
+        until(&mut g, &mut ctx, |g| {
+            let p = g.level.projectiles[0];
+            p.origin.distance(p.prev) > CONVERGE
+        });
+        let p = g.level.projectiles[0];
+        let pos = drawn(&mut g, &mut ctx);
+        assert!(pos.abs_diff_eq(world(p.prev.lerp(p.pos, 0.5), SHOT_HEIGHT), 1e-5));
+
+        g.level.projectiles = vec![Projectile::new(
+            vec2(5.5, 2.5),
+            -Vec2::X,
+            1.0,
+            1,
+            Owner::Enemy,
+        )];
+        tick(&mut g, &mut ctx);
+        let p = g.level.projectiles[0];
+        let pos = drawn(&mut g, &mut ctx);
+        let want = world(p.prev.lerp(p.pos, 0.5), SHOT_HEIGHT);
+        assert!(
+            pos.abs_diff_eq(want, 1e-5),
+            "снаряд врага — с линии полёта: {pos}"
+        );
     }
 
     #[test]
@@ -1596,6 +1720,125 @@ mod tests {
             .iter()
             .copied()
             .find(|l| l.color == MUZZLE)
+    }
+
+    /// Выстрел текущим оружием за один тик.
+    fn shoot(g: &mut Shooter, ctx: &mut Context) {
+        ctx.grabbed = true;
+        ctx.input.on_button(MouseButton::Left, Pressed);
+        tick(g, ctx);
+        ctx.input.on_button(MouseButton::Left, Released);
+    }
+
+    #[test]
+    fn blaster_beam_runs_from_muzzle_to_hit_while_flash_lasts() {
+        let (mut g, mut ctx) = shooter("#######\n#P..m.#\n#X....#\n#######\n");
+        shoot(&mut g, &mut ctx);
+        let hit = vec2(4.5 - enemy::RADIUS, 1.5);
+        let end = g.level.beam.unwrap();
+        assert!(end.distance(hit) < 1e-5, "{end}");
+        for _ in 1..5 {
+            g.draw(&mut ctx, 0.0);
+            let cam = camera(&ctx);
+            let beam = scene(&ctx).meshes[1];
+            assert_eq!((beam.mesh, beam.color), (g.beam, BEAM));
+            let m = beam.transform;
+            assert!(
+                m.transform_point3(Vec3::ZERO)
+                    .abs_diff_eq(g.muzzle(&cam), 1e-4)
+            );
+            assert!(
+                m.transform_point3(Vec3::Z)
+                    .abs_diff_eq(world(end, EYE), 1e-4)
+            );
+            assert!((m.transform_vector3(Vec3::X).length() - BEAM_WIDTH).abs() < 1e-5);
+            assert!((m.transform_vector3(Vec3::Y).length() - BEAM_WIDTH).abs() < 1e-5);
+            tick(&mut g, &mut ctx);
+        }
+        tick(&mut g, &mut ctx);
+        g.draw(&mut ctx, 0.0);
+        assert_eq!(scene(&ctx).meshes.len(), 1);
+    }
+
+    #[test]
+    fn blaster_miss_beam_ends_at_wall_and_launcher_leaves_none() {
+        let (mut g, mut ctx) = shooter(ROOM);
+        shoot(&mut g, &mut ctx);
+        let end = g.level.beam.unwrap();
+        assert!(end.distance(vec2(4.0, 1.5)) < 1e-5, "{end}");
+        ctx.input.on_key(KeyCode::Digit2, Pressed, false);
+        for _ in 0..TICK_HZ / 2 {
+            tick(&mut g, &mut ctx);
+        }
+        shoot(&mut g, &mut ctx);
+        assert_eq!(g.level.projectiles.len(), 1);
+        assert_eq!(g.level.beam, None);
+    }
+
+    #[test]
+    fn muzzle_lies_on_gun_barrel_on_screen() {
+        let (mut g, mut ctx) = shooter(ROOM);
+        g.level.player.pitch = 0.3;
+        shoot(&mut g, &mut ctx);
+        assert!(g.level.arsenal.kick() != Vec3::ZERO);
+        for (i, barrel) in BARRELS.into_iter().enumerate() {
+            g.level.arsenal.current = i;
+            g.draw(&mut ctx, 0.0);
+            let cam = camera(&ctx);
+            let gun = scene(&ctx).viewmodel.as_ref().unwrap();
+            let tip = gun.models[0].transform.transform_point3(barrel);
+            let gun_cam = Camera3D {
+                fov_y: gun.fov_y,
+                near: gun.near,
+                ..cam
+            };
+            let screen = |c: &Camera3D, p| c.view_proj(16.0 / 9.0).project_point3(p).truncate();
+            let muzzle = g.muzzle(&cam);
+            assert!((muzzle - cam.pos).dot(cam.forward()) > 0.3, "{muzzle}");
+            let (want, got) = (screen(&gun_cam, tip), screen(&cam, muzzle));
+            assert!(want.abs_diff_eq(got, 1e-4), "{i}: {want} {got}");
+            let b = ctx
+                .assets
+                .model(g.level.arsenal.weapon().model)
+                .bounds()
+                .unwrap();
+            assert!((barrel.z - b.min.z).abs() < 2e-2, "{i}: {b:?}");
+            assert!((b.min.y..b.max.y).contains(&barrel.y), "{i}: {b:?}");
+        }
+    }
+
+    #[test]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "координаты бруска — полуцелые"
+    )]
+    fn beam_is_unit_bar_along_z() {
+        let (vertices, indices) = cube();
+        assert_eq!(indices.len(), 36);
+        let half = |v: [f32; 3]| v.map(|c| (c * 2.0).round() as i32);
+        let mut corners = BTreeMap::new();
+        for face in indices.chunks(6) {
+            let normal = half(vertices[face[0] as usize].normal);
+            let quad: BTreeSet<_> = face
+                .iter()
+                .map(|&i| half(vertices[i as usize].pos))
+                .collect();
+            assert_eq!(quad.len(), 4, "{quad:?}");
+            for &i in face {
+                assert_eq!(half(vertices[i as usize].normal), normal);
+            }
+            for pos in quad {
+                let centred = [pos[0], pos[1], pos[2] - 1];
+                let along: i32 = centred.iter().zip(normal).map(|(c, n)| c * n).sum();
+                assert_eq!(along, 2, "{pos:?} {normal:?}");
+                *corners.entry(pos).or_insert(0) += 1;
+            }
+        }
+        assert_eq!(corners.len(), 8);
+        for (pos, faces) in corners {
+            assert_eq!(faces, 3, "{pos:?}");
+            assert!(pos[0].abs() == 1 && pos[1].abs() == 1 && (pos[2] == 0 || pos[2] == 2));
+        }
     }
 
     #[test]

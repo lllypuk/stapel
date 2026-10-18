@@ -291,10 +291,12 @@ impl Enemy {
         model.pose(clips.get(anim), self.t + ahead, anim != Anim::Die, pose);
     }
 
-    /// Модель в мире между тиками: стоит на полу, смотрит по `yaw`.
-    pub(crate) fn transform(&self, alpha: f32, model: &Model) -> Mat4 {
+    /// Модель в мире между тиками: стоит на полу, смотрит по `yaw`; поза ниже пола поднята на него.
+    pub(crate) fn transform(&self, alpha: f32, model: &Model, pose: &Pose) -> Mat4 {
         let p = self.prev.lerp(self.pos, alpha) * CELL;
-        Mat4::from_rotation_translation(Quat::from_rotation_y(self.yaw), vec3(p.x, 0.0, p.y))
+        let rest = model.bounds().map_or(0.0, |b| b.min.y);
+        let lift = (rest - bottom(model, pose)).max(0.0) * CHARACTER_SCALE;
+        Mat4::from_rotation_translation(Quat::from_rotation_y(self.yaw), vec3(p.x, lift, p.y))
             * standing(model, CHARACTER_SCALE)
     }
 }
@@ -307,6 +309,13 @@ pub(crate) fn blaster(transform: Mat4, pose: &Pose, clips: Clips) -> Mat4 {
 /// `yaw` модели, смотрящей вдоль `d` на плане.
 fn facing(d: Vec2) -> f32 {
     d.x.atan2(d.y)
+}
+
+/// Нижняя точка узлов модели в позе, единицы модели: `die` Kenney кладёт тело наполовину под пол.
+fn bottom(model: &Model, pose: &Pose) -> f32 {
+    (model.nodes.iter().zip(&pose.globals))
+        .filter_map(|(n, &g)| Some(n.bounds?.transformed(g).min.y))
+        .fold(f32::INFINITY, f32::min)
 }
 
 #[cfg(test)]
@@ -750,7 +759,7 @@ mod tests {
         let mut e = Enemy::new(EnemyKind::Gunner, vec2(1.5, 2.5));
         e.pos = vec2(2.5, 2.5);
         e.yaw = facing(vec2(1.0, 0.0));
-        let m = e.transform(0.25, model);
+        let m = e.transform(0.25, model, &model.rest);
         let feet = model.bounds().unwrap().transformed(m);
         assert!(feet.min.y.abs() < 1e-5, "{feet:?}");
         let centre = m.transform_point3(Vec3::ZERO);
@@ -760,13 +769,36 @@ mod tests {
     }
 
     #[test]
+    fn dead_body_lies_on_floor_and_jump_of_die_stays() {
+        let mut assets = Assets::default();
+        let h = character(&mut assets, "character-a");
+        let model = assets.model(h);
+        let clips = Clips::new(model);
+        let mut e = Enemy::new(EnemyKind::Brawler, vec2(1.5, 1.5));
+        e.hurt(1000);
+        let bottom = |e: &Enemy| {
+            let mut pose = Pose::default();
+            e.pose(model, clips, 0.0, &mut pose);
+            let m = e.transform(1.0, model, &pose);
+            (model.nodes.iter().zip(&pose.globals))
+                .filter_map(|(n, &g)| Some(n.bounds?.transformed(m * g).min.y))
+                .fold(f32::INFINITY, f32::min)
+        };
+        let die = model.animations[clips.get(Anim::Die)].duration;
+        e.t = die;
+        assert!(bottom(&e).abs() < 1e-4, "{}", bottom(&e));
+        e.t = die / 4.0;
+        assert!(bottom(&e) > 0.5 * CHARACTER_SCALE, "{}", bottom(&e));
+    }
+
+    #[test]
     fn gunner_blaster_follows_right_arm() {
         let mut assets = Assets::default();
         let h = character(&mut assets, "character-b");
         let model = assets.model(h);
         let clips = Clips::new(model);
         let e = Enemy::new(EnemyKind::Gunner, vec2(1.5, 1.5));
-        let m = e.transform(1.0, model);
+        let m = e.transform(1.0, model, &model.rest);
         let hand = |pose: &Pose| blaster(m, pose, clips).transform_point3(Vec3::ZERO);
 
         let rest = hand(&model.rest);

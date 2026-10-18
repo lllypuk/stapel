@@ -76,6 +76,8 @@ pub(crate) enum Impact {
 /// Снаряд на плане в клетках.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Projectile {
+    /// Точка вылета.
+    pub(crate) origin: Vec2,
     /// Позиция прошлого тика, для интерполяции.
     pub(crate) prev: Vec2,
     pub(crate) pos: Vec2,
@@ -87,6 +89,7 @@ pub(crate) struct Projectile {
 impl Projectile {
     pub(crate) fn new(pos: Vec2, dir: Vec2, speed: f32, damage: i32, owner: Owner) -> Self {
         Self {
+            origin: pos,
             prev: pos,
             pos,
             vel: dir.normalize_or_zero() * speed,
@@ -131,8 +134,16 @@ impl Projectile {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Shot {
-    Hit { target: usize, damage: i32 },
-    Miss,
+    /// `dist` — длина луча до входа в цель, клетки.
+    Hit {
+        target: usize,
+        damage: i32,
+        dist: f32,
+    },
+    /// `dist` — длина луча до стены или `RANGE`, клетки.
+    Miss {
+        dist: f32,
+    },
     Launch(Projectile),
 }
 
@@ -204,10 +215,14 @@ impl Arsenal {
         Some(match w.kind {
             Kind::Hitscan => {
                 let wall = obstacles.ray(from, dir, RANGE).unwrap_or(RANGE);
-                nearest(from, dir, wall, targets).map_or(Shot::Miss, |(target, _)| Shot::Hit {
-                    target,
-                    damage: w.damage,
-                })
+                nearest(from, dir, wall, targets).map_or(
+                    Shot::Miss { dist: wall },
+                    |(target, dist)| Shot::Hit {
+                        target,
+                        damage: w.damage,
+                        dist,
+                    },
+                )
             }
             Kind::Projectile { speed } => {
                 Shot::Launch(Projectile::new(from, dir, speed, w.damage, Owner::Player))
@@ -247,6 +262,21 @@ mod tests {
         }
     }
 
+    /// Попадание бластера в `target` с длиной луча `dist`.
+    #[track_caller]
+    fn assert_hit(shot: Option<Shot>, target: usize, dist: f32) {
+        let Some(Shot::Hit {
+            target: t,
+            damage,
+            dist: d,
+        }) = shot
+        else {
+            panic!("{shot:?}");
+        };
+        assert_eq!((t, damage), (target, 25));
+        assert!((d - dist).abs() < 1e-5 * dist.max(1.0), "{d} != {dist}");
+    }
+
     fn near(a: Vec2, b: Vec2) -> bool {
         a.distance(b) < 1e-5
     }
@@ -270,30 +300,18 @@ mod tests {
             target(2.5, 1.5),
         ];
         let shot = a.fire(vec2(1.5, 1.5), vec2(2.0, 0.0), &o, &targets[..3]);
-        assert_eq!(
-            shot,
-            Some(Shot::Hit {
-                target: 2,
-                damage: 25
-            })
-        );
+        assert_hit(shot, 2, 3.0 - 0.08_f32.sqrt());
         assert_eq!(a.weapon().ammo, 39);
 
         let mut a = arsenal();
         let shot = a.fire(vec2(1.5, 1.5), Vec2::X, &o, &targets);
-        assert_eq!(
-            shot,
-            Some(Shot::Hit {
-                target: 3,
-                damage: 25
-            })
-        );
+        assert_hit(shot, 3, 0.7);
         let mut a = arsenal();
         let shot = a.fire(vec2(1.5, 1.5), -Vec2::X, &o, &targets);
-        assert_eq!(shot, Some(Shot::Miss), "цели позади");
+        assert_eq!(shot, Some(Shot::Miss { dist: 0.5 }), "цели позади");
         let mut a = arsenal();
         let shot = a.fire(vec2(1.5, 1.5), Vec2::Y, &o, &targets);
-        assert_eq!(shot, Some(Shot::Miss), "луч мимо всех кругов");
+        assert_eq!(shot, Some(Shot::Miss { dist: 2.5 }), "луч мимо всех кругов");
     }
 
     #[test]
@@ -305,13 +323,7 @@ mod tests {
             &obstacles(HALL),
             &[target(1.6, 1.5)],
         );
-        assert_eq!(
-            shot,
-            Some(Shot::Hit {
-                target: 0,
-                damage: 25
-            })
-        );
+        assert_hit(shot, 0, 0.0);
     }
 
     #[test]
@@ -320,23 +332,21 @@ mod tests {
         let mut a = arsenal();
         assert_eq!(
             a.fire(vec2(1.5, 1.5), Vec2::X, &o, &[target(4.5, 1.5)]),
-            Some(Shot::Miss)
+            Some(Shot::Miss { dist: 1.5 })
         );
 
         let mut o = obstacles("#######\n#P.D.X#\n#k....#\n#######\n");
         let mut a = arsenal();
         assert_eq!(
             a.fire(vec2(1.5, 1.5), Vec2::X, &o, &[target(4.5, 1.5)]),
-            Some(Shot::Miss)
+            Some(Shot::Miss { dist: 1.5 })
         );
         o.open(ivec2(3, 1));
         let mut a = arsenal();
-        assert_eq!(
+        assert_hit(
             a.fire(vec2(1.5, 1.5), Vec2::X, &o, &[target(4.5, 1.5)]),
-            Some(Shot::Hit {
-                target: 0,
-                damage: 25
-            })
+            0,
+            2.7,
         );
     }
 
@@ -346,17 +356,15 @@ mod tests {
         let o = obstacles(&row);
         let mut a = arsenal();
         let far = |x| [target(x, 0.5)];
-        assert_eq!(
+        assert_hit(
             a.fire(vec2(0.5, 0.5), Vec2::X, &o, &far(RANGE)),
-            Some(Shot::Hit {
-                target: 0,
-                damage: 25
-            })
+            0,
+            RANGE - 0.8,
         );
         let mut a = arsenal();
         assert_eq!(
             a.fire(vec2(0.5, 0.5), Vec2::X, &o, &far(RANGE + 1.0)),
-            Some(Shot::Miss)
+            Some(Shot::Miss { dist: RANGE })
         );
     }
 
@@ -367,12 +375,12 @@ mod tests {
         let input = Input::default();
         let fire = |a: &mut Arsenal| a.fire(vec2(1.5, 1.5), Vec2::X, &o, &[]);
         let half = a.weapon().cooldown / 2.0;
-        assert_eq!(fire(&mut a), Some(Shot::Miss));
+        assert_eq!(fire(&mut a), Some(Shot::Miss { dist: 7.5 }));
         assert_eq!(fire(&mut a), None, "в том же тике");
         a.update(&input, half);
         assert_eq!(fire(&mut a), None);
         a.update(&input, half);
-        assert_eq!(fire(&mut a), Some(Shot::Miss));
+        assert_eq!(fire(&mut a), Some(Shot::Miss { dist: 7.5 }));
         assert_eq!(a.weapon().ammo, 38);
     }
 
@@ -406,6 +414,7 @@ mod tests {
         assert_eq!(
             shot,
             Some(Shot::Launch(Projectile {
+                origin: vec2(1.5, 1.5),
                 prev: vec2(1.5, 1.5),
                 pos: vec2(1.5, 1.5),
                 vel: vec2(0.0, 12.0),
