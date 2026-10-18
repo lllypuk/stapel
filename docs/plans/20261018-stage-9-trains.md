@@ -255,11 +255,12 @@
 **Files:**
 - Create: `games/trains/src/consist.rs`
 
-- [ ] тесты:
+- [x] тесты:
   - длина и отступы тележек от переднего края для вагона, `diesel-box-a` и паровоза без `wheels-back`;
   - `max_len` растёт с `MAX_CARS`;
-- [ ] `Car` из модели, `max_len`;
-- [ ] `cargo mutants -f games/trains/src/consist.rs`, `make cov`, `make check`
+- [x] `Car` из модели, `max_len`;
+  - ➕ `len(cars)` — длина состава с `GAP` между машинами; `GAP = 0,3` предварительный, подбирается в задаче 8;
+- [x] `cargo mutants -f games/trains/src/consist.rs`, `make cov`, `make check`
 
 ### Task 5: Карта и граф пути
 

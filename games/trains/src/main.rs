@@ -2,6 +2,14 @@
     not(test),
     expect(
         dead_code,
+        reason = "состав подключается к пути и депо в следующих задачах"
+    )
+)]
+mod consist;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
         reason = "путь подключается к карте и сцене в следующих задачах"
     )
 )]
