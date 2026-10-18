@@ -266,15 +266,18 @@
 
 **Files:**
 - Create: `games/trains/src/track.rs`
+- Modify: `games/trains/src/main.rs`, `games/trains/Cargo.toml` (`serde`, `toml`), `docs/design.md`
 
-- [ ] тесты:
+- [x] тесты:
   - стыки собираются по точке и касательной;
   - стрелка распознаётся и не считается ошибкой;
   - переход ветка → ветка невозможен;
   - путь депо — цепочка до первой стрелки;
-- [ ] тесты ошибок с номером записи — все случаи из «Technical Details»;
-- [ ] разбор TOML, `Track::parse(text, max_len)`;
-- [ ] `cargo mutants -f games/trains/src/track.rs`, `make cov`, `make check`
+- [x] тесты ошибок с номером записи — все случаи из «Technical Details»;
+  - ➕ ещё `rot` не кратен 90, неизвестные плитка и здание, `depot.rail` вне списка;
+- [x] разбор TOML, `Track::parse(text, max_len)`;
+  - ➕ `Track::next(pass)` — проезд через стык по активной ветке; `Rail::transform` и тест, что модель детали идёт по оси графа; молчаливая поломка → `docs/design.md`;
+- [x] `cargo mutants -f games/trains/src/track.rs`, `make cov`, `make check`
 
 ### Task 6: Карта level01
 

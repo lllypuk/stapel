@@ -2801,6 +2801,8 @@ name = "trains"
 version = "0.1.0"
 dependencies = [
  "engine",
+ "serde",
+ "toml",
 ]
 
 [[package]]

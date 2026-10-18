@@ -14,6 +14,14 @@ mod consist;
     )
 )]
 mod piece;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "граф пути подключается к составу и сцене в следующих задачах"
+    )
+)]
+mod track;
 
 use std::collections::BTreeMap;
 use std::f32::consts::FRAC_PI_4;
