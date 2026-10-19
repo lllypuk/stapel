@@ -9,9 +9,9 @@ use std::{fs, mem};
 
 use enemy::Orc;
 use engine::{
-    Assets, Camera2D, Camera3D, Color, Config, Context, Fog, Font, FontData, Game, Gfx, Handle,
-    IVec2, KeyCode, Mat4, Model, ModelDraw, MouseButton, PointLight, Pose, Quat, Scene, Texture,
-    Vec2, egui, vec2, vec3,
+    Assets, Camera2D, Camera3D, Color, Config, Context, Fog, Font, Game, Gfx, Handle, IVec2,
+    KeyCode, Mat4, Model, ModelDraw, MouseButton, PointLight, Pose, Quat, Scene, Texture, Vec2,
+    egui, vec2, vec3,
 };
 use map::{Dir, Map, Torch, cell_center};
 use minimap::Minimap;
@@ -193,13 +193,6 @@ fn torch_light(torch: &Torch, bright: f32) -> PointLight {
         color: scaled(TORCH, bright),
         range: TORCH_RANGE,
     }
-}
-
-fn text_width(font: &FontData, text: &str) -> f32 {
-    text.chars()
-        .filter_map(|c| font.glyph(c).or_else(|| font.glyph('?')))
-        .map(|g| g.advance)
-        .sum()
 }
 
 /// Центр игрока `pos` касается предмета в центре клетки `cell`.
@@ -429,7 +422,7 @@ impl Maze {
         if self.level.won {
             let font = assets.font(self.font);
             for (s, y) in [(WIN, HUD_PX), (RESTART, -HUD_PX)] {
-                text(s, vec2(-text_width(font, s) / 2.0, y));
+                text(s, vec2(-font.width(s) / 2.0, y));
             }
         }
     }
@@ -1156,23 +1149,12 @@ mod tests {
         let status: Vec<_> = text("COINS 1/3\nKEYS 2\nTIME 2.5", vec2(-628.0, 324.0)).collect();
         assert_eq!(status.len(), "COINS1/3KEYS2TIME2.5".len());
         assert_eq!(playing, status);
-        let centered = |s, y| text(s, vec2(-text_width(font, s) / 2.0, y));
+        let centered = |s, y| text(s, vec2(-font.width(s) / 2.0, y));
         let want: Vec<_> = (status.into_iter())
             .chain(centered(WIN, HUD_PX))
             .chain(centered(RESTART, -HUD_PX))
             .collect();
         assert_eq!(won, want);
-    }
-
-    #[test]
-    fn text_width_sums_advances() {
-        let mut assets = Assets::default();
-        let font = assets.load_font(FONT_PATH, HUD_PX);
-        let font = assets.font(font);
-        let one = text_width(font, "0");
-        assert_eq!(one, font.glyph('0').unwrap().advance);
-        assert!(one > 0.0);
-        assert_eq!(text_width(font, "0\u{e9}0"), 3.0 * one);
     }
 
     #[test]

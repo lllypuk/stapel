@@ -46,6 +46,14 @@ impl FontData {
         self.glyphs.get(i)
     }
 
+    /// Ширина строки без переносов в пикселях растеризации; символ вне ASCII 32..=126 — как `'?'`.
+    pub fn width(&self, text: &str) -> f32 {
+        text.chars()
+            .filter_map(|c| self.glyph(c).or_else(|| self.glyph('?')))
+            .map(|g| g.advance)
+            .sum()
+    }
+
     pub(crate) fn stub(px: f32) -> Self {
         let full = Rect {
             min: Vec2::ZERO,
@@ -227,6 +235,14 @@ mod tests {
             }
         }
         assert!(height > sizes[0].1 + 2, "ожидалось несколько полок");
+    }
+
+    #[test]
+    fn width_sums_advances_with_fallback() {
+        let font = FontData::stub(10.0);
+        assert_eq!(font.width(""), 0.0);
+        assert_eq!(font.width("0"), 6.0);
+        assert_eq!(font.width("0\u{e9}0"), 18.0);
     }
 
     #[test]

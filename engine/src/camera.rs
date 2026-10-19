@@ -37,7 +37,7 @@ impl Camera2D {
 /// Предел `|pitch|`: на `π/2` взгляд параллелен «верху» и вид вырождается.
 pub const MAX_PITCH: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
 
-/// Камера от первого лица, Y вверх; yaw 0 смотрит по −Z, положительный — влево.
+/// 3D-камера, Y вверх; yaw 0 смотрит по −Z, положительный — влево.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera3D {
     /// Позиция глаза.

@@ -58,14 +58,16 @@ impl Train {
             head -= len;
             route.push_back(track.next(last)?);
         }
-        Some(Self {
+        let mut train = Self {
             route,
             head,
             tail,
             speed: 0.0,
             reverse: false,
             cars,
-        })
+        };
+        train.trim(track);
+        Some(train)
     }
 
     /// Педаль −1..1 по ходу разгоняет, против хода тормозит до остановки.
@@ -119,15 +121,20 @@ impl Train {
             self.head = 0.0;
         };
         self.tail += moved;
+        self.trim(track);
+        blocked
+    }
+
+    /// Снимает проезды позади хвоста; хвост ровно на выходе проезда — уже на следующем.
+    fn trim(&mut self, track: &Track) {
         loop {
             let len = track.edges[self.route[0].0].len();
-            if self.tail <= len {
+            if self.tail < len {
                 break;
             }
             self.tail -= len;
             self.route.pop_front();
         }
-        blocked
     }
 
     /// Машины от головы и сцепки между ними.
@@ -202,6 +209,7 @@ mod tests {
     use super::*;
     use crate::piece::Piece;
     use crate::track::LEVEL01;
+    use crate::track::level01::{A, B, C, set};
 
     const DT: f32 = 1.0 / 60.0;
 
@@ -241,12 +249,7 @@ mod tests {
 
     /// Машины длиной `length`.
     fn cars(n: usize, length: f32) -> Vec<Car> {
-        let mut assets = Assets::default();
-        let h = assets.load_model(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/train/train-carriage-box.glb"
-        ));
-        let car = Car::new(h, assets.model(h)).expect("вагон");
+        let car = consist::load(&mut Assets::default(), "train/train-carriage-box");
         vec![Car { length, ..car }; n]
     }
 
@@ -258,22 +261,14 @@ mod tests {
         a.distance(b) < 1e-4
     }
 
-    /// Машина игры по имени GLB и прямоугольник её габаритов `[min, max]` по (x, z) модели.
-    fn car(assets: &mut Assets, name: &str) -> (Car, [Vec2; 2]) {
-        let h = assets.load_model(format!("{}{name}.glb", crate::ASSETS));
-        let model = assets.model(h);
-        let b = model.bounds().expect("габариты");
-        let car = Car::new(h, model).expect(name);
-        (car, [vec2(b.min.x, b.min.z), vec2(b.max.x, b.max.z)])
-    }
-
-    /// Все машины игры.
+    /// Машины игры и прямоугольники их габаритов `[min, max]` по (x, z) модели.
     fn catalog() -> Vec<(Car, [Vec2; 2])> {
         let mut assets = Assets::default();
-        crate::MODELS
-            .iter()
-            .filter(|n| n.starts_with("train/train-") && **n != "train/train-connector")
-            .map(|n| car(&mut assets, n))
+        (consist::all(&mut assets).into_iter())
+            .map(|c| {
+                let b = assets.model(c.model).bounds().expect("габариты");
+                (c, [vec2(b.min.x, b.min.z), vec2(b.max.x, b.max.z)])
+            })
             .collect()
     }
 
@@ -324,7 +319,8 @@ mod tests {
         let t = moved(t, 2.0, 1.0, &l);
         assert_eq!(
             (&t.route, t.head, t.tail),
-            (&[(3, true), (4, true)].into(), 2.0, 4.0)
+            (&[(4, true)].into(), 2.0, 0.0),
+            "хвост ровно на стыке — уже за ним"
         );
     }
 
@@ -478,8 +474,8 @@ mod tests {
     #[test]
     fn cars_stand_on_axis_at_bogie_offsets() {
         let mut assets = Assets::default();
-        let (loco, _) = car(&mut assets, "train/train-locomotive-a");
-        let (wagon, _) = car(&mut assets, "train/train-carriage-tank");
+        let loco = consist::load(&mut assets, "train/train-locomotive-a");
+        let wagon = consist::load(&mut assets, "train/train-carriage-tank");
         let l = line();
         let len = consist::len(&[loco, wagon]);
         let cases = [
@@ -509,8 +505,7 @@ mod tests {
 
     #[test]
     fn body_follows_chord_between_bogies_on_corner() {
-        let mut assets = Assets::default();
-        let (wagon, _) = car(&mut assets, "train/train-carriage-box");
+        let wagon = consist::load(&mut Assets::default(), "train/train-carriage-box");
         let c = track(&[("straight", [0, 0], 0), ("corner-large", [0, 2], 0)]);
         let tail = 5.0 - wagon.length;
         let t = Train::new(&c, (0, true), tail, vec![wagon]).expect("состав");
@@ -566,16 +561,17 @@ mod tests {
         })
     }
 
-    /// Каждая пара машин игры проезжает путь от тупика до тупика; `Err` — первое касание кузовов.
-    fn corridor(t: &Track) -> Result<(), String> {
+    /// Каждая пара машин игры едет от `start` до остановки; `Err` — первое касание кузовов, зазор меньше на `slack`.
+    fn corridor(t: &Track, start: Pass, slack: f32) -> Result<(), String> {
         let catalog = catalog();
         for (a, ra) in &catalog {
-            for (b, rb) in &catalog {
-                let mut train = Train::new(t, (0, true), 0.0, vec![*a, *b]).expect("состав");
+            for &(b, [min, max]) in &catalog {
+                let rb = [min, max + vec2(0.0, slack)];
+                let mut train = Train::new(t, start, 0.0, vec![*a, b]).expect("состав");
                 for tick in 0.. {
-                    assert!(tick < 2000, "не доехал: {train:?}");
+                    assert!(tick < 3000, "не доехал: {train:?}");
                     let (p, _) = train.cars_at(t);
-                    if !apart(&corners(&p[0], *ra), &corners(&p[1], *rb)) {
+                    if !apart(&corners(&p[0], *ra), &corners(&p[1], rb)) {
                         return Err(format!("{a:?} {b:?} {train:?}"));
                     }
                     train.speed = MAX_SPEED;
@@ -589,7 +585,7 @@ mod tests {
         Ok(())
     }
 
-    /// Прямые, `corner-large`, прямые, S-деталь и зеркальная S-деталь: повороты `level01`.
+    /// Прямые, `corner-large`, прямые, S-деталь и зеркальная S-деталь.
     fn bends() -> Track {
         mirrored(&[
             ("straight", [0, -4], 0, false),
@@ -616,24 +612,34 @@ mod tests {
     }
 
     #[test]
-    fn neighbour_bodies_never_touch_on_level01_bends() {
+    fn neighbour_bodies_never_touch_on_level01() {
+        let mut t = Track::parse(LEVEL01, 0.0).expect("level01");
+        for (a, c, b) in [
+            (false, false, false),
+            (true, false, true),
+            (true, true, false),
+        ] {
+            set(&mut t, A, a);
+            set(&mut t, C, c);
+            set(&mut t, B, b);
+            assert_eq!(corridor(&t, t.depot[0], 0.0), Ok(()), "A {a}, C {c}, B {b}");
+        }
+        set(&mut t, A, false);
+        assert!(corridor(&t, t.depot[0], 0.05).is_err(), "GAP не наименьший");
+    }
+
+    #[test]
+    fn neighbour_bodies_never_touch_on_bends_both_ways() {
         let t = bends();
-        assert!((1..t.edges.len()).all(|i| t.next((i - 1, true)) == Some((i, true))));
-        let level = Track::parse(LEVEL01, 0.0).expect("level01");
-        let kind = |e: &crate::track::Edge| (e.rail.piece, e.rail.mirror);
-        assert!(
-            level
-                .edges
-                .iter()
-                .all(|e| t.edges.iter().any(|b| kind(b) == kind(e))),
-            "поворот карты не проверен"
-        );
-        assert_eq!(corridor(&t), Ok(()));
+        let n = t.edges.len();
+        assert!((1..n).all(|i| t.next((i - 1, true)) == Some((i, true))));
+        assert_eq!(corridor(&t, (0, true), 0.0), Ok(()));
+        assert_eq!(corridor(&t, (n - 1, false), 0.0), Ok(()));
     }
 
     #[test]
     fn corner_small_is_too_sharp_for_gap_and_not_on_map() {
-        assert!(corridor(&sharp()).is_err());
+        assert!(corridor(&sharp(), (0, true), 0.0).is_err());
         let level = Track::parse(LEVEL01, 0.0).expect("level01");
         assert!(
             level

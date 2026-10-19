@@ -11,8 +11,8 @@ use std::{
 use editor::{Editor, EditorCmd};
 use engine::{
     Aabb, Actor, Assets, Axis, Camera2D, Color, Commands, Config, Contact, Context, Entity, Font,
-    FontData, Game, Gfx, Handle, IVec2, Input, KeyCode, Rect, Solid, Sound, SparseSet, Sprite,
-    Texture, Tilemap, Vec2, Watcher, World, egui, grounded, ivec2, move_actor, move_solid, vec2,
+    Game, Gfx, Handle, IVec2, Input, KeyCode, Rect, Solid, Sound, SparseSet, Sprite, Texture,
+    Tilemap, Vec2, Watcher, World, egui, grounded, ivec2, move_actor, move_solid, vec2,
 };
 use level::{Level, LevelError, PlatformSpawn};
 
@@ -208,14 +208,6 @@ struct Hud {
     font: Handle<Font>,
     big: Handle<Font>,
     ink: Color,
-}
-
-/// Ширина строки без переносов; символ вне атласа считается как `'?'`.
-fn text_width(font: &FontData, text: &str, scale: f32) -> f32 {
-    text.chars()
-        .filter_map(|c| font.glyph(c).or_else(|| font.glyph('?')))
-        .map(|g| g.advance * scale)
-        .sum()
 }
 
 /// Время уровня `m:ss` по тикам.
@@ -1012,7 +1004,7 @@ impl Platformer {
             (hud.font, "PRESS ENTER", -4.0 * line),
         ];
         for (font, s, y) in lines {
-            let width = text_width(assets.font(font), s, HUD_SCALE);
+            let width = assets.font(font).width(s) * HUD_SCALE;
             text(font, s, vec2(-width / 2.0, y));
         }
     }
@@ -2412,7 +2404,7 @@ mod tests {
             .into_iter()
             .flat_map(|(f, s, y)| {
                 let f = ctx.assets.font(f);
-                let at = vec2(500.0 - text_width(f, s, HUD_SCALE) / 2.0, 90.0 + y);
+                let at = vec2(500.0 - f.width(s) * HUD_SCALE / 2.0, 90.0 + y);
                 engine::text::layout(f, s, at, HUD_SCALE, ink, HUD_LAYER)
             })
             .collect();
@@ -2425,16 +2417,6 @@ mod tests {
         let mut ctx = Context::default();
         g.draw(&mut ctx, 0.0);
         assert_eq!(hud(&ctx.gfx), []);
-    }
-
-    #[test]
-    fn text_width_sums_advances() {
-        let mut assets = Assets::default();
-        let handle = assets.load_font(FONT_PATH, HUD_PX);
-        let font = assets.font(handle);
-        let one = text_width(font, "0", HUD_SCALE);
-        assert_eq!(one, font.glyph('0').unwrap().advance * HUD_SCALE);
-        assert!((text_width(font, "0\u{e9}0", HUD_SCALE) - 3.0 * one).abs() < 1e-4);
     }
 
     const CLEAR: &str = "o.....\nP.oX..\n######\n";

@@ -8,7 +8,7 @@ use crate::piece::{self, Piece};
 
 /// Сторона клетки пути, м: концы всех деталей — на узлах сетки.
 pub(crate) const CELL: f32 = 2.0;
-/// Запас ведущего конца состава до тупика и стрелки: кузов выступает за тележку.
+/// Запас ведущего конца состава до тупика и стрелки: зазор и снос хорды кузова с оси на повороте.
 pub(crate) const MARGIN: f32 = 0.5;
 pub(crate) const LEVEL01: &str = include_str!("../assets/maps/level01.toml");
 
@@ -323,7 +323,7 @@ impl Track {
     pub(crate) fn next(&self, (edge, forward): Pass) -> Option<Pass> {
         let (port, side) = self.edges[edge].ends[usize::from(forward)];
         let other = &self.ports[port].sides[1 - side];
-        let to = match self.switches.iter().find(|s| s.port == port) {
+        let to = match self.switch_at(port).map(|i| &self.switches[i]) {
             Some(s) if s.side == side => {
                 if s.branches[s.active] != edge {
                     return None;
@@ -334,6 +334,16 @@ impl Track {
             None => *other.first()?,
         };
         Some((to, self.edges[to].ends[0].0 == port))
+    }
+
+    /// Порт на выходе `pass`.
+    pub(crate) fn exit(&self, (edge, forward): Pass) -> usize {
+        self.edges[edge].ends[usize::from(forward)].0
+    }
+
+    /// Стрелка в порту `port`.
+    pub(crate) fn switch_at(&self, port: usize) -> Option<usize> {
+        self.switches.iter().position(|s| s.port == port)
     }
 
     fn depot_path(&self, rail: usize, max_len: f32) -> Result<Vec<Pass>, TrackError> {
@@ -347,8 +357,7 @@ impl Track {
         let mut path = vec![(rail, start == 0)];
         for _ in 1..self.edges.len() {
             let last = path[path.len() - 1];
-            let port = self.edges[last.0].ends[usize::from(last.1)].0;
-            if self.switches.iter().any(|s| s.port == port) {
+            if self.switch_at(self.exit(last)).is_some() {
                 break;
             }
             let Some(pass) = self.next(last) else { break };
@@ -417,12 +426,36 @@ fn graph(rails: Vec<Rail>) -> Result<(Vec<Edge>, Vec<Port>), TrackError> {
     Ok((edges, ports))
 }
 
+/// Точки стрелок и тупика отростка в `level01`.
+#[cfg(test)]
+pub(crate) mod level01 {
+    use engine::{Vec2, vec2};
+
+    use super::Track;
+    use crate::piece::Piece;
+
+    pub(crate) const A: Vec2 = vec2(8.0, 0.0);
+    pub(crate) const B: Vec2 = vec2(32.0, 0.0);
+    pub(crate) const C: Vec2 = vec2(16.0, -2.0);
+    pub(crate) const D: Vec2 = vec2(12.0, 16.0);
+    pub(crate) const T: Vec2 = vec2(28.0, -4.0);
+
+    /// Ставит стрелку в `at` на S-деталь или на прямую.
+    pub(crate) fn set(t: &mut Track, at: Vec2, curve: bool) {
+        let i = crate::bot::switch_at(t, at);
+        t.switches[i].active = (t.switches[i].branches.iter())
+            .position(|&b| (t.edges[b].rail.piece == Piece::Curve) == curve)
+            .expect("ветка");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use engine::Assets;
 
+    use super::level01::{A, B, C, D, T, set};
     use super::*;
-    use crate::consist::{self, Car};
+    use crate::consist;
 
     const DEPOT0: &str = "depot = { rail = 0 }\n";
 
@@ -820,16 +853,7 @@ mod tests {
     }
 
     fn game_max_len() -> f32 {
-        let mut assets = Assets::default();
-        let cars: Vec<_> = (crate::MODELS.iter())
-            .filter(|m| m.starts_with("train/train-"))
-            .filter_map(|m| {
-                let h = assets.load_model(format!("{}{m}.glb", crate::ASSETS));
-                Car::new(h, assets.model(h))
-            })
-            .collect();
-        assert_eq!(cars.len(), 13);
-        consist::max_len(&cars)
+        consist::max_len(&consist::all(&mut Assets::default()))
     }
 
     fn edge(t: &Track, piece: Piece, cell: [i32; 2]) -> usize {
@@ -838,26 +862,16 @@ mod tests {
             .unwrap_or_else(|| panic!("{piece:?} {cell:?}"))
     }
 
-    /// Ставит стрелку в `at` на ветку-S-деталь или на прямую.
-    fn set(t: &mut Track, at: Vec2, curve: bool) {
-        let s = (t.switches.iter_mut())
-            .find(|s| t.ports[s.port].pos == at)
-            .unwrap_or_else(|| panic!("{at}"));
-        s.active = (s.branches.iter())
-            .position(|&b| (t.edges[b].rail.piece == Piece::Curve) == curve)
-            .expect("ветка");
-    }
-
     /// Стрелки по пути от `start` и порт остановки; `None` — вернулись в `start`.
     fn walk(t: &Track, start: Pass) -> (Vec<Vec2>, Option<Vec2>) {
         let mut seen = Vec::new();
         let mut pass = start;
         for _ in 0..2 * t.edges.len() {
-            let port = t.edges[pass.0].ends[usize::from(pass.1)].0;
+            let port = t.exit(pass);
             let Some(next) = t.next(pass) else {
                 return (seen, Some(t.ports[port].pos));
             };
-            if t.switches.iter().any(|s| s.port == port) {
+            if t.switch_at(port).is_some() {
                 seen.push(t.ports[port].pos);
             }
             if next == start {
@@ -870,11 +884,6 @@ mod tests {
 
     #[test]
     fn level01_follows_scheme() {
-        const A: Vec2 = vec2(8.0, 0.0);
-        const B: Vec2 = vec2(32.0, 0.0);
-        const C: Vec2 = vec2(16.0, -2.0);
-        const D: Vec2 = vec2(12.0, 16.0);
-        const T: Vec2 = vec2(28.0, -4.0);
         let max_len = game_max_len();
         let mut t = Track::parse(LEVEL01, max_len).expect("level01");
         let mut at: Vec<_> = t.switches.iter().map(|s| t.ports[s.port].pos).collect();

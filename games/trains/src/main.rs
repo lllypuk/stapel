@@ -11,9 +11,9 @@ use std::collections::BTreeMap;
 use std::f32::consts::FRAC_PI_4;
 
 use engine::{
-    Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Font, FontData, Game,
-    Gfx, Handle, Input, KeyCode, Mat4, Mesh, MeshDraw, Model, ModelDraw, MouseButton, Quat, Scene,
-    Vec2, Vec3, Vertex, egui, vec2, vec3,
+    Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Font, Game, Gfx, Handle,
+    Input, KeyCode, Mat4, Mesh, MeshDraw, Model, ModelDraw, MouseButton, Quat, Scene, Vec2, Vec3,
+    Vertex, egui, vec2, vec3,
 };
 
 use consist::Car;
@@ -88,7 +88,7 @@ const YAW: f32 = FRAC_PI_4;
 const PITCH: f32 = -35.264_f32.to_radians();
 /// Видимая высота кадра ортокамеры, м.
 const VIEW_HEIGHT: f32 = 16.0;
-/// Отвод камеры от цели вдоль взгляда: ортографии он не виден, но сцена должна быть перед `near`.
+/// Отвод камеры от цели вдоль взгляда: сцена должна быть перед `near`; кадр от него не зависит, туман зависел бы.
 const CAMERA_BACK: f32 = 50.0;
 /// Подъём активной ветки стрелки над неактивной: иначе перекрытые детали мерцают.
 const SWITCH_LIFT: f32 = 0.01;
@@ -168,19 +168,14 @@ fn catalog(
 
 /// Состав по именам в начале депо: хвост у тупика.
 fn in_depot(track: &Track, cars: &BTreeMap<&'static str, Car>, consist: &[&str]) -> Train {
-    let cars = consist.iter().map(|n| cars[n]).collect();
+    let cars = (consist.iter())
+        .map(|n| *cars.get(n).unwrap_or_else(|| panic!("{n}: нет в каталоге")))
+        .collect();
     Train::new(track, track.depot[0], MARGIN, cars).expect("депо вмещает состав")
 }
 
 fn pressed(input: &Input, keys: &[KeyCode]) -> f32 {
     f32::from(u8::from(keys.iter().any(|&k| input.is_down(k))))
-}
-
-fn text_width(font: &FontData, text: &str) -> f32 {
-    text.chars()
-        .filter_map(|c| font.glyph(c).or_else(|| font.glyph('?')))
-        .map(|g| g.advance)
-        .sum()
 }
 
 /// Квад 1×1 в плоскости y = 0 от начала по +X и +Z.
@@ -413,19 +408,19 @@ impl Trains {
         });
         let cars = (self.train.cars.iter().zip(&placed))
             .map(|(car, p)| car_draw(car, p, assets.model(car.model)));
-        let connector = self.models["train/train-connector"];
-        let couplers = (was_couplers.iter().zip(&couplers)).map(|(a, b)| ModelDraw {
-            model: connector,
-            transform: coupler_transform([0, 1].map(|i| a[i].lerp(b[i], alpha))),
-            pose: None,
-            tint: Color::WHITE,
-        });
         let still = |model, transform| ModelDraw {
             model,
             transform,
             pose: None,
             tint: Color::WHITE,
         };
+        let connector = self.models["train/train-connector"];
+        let couplers = (was_couplers.iter().zip(&couplers)).map(|(a, b)| {
+            still(
+                connector,
+                coupler_transform([0, 1].map(|i| a[i].lerp(b[i], alpha))),
+            )
+        });
         let roads =
             (self.track.roads.iter()).map(|r| still(self.models[r.tile], road_transform(r)));
         let buildings = (self.track.buildings.iter())
@@ -461,7 +456,7 @@ impl Trains {
         let pos = vec2(HUD_MARGIN - VIEW.x / 2.0, top);
         gfx.draw_text(assets, self.font, &speed, pos, 1.0, Color::WHITE, HUD_LAYER);
         if self.busy > 0 {
-            let x = -text_width(assets.font(self.font), BUSY) / 2.0;
+            let x = -assets.font(self.font).width(BUSY) / 2.0;
             gfx.draw_text(
                 assets,
                 self.font,
@@ -494,8 +489,10 @@ mod tests {
     };
 
     use super::*;
+    use crate::bot::switch_at;
     use crate::depot::DepotCmd;
     use crate::piece::Piece;
+    use crate::track::level01::{A, D};
     use crate::train::MAX_SPEED;
 
     fn texture(
@@ -629,6 +626,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn branch_of_two_switches_is_inactive_if_inactive_at_either() {
+        let text = "depot = { rail = 0 }\n\
+            [[rail]]\npiece = \"straight\"\ncell = [0, -2]\n\
+            [[rail]]\npiece = \"straight\"\ncell = [0, 0]\n\
+            [[rail]]\npiece = \"curve\"\ncell = [0, 0]\n\
+            [[rail]]\npiece = \"straight\"\ncell = [-1, 0]\n\
+            [[rail]]\npiece = \"straight\"\ncell = [-1, 2]\n";
+        let mut t = Track::parse(text, 0.0).expect("карта");
+        let curve = 2;
+        assert_eq!(t.switches.len(), 2);
+        assert!(t.switches.iter().all(|s| s.branches.contains(&curve)));
+        for (on, want) in [
+            ([true, true], Some(true)),
+            ([true, false], Some(false)),
+            ([false, true], Some(false)),
+        ] {
+            for (s, on) in t.switches.iter_mut().zip(on) {
+                let i = s.branches.iter().position(|&b| b == curve).expect("ветка");
+                s.active = if on { i } else { 1 - i };
+            }
+            assert_eq!(branch(&t, curve), want, "{on:?}");
+        }
+        assert_eq!(branch(&t, 0), None);
     }
 
     #[test]
@@ -836,18 +859,9 @@ mod tests {
         }
     }
 
-    const A: Vec2 = vec2(8.0, 0.0);
-    const D: Vec2 = vec2(12.0, 16.0);
-
     fn tick(g: &mut Trains, ctx: &mut Context) {
         g.update(ctx);
         ctx.input.end_tick();
-    }
-
-    fn switch_at(t: &Track, pos: Vec2) -> usize {
-        (t.switches.iter())
-            .position(|s| t.ports[s.port].pos == pos)
-            .unwrap_or_else(|| panic!("{pos}"))
     }
 
     /// Кадр показан ортокамерой на `target`, клик в середине экрана.
@@ -894,17 +908,6 @@ mod tests {
             .filter(|s| s.layer == HUD_LAYER)
             .copied()
             .collect()
-    }
-
-    #[test]
-    fn text_width_sums_advances() {
-        let mut assets = Assets::default();
-        let font = assets.load_font(FONT_PATH, HUD_PX);
-        let font = assets.font(font);
-        let one = text_width(font, "0");
-        assert_eq!(one, font.glyph('0').expect("0").advance);
-        assert!(one > 1.0);
-        assert_eq!(text_width(font, "0\u{e9}0"), 3.0 * one);
     }
 
     #[test]
@@ -978,7 +981,7 @@ mod tests {
         click(&mut ctx, A);
         tick(&mut g, &mut ctx);
         assert_eq!(g.track.switches[a].active, 0);
-        let x = -text_width(ctx.assets.font(g.font), BUSY) / 2.0;
+        let x = -ctx.assets.font(g.font).width(BUSY) / 2.0;
         let mut want = standing(&g, &ctx);
         want.extend(layout(&g, &ctx, BUSY, vec2(x, 324.0)));
         assert_eq!(hud(&mut g, &mut ctx), want);
@@ -998,7 +1001,7 @@ mod tests {
     }
 
     #[test]
-    fn keys_drive_train_out_of_depot_and_back() {
+    fn w_s_and_arrows_drive_and_brake() {
         let mut ctx = Context::default();
         let mut g = Trains::init(&mut ctx);
         g.depot.open = false;
@@ -1121,6 +1124,10 @@ mod tests {
         let cars: Vec<_> = names.iter().map(|n| g.cars[n]).collect();
         let want = Train::new(&g.track, g.track.depot[0], MARGIN, cars).expect("депо");
         assert_eq!(g.train, want);
+        assert_eq!(
+            g.prev, want,
+            "кадр после пересборки не тянется от старого места"
+        );
         assert_eq!((want.route[0], want.tail), (start.route[0], start.tail));
         assert!(g.depot.open, "пересборка депо не закрывает");
     }

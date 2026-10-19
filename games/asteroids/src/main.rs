@@ -2,8 +2,8 @@ use std::f32::consts::TAU;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use engine::{
-    Camera2D, Color, Commands, Config, Context, Entity, Font, FontData, Game, Gfx, Handle, Input,
-    KeyCode, Sprite, Texture, Vec2, World, vec2,
+    Camera2D, Color, Commands, Config, Context, Entity, Font, Game, Gfx, Handle, Input, KeyCode,
+    Sprite, Texture, Vec2, World, vec2,
 };
 
 const TICK_HZ: u32 = 60;
@@ -200,14 +200,6 @@ fn wrap_shift(pos: Vec2, r: f32) -> Vec2 {
         }
     }
     shift
-}
-
-/// Ширина строки без переносов; символ вне атласа считается как `'?'`.
-fn text_width(font: &FontData, text: &str, scale: f32) -> f32 {
-    text.chars()
-        .filter_map(|c| font.glyph(c).or_else(|| font.glyph('?')))
-        .map(|g| g.advance * scale)
-        .sum()
 }
 
 /// Ближайшее `t ∈ [0, 1]`, при котором точка на отрезке `from → to` входит в круг радиуса `r` с центром в нуле.
@@ -658,7 +650,7 @@ impl Asteroids {
         };
         text(gfx, hud.font, &status, vec2(left, top));
         let fps = format!("FPS {}", ctx.time.fps);
-        let width = text_width(assets.font(hud.font), &fps, HUD_SCALE);
+        let width = assets.font(hud.font).width(&fps) * HUD_SCALE;
         text(
             gfx,
             hud.font,
@@ -667,10 +659,10 @@ impl Asteroids {
         );
         if self.state == ShipState::GameOver {
             let title = "GAME OVER";
-            let width = text_width(assets.font(hud.big), title, HUD_SCALE);
+            let width = assets.font(hud.big).width(title) * HUD_SCALE;
             text(gfx, hud.big, title, vec2(-width / 2.0, 8.0));
             let hint = "PRESS ENTER";
-            let width = text_width(assets.font(hud.font), hint, HUD_SCALE);
+            let width = assets.font(hud.font).width(hint) * HUD_SCALE;
             text(gfx, hud.font, hint, vec2(-width / 2.0, -20.0));
         }
     }
@@ -1174,7 +1166,7 @@ mod tests {
         let over = hud(&ctx.gfx);
 
         let Hud { font, big } = *g.hud.as_ref().unwrap();
-        let width = |f, s| text_width(ctx.assets.font(f), s, HUD_SCALE);
+        let width = |f, s| ctx.assets.font(f).width(s) * HUD_SCALE;
         let text = |f, s, pos| {
             engine::text::layout(
                 ctx.assets.font(f),
@@ -1391,16 +1383,5 @@ mod tests {
         assert_eq!(draw(&g).len(), 8);
         g.state = ShipState::Dead { respawn_in: 1 };
         assert!(draw(&g).iter().all(|s| s.layer != SHIP_LAYER));
-    }
-
-    #[test]
-    fn text_width_sums_advances() {
-        let mut assets = engine::Assets::default();
-        let handle = assets.load_font(FONT_PATH, HUD_PX);
-        let font = assets.font(handle);
-        let one = text_width(font, "0", HUD_SCALE);
-        assert!(one > 0.0);
-        assert_eq!(one, font.glyph('0').unwrap().advance / 2.0);
-        assert!((text_width(font, "0\u{e9}0", HUD_SCALE) - 3.0 * one).abs() < EPS);
     }
 }

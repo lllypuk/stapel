@@ -11,9 +11,9 @@ use std::f32::consts::FRAC_PI_2;
 use std::{fs, iter, mem};
 
 use engine::{
-    Aabb3, Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Fog, Font,
-    FontData, Game, Gfx, Handle, IVec2, KeyCode, Mat4, Mesh, MeshDraw, Model, ModelDraw,
-    MouseButton, PointLight, Pose, Quat, Scene, Sprite, Vec2, Vec3, Vertex, Viewmodel, vec2, vec3,
+    Aabb3, Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Fog, Font, Game,
+    Gfx, Handle, IVec2, KeyCode, Mat4, Mesh, MeshDraw, Model, ModelDraw, MouseButton, PointLight,
+    Pose, Quat, Scene, Sprite, Vec2, Vec3, Vertex, Viewmodel, vec2, vec3,
 };
 
 use crate::enemy::{Clips, Enemy};
@@ -381,13 +381,6 @@ fn view(camera: &Camera3D) -> Quat {
     Quat::from_rotation_y(camera.yaw) * Quat::from_rotation_x(camera.pitch)
 }
 
-fn text_width(font: &FontData, text: &str) -> f32 {
-    text.chars()
-        .filter_map(|c| font.glyph(c).or_else(|| font.glyph('?')))
-        .map(|g| g.advance)
-        .sum()
-}
-
 /// Что лежит в соседней с `cell` клетке по `dir`; `None` — за краем карты.
 fn beside(map: &Map, cell: IVec2, dir: Dir) -> Option<Tile> {
     map.tile(cell + dir.offset())
@@ -731,7 +724,7 @@ impl Shooter {
         };
         let font = assets.font(self.font);
         for (s, y) in [(banner, HUD_PX), (RESTART, -HUD_PX)] {
-            text(s, vec2(-text_width(font, s) / 2.0, y));
+            text(s, vec2(-font.width(s) / 2.0, y));
         }
     }
 
@@ -1552,17 +1545,6 @@ mod tests {
     }
 
     #[test]
-    fn text_width_sums_advances() {
-        let mut assets = Assets::default();
-        let font = assets.load_font(FONT_PATH, HUD_PX);
-        let font = assets.font(font);
-        let one = text_width(font, "0");
-        assert_eq!(one, font.glyph('0').unwrap().advance);
-        assert!(one > 0.0);
-        assert_eq!(text_width(font, "0\u{e9}0"), 3.0 * one);
-    }
-
-    #[test]
     fn sun_shines_down_and_gun_sits_low_right_in_narrower_view() {
         const {
             assert!(SUN.dir.y < 0.0);
@@ -1952,7 +1934,7 @@ mod tests {
         };
         assert_eq!(playing, screen("HP 70\nAMMO 10"));
         assert_eq!(with_key, screen("HP 70\nAMMO 10\nKEY"));
-        let centered = |s, y| text(s, vec2(-text_width(font, s) / 2.0, y));
+        let centered = |s, y| text(s, vec2(-font.width(s) / 2.0, y));
         let banner = |status, s| {
             (screen(status).into_iter())
                 .chain(centered(s, HUD_PX))

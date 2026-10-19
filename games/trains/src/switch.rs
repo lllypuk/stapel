@@ -1,6 +1,6 @@
 use engine::{Ray, vec2};
 
-use crate::track::{Pass, Track};
+use crate::track::Track;
 use crate::train::Train;
 
 /// Дальность поиска стрелки впереди состава по пути, м.
@@ -12,7 +12,7 @@ pub(crate) const PICK: f32 = 2.0;
 pub(crate) fn under(track: &Track, train: &Train, switch: usize) -> bool {
     let port = track.switches[switch].port;
     let route = &train.route;
-    (route.iter().take(route.len() - 1)).any(|&pass| exit(track, pass) == port)
+    (route.iter().take(route.len() - 1)).any(|&pass| track.exit(pass) == port)
 }
 
 /// Ближайшая стрелка за ведущим концом по последнему направлению хода, не дальше `LOOKAHEAD`.
@@ -28,8 +28,7 @@ pub(crate) fn ahead(track: &Track, train: &Train) -> Option<usize> {
         if dist > LOOKAHEAD {
             return None;
         }
-        let port = exit(track, pass);
-        if let Some(i) = track.switches.iter().position(|s| s.port == port) {
+        if let Some(i) = track.switch_at(track.exit(pass)) {
             return Some(i);
         }
         pass = track.next(pass)?;
@@ -62,10 +61,6 @@ pub(crate) fn toggle(track: &mut Track, train: &Train, switch: usize) -> bool {
     true
 }
 
-fn exit(track: &Track, (edge, forward): Pass) -> usize {
-    track.edges[edge].ends[usize::from(forward)].0
-}
-
 #[cfg(test)]
 mod tests {
     use std::fmt::Write as _;
@@ -73,20 +68,16 @@ mod tests {
     use engine::{Assets, IVec2, Vec2, Vec3, vec3};
 
     use super::*;
-    use crate::consist::Car;
+    use crate::bot::switch_at as at;
+    use crate::consist::{self, Car};
     use crate::piece::Piece;
-    use crate::track::LEVEL01;
+    use crate::track::level01::{A, B, C, D};
+    use crate::track::{LEVEL01, Pass};
 
-    const A: Vec2 = vec2(8.0, 0.0);
-    const B: Vec2 = vec2(32.0, 0.0);
-    const C: Vec2 = vec2(16.0, -2.0);
-    const D: Vec2 = vec2(12.0, 16.0);
     const DT: f32 = 1.0 / 60.0;
 
     fn car(length: f32) -> Vec<Car> {
-        let mut assets = Assets::default();
-        let h = assets.load_model(format!("{}train/train-carriage-box.glb", crate::ASSETS));
-        let car = Car::new(h, assets.model(h)).expect("вагон");
+        let car = consist::load(&mut Assets::default(), "train/train-carriage-box");
         vec![Car { length, ..car }]
     }
 
@@ -99,12 +90,6 @@ mod tests {
         (t.edges.iter())
             .position(|e| e.rail.piece == Piece::Straight && e.rail.cell == IVec2::new(x / 2, 0))
             .unwrap_or_else(|| panic!("{x}"))
-    }
-
-    fn at(t: &Track, pos: Vec2) -> usize {
-        (t.switches.iter())
-            .position(|s| t.ports[s.port].pos == pos)
-            .unwrap_or_else(|| panic!("{pos}"))
     }
 
     fn train(t: &Track, start: Pass, tail: f32, length: f32) -> Train {
@@ -163,6 +148,7 @@ mod tests {
             (train(&t, (bottom(&t, 8), false), 2.0, 4.0), true),
             (train(&t, (bottom(&t, 8), true), 0.0, 4.0), false),
             (train(&t, (bottom(&t, 4), true), 0.0, 4.0), false),
+            (train(&t, (bottom(&t, 4), true), 4.0, 4.0), false),
         ];
         for (tr, locked) in cases {
             assert_eq!(under(&t, &tr, a), locked, "{tr:?}");
@@ -174,6 +160,11 @@ mod tests {
         let tr = train(&t, (bottom(&t, 24), true), 2.0, 6.0);
         assert_eq!(tr.route.len(), 2);
         assert!(!under(&t, &tr, b), "голова ровно на стыке B");
+        let mut tr = train(&t, (bottom(&t, 4), true), 0.0, 6.0);
+        tr.speed = 1.0;
+        tr.advance(4.0, &t);
+        assert_eq!(tr.tail, 0.0, "хвост ровно на стыке A — уже за ним: {tr:?}");
+        assert!(!under(&t, &tr, a));
         assert!(toggle(&mut t, &tr, b));
         assert_eq!(t.switches[b].active, 1);
     }
@@ -201,6 +192,13 @@ mod tests {
             dir: Vec3::X,
         };
         assert_eq!(pick(&t, flat), None);
+        for y in [-1.0, 0.0] {
+            let along = Ray {
+                origin: ground(A) + Vec3::Y * y,
+                dir: Vec3::X,
+            };
+            assert_eq!(pick(&t, along), None, "y = {y}: t = ∞ или NaN");
+        }
         let below = Ray {
             origin: ground(B) - Vec3::Y,
             dir: Vec3::Y,

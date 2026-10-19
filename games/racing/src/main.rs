@@ -20,9 +20,9 @@ use std::mem;
 use std::path::{Path, PathBuf};
 
 use engine::{
-    Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Fog, Font, FontData,
-    Game, Gfx, Handle, IVec2, Input, KeyCode, LoopId, Mat4, Mesh, MeshDraw, ModelDraw, MouseButton,
-    Pose, Scene, Sound, StaticWorld, Vec2, Vec3, Watcher, egui, vec2, vec3,
+    Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Fog, Font, Game, Gfx,
+    Handle, IVec2, Input, KeyCode, LoopId, Mat4, Mesh, MeshDraw, ModelDraw, MouseButton, Pose,
+    Scene, Sound, StaticWorld, Vec2, Vec3, Watcher, egui, vec2, vec3,
 };
 
 use crate::camera::Chase;
@@ -168,13 +168,6 @@ fn load_track(text: &str, cars: &[CarConfig]) -> Result<(TrackDraft, Vec<Checkpo
         return Err(format!("машины {} нет в cars/", track.car));
     }
     Ok((track, checkpoints))
-}
-
-fn text_width(font: &FontData, text: &str) -> f32 {
-    text.chars()
-        .filter_map(|c| font.glyph(c).or_else(|| font.glyph('?')))
-        .map(|g| g.advance)
-        .sum()
 }
 
 fn controls(input: &Input) -> Controls {
@@ -739,13 +732,13 @@ impl Racing {
             (
                 speed.clone(),
                 vec2(
-                    half.x - HUD_MARGIN - text_width(font, &speed),
+                    half.x - HUD_MARGIN - font.width(&speed),
                     HUD_MARGIN - half.y,
                 ),
             ),
         ];
         if self.race.wrong_way() {
-            let pos = vec2(-text_width(font, WRONG_WAY) / 2.0, half.y / 2.0);
+            let pos = vec2(-font.width(WRONG_WAY) / 2.0, half.y / 2.0);
             lines.push((WRONG_WAY.into(), pos));
         }
         for (s, pos) in lines {
@@ -1451,17 +1444,14 @@ mod tests {
         assert!(font.atlas.is_some(), "шрифт не загрузился");
         let text = |s, pos| text::layout(font, s, pos, 1.0, Color::WHITE, HUD_LAYER);
         let speed = " 90 KM/H";
-        let right = vec2(628.0 - text_width(font, speed), -348.0);
+        let right = vec2(628.0 - font.width(speed), -348.0);
         let want: Vec<_> = text("LAP 2 0:02.50\nBEST  1:01.50", vec2(-628.0, 324.0))
             .chain(text(speed, right))
             .collect();
         assert_eq!(driving, want);
         let want: Vec<_> = text("LAP 2 0:02.50\nBEST  -:--.--", vec2(-628.0, 324.0))
             .chain(text(speed, right))
-            .chain(text(
-                WRONG_WAY,
-                vec2(-text_width(font, WRONG_WAY) / 2.0, 180.0),
-            ))
+            .chain(text(WRONG_WAY, vec2(-font.width(WRONG_WAY) / 2.0, 180.0)))
             .collect();
         assert_eq!(wrong, want);
     }
@@ -2323,16 +2313,5 @@ mod tests {
         h.run();
         let erase = PanelCmd::Edit(EditorCmd::Tool(Tool::Erase));
         assert_eq!(h.state().panel.queue, [erase]);
-    }
-
-    #[test]
-    fn text_width_sums_advances() {
-        let mut assets = Assets::default();
-        let font = assets.load_font(FONT_PATH, HUD_PX);
-        let font = assets.font(font);
-        let one = text_width(font, "0");
-        assert_eq!(one, font.glyph('0').expect("0").advance);
-        assert!(one > 1.0);
-        assert_eq!(text_width(font, "0\u{e9}0"), 3.0 * one);
     }
 }

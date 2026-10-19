@@ -115,7 +115,8 @@ impl Bot {
     }
 }
 
-fn switch_at(track: &Track, at: Vec2) -> usize {
+/// Стрелка в точке `at`.
+pub(crate) fn switch_at(track: &Track, at: Vec2) -> usize {
     (track.switches.iter())
         .position(|s| track.ports[s.port].pos == at)
         .unwrap_or_else(|| panic!("нет стрелки в {at}"))
@@ -142,20 +143,16 @@ pub(crate) fn press(action: Action, input: &mut Input) {
 mod tests {
     use std::collections::BTreeSet;
 
-    use engine::{Context, Game, vec2};
+    use engine::{Context, Game};
 
     use super::*;
     use crate::consist;
     use crate::depot;
+    use crate::track::level01::{A, B, C, D, T};
     use crate::track::{MARGIN, Pass};
     use crate::train::Train;
     use crate::{TICK_HZ, in_depot};
 
-    const A: Vec2 = vec2(8.0, 0.0);
-    const B: Vec2 = vec2(32.0, 0.0);
-    const C: Vec2 = vec2(16.0, -2.0);
-    const D: Vec2 = vec2(12.0, 16.0);
-    const T: Vec2 = vec2(28.0, -4.0);
     /// Тиков на один `run`: самый долгий — около 2300.
     const LIMIT: u32 = 3000;
 
