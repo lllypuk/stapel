@@ -7,7 +7,7 @@ use crate::track::Track;
 use crate::train::Train;
 
 /// Отступ окна от края, точки egui.
-const MARGIN: f32 = 12.0;
+const WINDOW_MARGIN: f32 = 12.0;
 const WAGON: &str = "train/train-carriage-";
 /// Подкаталог и префикс имён моделей машин; в панели не показывается.
 const PREFIX: &str = "train/train-";
@@ -80,7 +80,10 @@ impl Depot {
         egui::Window::new("Депо")
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-MARGIN, MARGIN))
+            .anchor(
+                egui::Align2::RIGHT_TOP,
+                egui::vec2(-WINDOW_MARGIN, WINDOW_MARGIN),
+            )
             .show(ui, |ui| {
                 ui.label("Локомотив");
                 for &name in catalog.iter().filter(|n| !is_wagon(n)) {
@@ -230,7 +233,7 @@ mod tests {
         });
         assert_eq!(
             (window.max.x, window.min.y),
-            (800.0 - MARGIN, MARGIN),
+            (800.0 - WINDOW_MARGIN, WINDOW_MARGIN),
             "{window:?}"
         );
     }

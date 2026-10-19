@@ -346,6 +346,17 @@ impl Track {
         self.switches.iter().position(|s| s.port == port)
     }
 
+    /// Стрелка в точке `at`; паника, если её там нет.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "стрелку по точке ищут бот и тесты")
+    )]
+    pub(crate) fn switch_by_pos(&self, at: Vec2) -> usize {
+        (self.switches.iter())
+            .position(|s| self.ports[s.port].pos == at)
+            .unwrap_or_else(|| panic!("нет стрелки в {at}"))
+    }
+
     fn depot_path(&self, rail: usize, max_len: f32) -> Result<Vec<Pass>, TrackError> {
         let edge = self.edges.get(rail).ok_or(TrackError::NoDepot { rail })?;
         let start = (0..2)
@@ -426,6 +437,45 @@ fn graph(rails: Vec<Rail>) -> Result<(Vec<Edge>, Vec<Port>), TrackError> {
     Ok((edges, ports))
 }
 
+/// Тестовые карты и поиск в них.
+#[cfg(test)]
+pub(crate) mod fixture {
+    use std::fmt::Write as _;
+
+    use engine::IVec2;
+
+    use super::Track;
+    use crate::piece::Piece;
+
+    /// Деталь, клетка, поворот, зеркало.
+    pub(crate) type RailRow = (&'static str, [i32; 2], i64, bool);
+
+    /// Записи `[[rail]]` карты.
+    pub(crate) fn rails(rails: &[RailRow]) -> String {
+        let mut text = String::new();
+        for (piece, [x, z], rot, mirror) in rails {
+            writeln!(
+                text,
+                "[[rail]]\npiece = \"{piece}\"\ncell = [{x}, {z}]\nrot = {rot}\nmirror = {mirror}"
+            )
+            .expect("строка");
+        }
+        text
+    }
+
+    /// Карта с депо на `rail[0]`.
+    pub(crate) fn map(rows: &[RailRow]) -> Track {
+        Track::parse(&format!("depot = {{ rail = 0 }}\n{}", rails(rows)), 0.0).expect("карта")
+    }
+
+    /// Ребро детали `piece` в клетке `cell`.
+    pub(crate) fn edge(t: &Track, piece: Piece, cell: [i32; 2]) -> usize {
+        (t.edges.iter())
+            .position(|e| e.rail.piece == piece && e.rail.cell == IVec2::from(cell))
+            .unwrap_or_else(|| panic!("{piece:?} {cell:?}"))
+    }
+}
+
 /// Точки стрелок и тупика отростка в `level01`.
 #[cfg(test)]
 pub(crate) mod level01 {
@@ -442,7 +492,7 @@ pub(crate) mod level01 {
 
     /// Ставит стрелку в `at` на S-деталь или на прямую.
     pub(crate) fn set(t: &mut Track, at: Vec2, curve: bool) {
-        let i = crate::bot::switch_at(t, at);
+        let i = t.switch_by_pos(at);
         t.switches[i].active = (t.switches[i].branches.iter())
             .position(|&b| (t.edges[b].rail.piece == Piece::Curve) == curve)
             .expect("ветка");
@@ -453,20 +503,15 @@ pub(crate) mod level01 {
 mod tests {
     use engine::Assets;
 
+    use super::fixture::{RailRow, edge, map};
     use super::level01::{A, B, C, D, T, set};
     use super::*;
     use crate::consist;
 
     const DEPOT0: &str = "depot = { rail = 0 }\n";
 
-    /// Деталь, клетка, поворот, зеркало.
-    type RailRow = (&'static str, [i32; 2], i64, bool);
-
-    fn rail(piece: &str, cell: [i32; 2], rot: i64, mirror: bool) -> String {
-        format!(
-            "[[rail]]\npiece = \"{piece}\"\ncell = [{}, {}]\nrot = {rot}\nmirror = {mirror}\n",
-            cell[0], cell[1]
-        )
+    fn rail(piece: &'static str, cell: [i32; 2], rot: i64, mirror: bool) -> String {
+        fixture::rails(&[(piece, cell, rot, mirror)])
     }
 
     fn parse(rails: &[RailRow]) -> Result<Track, TrackError> {
@@ -474,12 +519,7 @@ mod tests {
     }
 
     fn parse_with(head: &str, rails: &[RailRow], max_len: f32) -> Result<Track, TrackError> {
-        let text: String = rails.iter().map(|&(p, c, r, m)| rail(p, c, r, m)).collect();
-        Track::parse(&format!("{head}{text}"), max_len)
-    }
-
-    fn ok(rails: &[RailRow]) -> Track {
-        parse(rails).expect("карта")
+        Track::parse(&format!("{head}{}", fixture::rails(rails)), max_len)
     }
 
     /// Тупик (0, −8) → (0, −4) → стрелка (0, 0): прямая и S-деталь на (0, 4) и (−2, 4).
@@ -533,7 +573,7 @@ mod tests {
 
     #[test]
     fn joints_join_by_point_and_tangent() {
-        let t = ok(&[
+        let t = map(&[
             ("straight", [0, 0], 0, false),
             ("straight", [0, 4], 180, false),
             ("corner-small", [0, 4], 0, true),
@@ -565,7 +605,7 @@ mod tests {
 
     #[test]
     fn switch_is_recognized_and_follows_active_branch() {
-        let mut t = ok(&FORK);
+        let mut t = map(&FORK);
         let [s] = &t.switches[..] else {
             panic!("{:?}", t.switches)
         };
@@ -581,7 +621,7 @@ mod tests {
 
     #[test]
     fn branch_to_branch_is_impossible() {
-        let mut t = ok(&FORK);
+        let mut t = map(&FORK);
         for active in 0..2 {
             t.switches[0].active = active;
             for branch in [2, 3] {
@@ -594,7 +634,7 @@ mod tests {
 
     #[test]
     fn depot_path_is_chain_to_first_switch() {
-        let t = ok(&FORK);
+        let t = map(&FORK);
         assert_eq!(t.depot, [(0, true), (1, false)]);
         let t = parse_with("depot = { rail = 2 }\n", &FORK, 0.0).expect("карта");
         assert_eq!(t.depot, [(2, false)]);
@@ -606,7 +646,7 @@ mod tests {
 
     #[test]
     fn depot_path_without_switch_ends_at_dead_end() {
-        let t = ok(&[
+        let t = map(&[
             ("straight", [0, 0], 0, false),
             ("straight", [0, 2], 0, false),
         ]);
@@ -854,12 +894,6 @@ mod tests {
 
     fn game_max_len() -> f32 {
         consist::max_len(&consist::all(&mut Assets::default()))
-    }
-
-    fn edge(t: &Track, piece: Piece, cell: [i32; 2]) -> usize {
-        (t.edges.iter())
-            .position(|e| e.rail.piece == piece && e.rail.cell == IVec2::from(cell))
-            .unwrap_or_else(|| panic!("{piece:?} {cell:?}"))
     }
 
     /// Стрелки по пути от `start` и порт остановки; `None` — вернулись в `start`.

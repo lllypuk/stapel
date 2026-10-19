@@ -30,10 +30,10 @@ def convert(src: str, dst: str) -> None:
         view["buffer"] = 0
     doc["buffers"] = [{"byteLength": len(blob)}]
     text = pad(json.dumps(doc, separators=(",", ":")).encode(), b" ")
-    chunks = struct.pack("<II", len(text), 0x4E4F534A) + text
-    chunks += struct.pack("<II", len(blob), 0x004E4942) + blob
+    chunks = struct.pack("<I", len(text)) + b"JSON" + text
+    chunks += struct.pack("<I", len(blob)) + b"BIN\0" + blob
     with open(dst, "wb") as f:
-        f.write(struct.pack("<III", 0x46546C67, 2, 12 + len(chunks)) + chunks)
+        f.write(b"glTF" + struct.pack("<II", 2, 12 + len(chunks)) + chunks)
 
 
 if __name__ == "__main__":

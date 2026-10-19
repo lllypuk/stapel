@@ -4,10 +4,9 @@ use std::collections::VecDeque;
 
 use engine::{ElementState, Input, KeyCode, Vec2};
 
-use crate::Trains;
 use crate::piece::Piece;
 use crate::switch;
-use crate::track::Track;
+use crate::{BACK, GAS, Trains};
 
 /// Конец отрезка поездки.
 #[derive(Clone, Copy, Debug)]
@@ -90,7 +89,7 @@ impl Bot {
             let arrived = match leg.until {
                 Until::Stop => self.pushed && train.speed == 0.0,
                 Until::Clear(at) => {
-                    let under = switch::under(track, train, switch_at(track, at));
+                    let under = switch::under(track, train, track.switch_by_pos(at));
                     self.crossing |= under;
                     self.crossing && !under
                 }
@@ -115,13 +114,6 @@ impl Bot {
     }
 }
 
-/// Стрелка в точке `at`.
-pub(crate) fn switch_at(track: &Track, at: Vec2) -> usize {
-    (track.switches.iter())
-        .position(|s| track.ports[s.port].pos == at)
-        .unwrap_or_else(|| panic!("нет стрелки в {at}"))
-}
-
 /// Действие — в события ввода; E и Tab отпускаются и жмутся заново.
 pub(crate) fn press(action: Action, input: &mut Input) {
     let state = |on: bool| {
@@ -131,8 +123,8 @@ pub(crate) fn press(action: Action, input: &mut Input) {
             ElementState::Released
         }
     };
-    input.on_key(KeyCode::KeyW, state(action.pedal > 0.0), false);
-    input.on_key(KeyCode::KeyS, state(action.pedal < 0.0), false);
+    input.on_key(GAS[0], state(action.pedal > 0.0), false);
+    input.on_key(BACK[0], state(action.pedal < 0.0), false);
     for (key, on) in [(KeyCode::KeyE, action.throw), (KeyCode::Tab, action.tab)] {
         input.on_key(key, ElementState::Released, false);
         input.on_key(key, state(on), false);
@@ -148,8 +140,9 @@ mod tests {
     use super::*;
     use crate::consist;
     use crate::depot;
+    use crate::tests::tick;
     use crate::track::level01::{A, B, C, D, T};
-    use crate::track::{MARGIN, Pass};
+    use crate::track::{MARGIN, Pass, Track};
     use crate::train::Train;
     use crate::{TICK_HZ, in_depot};
 
@@ -162,11 +155,6 @@ mod tests {
             switches: switches.to_vec(),
             until,
         }
-    }
-
-    fn tick(g: &mut Trains, ctx: &mut Context) {
-        g.update(ctx);
-        ctx.input.end_tick();
     }
 
     /// Маршрут — путь графа по нынешним стрелкам, концы на своих рёбрах, длина — длина состава.

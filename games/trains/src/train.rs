@@ -202,32 +202,18 @@ fn toward_zero(v: f32, by: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::Write as _;
-
     use engine::{Assets, vec2};
 
     use super::*;
+    use crate::DT;
     use crate::piece::Piece;
     use crate::track::LEVEL01;
+    use crate::track::fixture::map;
     use crate::track::level01::{A, B, C, set};
 
-    const DT: f32 = 1.0 / 60.0;
-
-    fn track(rails: &[(&str, [i32; 2], i64)]) -> Track {
+    fn track(rails: &[(&'static str, [i32; 2], i64)]) -> Track {
         let rails: Vec<_> = rails.iter().map(|&(p, c, r)| (p, c, r, false)).collect();
-        mirrored(&rails)
-    }
-
-    fn mirrored(rails: &[(&str, [i32; 2], i64, bool)]) -> Track {
-        let mut text = String::from("depot = { rail = 0 }\n");
-        for (piece, [x, z], rot, mirror) in rails {
-            writeln!(
-                text,
-                "[[rail]]\npiece = \"{piece}\"\ncell = [{x}, {z}]\nrot = {rot}\nmirror = {mirror}"
-            )
-            .expect("строка");
-        }
-        Track::parse(&text, 0.0).expect("карта")
+        map(&rails)
     }
 
     /// Шесть прямых по +Z от тупика (0, 0) до тупика (0, 24).
@@ -587,7 +573,7 @@ mod tests {
 
     /// Прямые, `corner-large`, прямые, S-деталь и зеркальная S-деталь.
     fn bends() -> Track {
-        mirrored(&[
+        map(&[
             ("straight", [0, -4], 0, false),
             ("straight", [0, -2], 0, false),
             ("corner-large", [0, 0], 0, false),

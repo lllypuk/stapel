@@ -484,14 +484,12 @@ fn main() -> Result<(), engine::EventLoopError> {
 mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
-    use engine::{
-        ElementState, Fog, IVec2, Shown, ShownScene, Sprite, Texture, UVec2, Viewport, text,
-    };
+    use engine::{ElementState, Fog, Shown, ShownScene, Sprite, Texture, UVec2, Viewport, text};
 
     use super::*;
-    use crate::bot::switch_at;
     use crate::depot::DepotCmd;
     use crate::piece::Piece;
+    use crate::track::fixture::{self, edge};
     use crate::track::level01::{A, D};
     use crate::train::MAX_SPEED;
 
@@ -630,13 +628,13 @@ mod tests {
 
     #[test]
     fn branch_of_two_switches_is_inactive_if_inactive_at_either() {
-        let text = "depot = { rail = 0 }\n\
-            [[rail]]\npiece = \"straight\"\ncell = [0, -2]\n\
-            [[rail]]\npiece = \"straight\"\ncell = [0, 0]\n\
-            [[rail]]\npiece = \"curve\"\ncell = [0, 0]\n\
-            [[rail]]\npiece = \"straight\"\ncell = [-1, 0]\n\
-            [[rail]]\npiece = \"straight\"\ncell = [-1, 2]\n";
-        let mut t = Track::parse(text, 0.0).expect("карта");
+        let mut t = fixture::map(&[
+            ("straight", [0, -2], 0, false),
+            ("straight", [0, 0], 0, false),
+            ("curve", [0, 0], 0, false),
+            ("straight", [-1, 0], 0, false),
+            ("straight", [-1, 2], 0, false),
+        ]);
         let curve = 2;
         assert_eq!(t.switches.len(), 2);
         assert!(t.switches.iter().all(|s| s.branches.contains(&curve)));
@@ -659,9 +657,7 @@ mod tests {
         let mut ctx = Context::default();
         let mut g = Trains::init(&mut ctx);
         let cars: Vec<_> = g.cars.values().copied().collect();
-        let start = (g.track.edges.iter())
-            .position(|e| e.rail.piece == Piece::Straight && e.rail.cell == IVec2::new(14, 0))
-            .expect("прямая до угла петли");
+        let start = edge(&g.track, Piece::Straight, [14, 0]);
         g.train = Train::new(&g.track, (start, true), 0.0, cars.clone()).expect("состав");
         g.prev = g.train.clone();
         let s = scene(&mut g, &mut ctx, 1.0);
@@ -859,7 +855,7 @@ mod tests {
         }
     }
 
-    fn tick(g: &mut Trains, ctx: &mut Context) {
+    pub(crate) fn tick(g: &mut Trains, ctx: &mut Context) {
         g.update(ctx);
         ctx.input.end_tick();
     }
@@ -936,7 +932,7 @@ mod tests {
     fn e_throws_switch_ahead_click_throws_switch_under_cursor() {
         let mut ctx = Context::default();
         let mut g = Trains::init(&mut ctx);
-        let (a, d) = (switch_at(&g.track, A), switch_at(&g.track, D));
+        let (a, d) = (g.track.switch_by_pos(A), g.track.switch_by_pos(D));
         ctx.input
             .on_key(KeyCode::KeyE, ElementState::Pressed, false);
         tick(&mut g, &mut ctx);
@@ -973,11 +969,9 @@ mod tests {
     fn switch_under_train_refuses_and_hud_shows_busy_for_a_second() {
         let mut ctx = Context::default();
         let mut g = Trains::init(&mut ctx);
-        let bottom = (g.track.edges.iter())
-            .position(|e| e.rail.piece == Piece::Straight && e.rail.cell == IVec2::new(2, 0))
-            .expect("прямая до A");
+        let bottom = edge(&g.track, Piece::Straight, [2, 0]);
         g.train = Train::new(&g.track, (bottom, true), 2.0, g.train.cars.clone()).expect("состав");
-        let a = switch_at(&g.track, A);
+        let a = g.track.switch_by_pos(A);
         click(&mut ctx, A);
         tick(&mut g, &mut ctx);
         assert_eq!(g.track.switches[a].active, 0);
@@ -1010,7 +1004,7 @@ mod tests {
             ctx.input.on_key(*key, ElementState::Pressed, false);
             tick(&mut g, &mut ctx);
             let mut want = start.clone();
-            want.drive(1.0, 1.0 / 60.0);
+            want.drive(1.0, DT);
             assert_eq!(g.train.speed, want.speed, "{key:?}");
             assert!(g.train.head > start.head, "{key:?}");
             ctx.input.on_key(*key, ElementState::Released, false);
