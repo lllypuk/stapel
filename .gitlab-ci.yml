@@ -44,14 +44,35 @@ coverage:
   script:
     - make cov
 
-mutants:
+# Таймаут проекта — час, а у раннера 4 ядра.
+.mutants: &mutants
   stage: mutants
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
   needs: []
-  script:
-    - make mutants
+  timeout: 4h
   artifacts:
     when: always
     paths: [mutants.out/]
     expire_in: 2 weeks
+
+mutants:
+  <<: *mutants
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  script:
+    - make mutants
+
+# Приёмка ветки — её строки против main; новый push отменяет прежний прогон.
+mutants-diff:
+  <<: *mutants
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+      changes:
+        paths: ["**/*.rs"]
+        compare_to: refs/heads/$CI_DEFAULT_BRANCH
+  interruptible: true
+  variables:
+    # Неглубокий клон может не дойти до общего предка с main.
+    GIT_DEPTH: "0"
+  script:
+    - git fetch origin $CI_DEFAULT_BRANCH
+    - make mutants-diff BASE=FETCH_HEAD
