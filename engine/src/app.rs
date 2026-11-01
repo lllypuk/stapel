@@ -361,7 +361,7 @@ impl<G: Game> ApplicationHandler for ScriptApp<'_, G> {
             .with_title(self.config.title.clone())
             .with_inner_size(PhysicalSize::new(w, h));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
-        // Без vsync: под Fifo Wayland не шлёт кадры скрытому окну, и прогон встаёт.
+        // Без vsync: под Fifo на Wayland прогон вставал после тика 0 (design.md, «Рендер»).
         let renderer = Renderer::new(window.clone(), false, self.config.pixel_perfect);
         self.last_frame = Instant::now();
         match Runner::<G>::new(renderer.gpu(), self.config, self.script) {

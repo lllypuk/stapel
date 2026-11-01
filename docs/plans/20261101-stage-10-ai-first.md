@@ -382,11 +382,11 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError>;
 **Files:**
 - Modify: `engine/src/app.rs`, `engine/src/runner.rs`, `docs/design.md`
 
-- [ ] сообщение `Stalled` и комментарий в `app.rs` (строка 364) и `runner.rs` (строка 104): нет прогресса 10 с на тике N, причина не названа
-- [ ] `docs/design.md`: `vsync = false` не гарантирует выхода из `Fifo`, `pick_present_mode` откатывается к нему; таймер в `about_to_wait` не прерывает заблокированный вызов GPU
-- [ ] правка текста Wayland-остановки в `docs/design.md` (строки 51, 116) до уровня измеренного
-- [ ] обновить затронутые тесты (`stalled_error_names_tick_and_timeout`, `debug_shows_message`)
-- [ ] `make check`
+- [x] сообщение `Stalled` и комментарий в `app.rs` (строка 364) и `runner.rs` (строка 104): нет прогресса 10 с на тике N, причина не названа
+- [x] `docs/design.md`: `vsync = false` не гарантирует выхода из `Fifo`, `pick_present_mode` откатывается к нему; таймер в `about_to_wait` не прерывает заблокированный вызов GPU
+- [x] правка текста Wayland-остановки в `docs/design.md` (строки 51, 116) до уровня измеренного
+- [x] обновить затронутые тесты (`stalled_error_names_tick_and_timeout`, `debug_shows_message`)
+- [x] `make check`
 
 ### Task 22: ➕ Парный замер прохода вывода
 Закрывает ⚠️ задачи 5: замер до и после шёл не парно.

@@ -66,7 +66,7 @@ pub enum RunError {
         /// Последний выполненный тик.
         tick: u32,
     },
-    /// Окно не просит кадров дольше `STALL_TIMEOUT`.
+    /// Нет прогресса дольше `STALL_TIMEOUT`.
     Stalled {
         /// Последний выполненный тик.
         tick: u32,
@@ -101,7 +101,7 @@ impl fmt::Display for RunError {
             Self::Closed { tick } => write!(f, "окно закрыто на тике {tick}, сценарий не кончился"),
             Self::Stalled { tick } => write!(
                 f,
-                "окно не просит кадров {} с на тике {tick}: композитор не шлёт frame callback скрытому окну; сделайте окно видимым или запустите под X11 (env -u WAYLAND_DISPLAY)",
+                "нет прогресса {} с на тике {tick}; причина не установлена, можно попробовать другой дисплей (env -u WAYLAND_DISPLAY) или NO_VSYNC=1",
                 STALL_TIMEOUT.as_secs()
             ),
             Self::Io(e) => write!(f, "файл: {e}"),
@@ -749,8 +749,9 @@ mod tests {
 
     #[test]
     fn debug_shows_message() {
-        let e = RunError::Closed { tick: 4 };
-        assert_eq!(format!("{e:?}"), e.to_string());
+        for e in [RunError::Closed { tick: 4 }, RunError::Stalled { tick: 4 }] {
+            assert_eq!(format!("{e:?}"), e.to_string());
+        }
     }
 
     #[test]
@@ -763,7 +764,8 @@ mod tests {
     #[test]
     fn stalled_error_names_tick_and_timeout() {
         let text = RunError::Stalled { tick: 7 }.to_string();
-        assert!(text.contains("10 с на тике 7"), "{text}");
+        assert!(text.contains("нет прогресса 10 с на тике 7"), "{text}");
+        assert!(!text.contains("композитор"), "{text}");
     }
 
     #[test]
