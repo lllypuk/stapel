@@ -88,7 +88,7 @@ Ticks:
 cargo run -- --script scripts/win.toml --out target/run/win
 ```
 
-It prints the path of `target/run/win/report.json` and exits; without `--out` files go to `target/stapel-run/<scenario name>/`. `--window` plays the same scenario in a window. Other arguments are ignored.
+It prints the path of `target/run/win/report.json` and exits; without `--out` files go to `target/stapel-run/<scenario name>/`. `--window` plays the same scenario in a window. `--no-png` writes `report.json` only (`png` is `null`, nothing is read back from the GPU): use it while tuning a scenario, then run once without it to look at the pictures. Other arguments are ignored.
 
 `report.json`:
 

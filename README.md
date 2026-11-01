@@ -107,7 +107,7 @@ mod tests {
 
 ## Check a game without a window
 
-Every game started through `stapel::run` also takes `--script <file.toml> [--out <dir>] [--window]`: it plays the scenario tick by tick on an offscreen GPU target, saves PNG snapshots and `report.json`, prints the path of the report and exits. `--window` plays the same scenario in a window; pixels and report match the offscreen run. Without `--out` the files go to `target/stapel-run/<scenario name>/`. Other arguments are ignored; `--out` and `--window` without `--script` are an error.
+Every game started through `stapel::run` also takes `--script <file.toml> [--out <dir>] [--window] [--no-png]`: it plays the scenario tick by tick on an offscreen GPU target, saves PNG snapshots and `report.json`, prints the path of the report and exits. `--window` plays the same scenario in a window; pixels and report match the offscreen run. Without `--out` the files go to `target/stapel-run/<scenario name>/`. `--no-png` writes `report.json` only, with `png` set to `null`: use it while tuning a scenario, then run once without it for the pictures. Other arguments are ignored; `--out`, `--window` and `--no-png` without `--script` are an error, as is `--no-png` with `--window`.
 
 `scripts/cycle.toml` for the game above:
 

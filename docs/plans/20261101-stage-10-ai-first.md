@@ -367,14 +367,14 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError>;
 Из записи о сценарии без PNG: `run_script(.., None)` покрывает тесты, CLI связывает JSON с PNG.
 
 **Files:**
-- Modify: `engine/src/cli.rs`, `engine/src/runner.rs`, `docs/agents/AGENTS.md`, `README.md`
+- Modify: `engine/src/cli.rs`, `engine/src/lib.rs`, `docs/agents/AGENTS.md`, `README.md`
 
-- [ ] CLI с `--no-png` пишет `report.json` без PNG; `png` в отчёте — `null`
-- [ ] `--no-png` без `--script` — ошибка
-- [ ] тест разбора аргументов
-- [ ] офскрин-тест: после прогона есть `report.json`, PNG нет, `png` — `null`
-- [ ] README и AGENTS.md: когда применять (подбор сценария, затем один прогон с картинками)
-- [ ] `make check`
+- [x] CLI с `--no-png` пишет `report.json` без PNG; `png` в отчёте — `null`
+- [x] `--no-png` без `--script` — ошибка; с `--window` — тоже
+- [x] тест разбора аргументов
+- [x] офскрин-тест: после прогона есть `report.json`, PNG нет, `png` — `null`
+- [x] README и AGENTS.md: когда применять (подбор сценария, затем один прогон с картинками)
+- [x] `make check`
 
 ### Task 21: ➕ `RunError::Stalled` как наблюдение
 Причина остановки под `Fifo` не установлена; текст не должен её называть.
