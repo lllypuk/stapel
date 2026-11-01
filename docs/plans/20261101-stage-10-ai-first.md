@@ -297,7 +297,7 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError>;
 - [x] `replay.rs`, бинарник через `CARGO_BIN_EXE_trains`: два процесса офскрином дают равные `report.json` и равные пиксели; без адаптера — `SKIPPED`, при `REQUIRE_GPU=1` — падение
 - [x] `replay.rs`: `--window` против офскрина: те же равенства; без `DISPLAY` и `WAYLAND_DISPLAY` — `SKIPPED`, при `REQUIRE_DISPLAY=1` — падение; перед сравнением пикселей проверить равенство `adapter` и `backend` (прогон `REQUIRE_GPU=1 REQUIRE_DISPLAY=1`: окно и офскрин на RADV/Vulkan равны побайтно, расхождений нет; не проверено: X11 и Wayland порознь)
 - [x] сравнение точное; расхождение — ⚠️ с измерением и причиной, допуск только после неё
-- [x] тест отравлением: `HashMap` в логике или недостающий сид ломают первый тест; проверить разовой правкой, не коммитить (проверено: `HashMap` в `report` ломает `script_toggles_switch_and_reports_busy_under_train` в трёх запусках из трёх; сид в trains не используется; правка откачена)
+- [x] тест отравлением: `HashMap` в логике или недостающий сид ломают первый тест; проверить разовой правкой, не коммитить (проверено: `HashMap` в `report` ломает `script_toggles_switch_and_reports_busy_under_train` в трёх запусках из трёх; сид в trains не используется; правка откачена). Повтор после замечания: в двухпроцессный `replay.rs` поймано отдельно, при этом `script_toggles_switch_and_reports_busy_under_train` зелёный: (1) поле `poison` из `RandomState` в `report` — `two_offscreen_processes_agree` падает на сравнении отчётов; (2) окружающий свет сцены `ambient.r` из `RandomState` — отчёт равен, падает на `tick-000000.png: пиксели разошлись`, то есть сравнение пикселей живое (правка clear_color не годится: 3D-проход перекрывает заливку). Обе правки откачены, дерево чистое
 
 ### Task 12: Публичный путь для внешнего проекта
 
@@ -305,12 +305,12 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError>;
 - Create: `docs/agents/AGENTS.md`, `docs/friction/README.md`
 - Modify: `README.md`, `docs/design.md`, `CLAUDE.md`
 
-- [ ] раздел README: как написать сценарий, как запустить `--script`, что лежит в `--out`, как читать `report.json`, смысл тиков
-- [ ] `docs/agents/AGENTS.md`, по-английски, копируется в проект игры: контракт `Game`, ассеты и лицензии, цикл проверки через сценарий, PNG и `cargo test`, правила журнала `FRICTION.md`
-- [ ] `docs/friction/README.md`: формат записи и четыре исхода разбора
-- [ ] `docs/design.md`: строка этапа 10, исключение из правила «функция только под игру»
-- [ ] `CLAUDE.md`: команды `--script`, `REQUIRE_DISPLAY`, слой runner в «Архитектуре»
-- [ ] дымовая проверка: `cargo new` в пустом каталоге вне репозитория, зависимость на запушенный rev ветки, игра из README, прогон сценария; пути автора нигде не нужны
+- [x] раздел README: как написать сценарий, как запустить `--script`, что лежит в `--out`, как читать `report.json`, смысл тиков
+- [x] `docs/agents/AGENTS.md`, по-английски, копируется в проект игры: контракт `Game`, ассеты и лицензии, цикл проверки через сценарий, PNG и `cargo test`, правила журнала `FRICTION.md`
+- [x] `docs/friction/README.md`: формат записи и четыре исхода разбора
+- [x] `docs/design.md`: строка этапа 10, исключение из правила «функция только под игру»
+- [x] `CLAUDE.md`: команды `--script`, `REQUIRE_DISPLAY`, слой runner в «Архитектуре»
+- [x] дымовая проверка: `cargo new` в пустом каталоге вне репозитория, зависимость на запушенный rev ветки, игра из README, прогон сценария; пути автора нигде не нужны (rev 9ab1866 по https в пустом каталоге: `cargo build` 1 мин, `cargo test` зелёный, `--script` дал report.json и PNG, PNG просмотрен; шрифт README не давал — добавлено в README и AGENTS.md; каталог удалён)
 
 ### Task 13: Проверка перед холодной сессией
 - [ ] `make check`, `REQUIRE_GPU=1 REQUIRE_DISPLAY=1 cargo test -p trains --test replay`

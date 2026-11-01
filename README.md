@@ -40,7 +40,7 @@ Cargo.toml:
 stapel = { git = "https://github.com/lllypuk/stapel", rev = "<commit>" }
 ```
 
-`src/main.rs`, the whole `clear-color` game:
+`src/main.rs`, the whole `clear-color` game with a `report` and a test:
 
 ```rust
 use stapel::{Color, Config, Context, Game, KeyCode};
@@ -66,23 +66,98 @@ impl Game for ClearColor {
         let [r, g, b] = PALETTE[self.index];
         ctx.gfx.clear_color = Color::from_srgb8(r, g, b);
     }
+
+    fn report(&self) -> stapel::serde_json::Value {
+        stapel::serde_json::json!({ "index": self.index })
+    }
 }
 
-fn main() -> Result<(), stapel::RunError> {
-    stapel::run::<ClearColor>(Config {
+fn config() -> Config {
+    Config {
         title: "clear-color".into(),
         size: (800, 600),
         tick_hz: 60,
         vsync: true,
         pixel_perfect: false,
-    })
+    }
+}
+
+fn main() -> Result<(), stapel::RunError> {
+    stapel::run::<ClearColor>(config())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use stapel::{RunError, Script, run_script};
+
+    #[test]
+    fn space_cycles_color() {
+        let script = Script::parse(include_str!("../scripts/cycle.toml")).unwrap();
+        match run_script::<ClearColor>(&config(), &script, None) {
+            Err(RunError::NoAdapter(why)) => eprintln!("SKIPPED: {why}"),
+            Err(e) => panic!("{e}"),
+            Ok(run) => assert_eq!(run.snapshots[1].report["index"], 1),
+        }
+    }
 }
 ```
 
-`init` loads assets once through `ctx.assets`. `update` runs every fixed tick and reads the input snapshot in `ctx.input`. `draw` fills `ctx.gfx` immediate-mode every frame; for 3D set `ctx.gfx.scene`. The optional `ui` method draws `egui` panels. The games in `games/` are the reference for everything else: each has a README with its data formats.
+`init` loads assets once through `ctx.assets`; paths are relative to the working directory, so run from the crate root and keep files in the crate's own `assets/` (the engine ships only a font for its own games: bring a `.ttf` for `load_font`). `update` runs every fixed tick and reads the input snapshot in `ctx.input`. `draw` fills `ctx.gfx` immediate-mode every frame; for 3D set `ctx.gfx.scene`. The optional `ui` method draws `egui` panels. The games in `games/` are the reference for everything else: each has a README with its data formats.
+
+## Check a game without a window
+
+Every game started through `stapel::run` also takes `--script <file.toml> [--out <dir>] [--window]`: it plays the scenario tick by tick on an offscreen GPU target, saves PNG snapshots and `report.json`, prints the path of the report and exits. `--window` plays the same scenario in a window; pixels and report match the offscreen run. Without `--out` the files go to `target/stapel-run/<scenario name>/`. Other arguments are ignored; `--out` and `--window` without `--script` are an error.
+
+`scripts/cycle.toml` for the game above:
+
+```toml
+ticks = 10            # how many times update runs; required
+size = [320, 240]     # physical pixels; default is Config::size
+snapshots = [0, 5]    # ticks to capture; the last tick is always captured
+# seed = 7            # ctx.seed before Game::init; default 0
+# scale = 1.0         # physical pixels per egui point; default 1
+
+[[event]]
+tick = 2
+press = "Space"       # any KeyCode name; release = "Space" lifts it
+
+[[event]]
+tick = 3
+release = "Space"
+```
+
+Each `[[event]]` has `tick` (`1..=ticks`, non-decreasing down the file) and exactly one action: `press`, `release`, `cursor = [x, y]`, `cursor_left = true`, `button_press` / `button_release = "Left"`, `motion = [dx, dy]`, `wheel = [x, y]`, `focus = false`. Coordinates are physical pixels. Unknown fields and out-of-range ticks are errors that name the entry (`event[N]`).
+
+Ticks:
+
+- Tick 0 is the initial frame: `update` is not called, `draw` and `ui` run, so the first snapshot shows the start.
+- At tick N >= 1 the events of tick N are applied in file order, then one frame runs: one `update`, `draw` with `alpha = 0`, `ui`, render. Snapshot N is taken after that frame.
+- Start state: window focused, no cursor until the first `cursor` event, no grab. A grab requested in `update` at tick N is in effect from tick N + 1, so a `motion` in the click's own tick is dropped, as in a window.
+
+`--out` holds `tick-000005.png` per snapshot (what the screen would show, opaque) and `report.json`, abridged here:
+
+```json
+{"ticks": 10, "adapter": "AMD Radeon Graphics (RADV RENOIR)", "backend": "Vulkan", "snapshots": [
+  {"tick": 0, "png": "tick-000000.png", "sprites": 0, "texts": [], "report": {"index": 0}}
+]}
+```
+
+`sprites` is the sprite count of the frame; `texts` lists the strings passed to `draw_text`; `report` is `Game::report` at that tick (a JSON object, anything else is an error). The same run is available from code: `stapel::run_script::<G>(&config, &script, Some(out_dir))` returns the same data as `RunReport`; with `None` no PNG is read back. It returns `RunError::NoAdapter` when the machine has no Vulkan adapter, so a test can skip on it.
+
+What to rely on and what not to:
+
+- Linux only. Offscreen needs a Vulkan adapter (a software one, such as lavapipe, is enough); `--window` needs a display.
+- Text typed into egui panels cannot be scripted yet; clicks, drags, keys and the wheel work, including over panels.
+- `texts` shows what the game sent to `draw_text`, not what is visible: a HUD covered by something else still appears there. Look at the PNG.
+- The game must be deterministic: time, `HashMap` iteration order and random numbers not taken from `ctx.seed` make two runs differ without any error.
+
+For a coding agent working on your game, copy `docs/agents/AGENTS.md` from this repository into the project root: it is written to be the only context the agent needs.
 
 ## Documentation
 
+- `docs/agents/AGENTS.md` (English): instructions for a coding agent that writes a game on Stapel.
+- `docs/friction/README.md` (Russian): format of the friction log kept by such an agent.
 - `docs/design.md` (Russian): decisions and their reasons, the list of silent failure modes and what catches each, the stage table.
 - `docs/assets.md` (Russian): where to get assets and under which licenses.
 - `CLAUDE.md` (Russian): architecture summary and the commands for checks, coverage, and mutation testing. Written for coding agents, useful for people too.
