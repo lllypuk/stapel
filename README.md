@@ -37,8 +37,10 @@ Cargo.toml:
 
 ```toml
 [dependencies]
-stapel = { git = "https://github.com/lllypuk/stapel", rev = "<commit>" }
+stapel = { git = "https://github.com/lllypuk/stapel", rev = "3e88954f4b7447ca1e3ff93e7e6409e683712f36" }
 ```
+
+This rev is the one the sample game was verified on, not a promise of stability.
 
 `src/main.rs`, the whole `clear-color` game with a `report` and a test:
 
@@ -148,6 +150,7 @@ Ticks:
 What to rely on and what not to:
 
 - Linux only. Offscreen needs a Vulkan adapter (a software one, such as lavapipe, is enough); `--window` needs a display.
+- `--window` on Wayland can stop after tick 0 with no output; the cause is not established. After 10 s without progress the run ends with `Stalled` and the tick; try `env -u WAYLAND_DISPLAY`. The offscreen run is not affected.
 - Text typed into egui panels cannot be scripted yet; clicks, drags, keys and the wheel work, including over panels.
 - `texts` shows what the game sent to `draw_text`, not what is visible: a HUD covered by something else still appears there. Look at the PNG.
 - The game must be deterministic: time, `HashMap` iteration order and random numbers not taken from `ctx.seed` make two runs differ without any error.
