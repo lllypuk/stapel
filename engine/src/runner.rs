@@ -101,7 +101,7 @@ impl fmt::Display for RunError {
             Self::Closed { tick } => write!(f, "окно закрыто на тике {tick}, сценарий не кончился"),
             Self::Stalled { tick } => write!(
                 f,
-                "нет прогресса {} с на тике {tick}; причина не установлена, можно попробовать другой дисплей (env -u WAYLAND_DISPLAY) или NO_VSYNC=1",
+                "нет прогресса {} с на тике {tick}; причина не установлена, можно попробовать другой дисплей (env -u WAYLAND_DISPLAY)",
                 STALL_TIMEOUT.as_secs()
             ),
             Self::Io(e) => write!(f, "файл: {e}"),
@@ -766,6 +766,7 @@ mod tests {
         let text = RunError::Stalled { tick: 7 }.to_string();
         assert!(text.contains("нет прогресса 10 с на тике 7"), "{text}");
         assert!(!text.contains("композитор"), "{text}");
+        assert!(!text.contains("NO_VSYNC"), "{text}");
     }
 
     #[test]
