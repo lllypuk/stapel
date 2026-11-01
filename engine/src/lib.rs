@@ -42,6 +42,8 @@ pub mod present;
 pub mod renderer;
 /// 3D-кадр и его раскрытие в инстансы.
 pub mod scene;
+/// Сценарий runner: TOML со входом по тикам.
+pub mod script;
 /// Спрайты и их батчинг в инстансы.
 pub mod sprite;
 /// GPU-путь спрайтов.
@@ -92,6 +94,7 @@ pub use scene::{
     DirectionalLight, ExpandedModels, Fog, MAX_JOINTS, MAX_LIGHTS, MeshBatch, MeshDraw,
     MeshInstance, ModelDraw, PointLight, Scene, SkinnedDraw, Viewmodel, batch_meshes,
 };
+pub use script::{Script, ScriptError, ScriptEvent};
 pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;
 pub use stats::{FrameReport, FrameStats, RateCounter};

@@ -8,7 +8,7 @@ license = "MIT"
 
 [workspace.dependencies]
 stapel = { path = "engine" }
-winit = "0.30.13"
+winit = { version = "0.30.13", features = ["serde"] }
 wgpu = "30.0.1"
 pollster = "1.0.1"
 log = "0.4.34"
