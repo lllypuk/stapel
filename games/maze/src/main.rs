@@ -494,7 +494,7 @@ impl Game for Maze {
     }
 }
 
-fn main() -> Result<(), stapel::EventLoopError> {
+fn main() -> Result<(), stapel::RunError> {
     stapel::run::<Maze>(Config {
         title: "maze".into(),
         size: (1280, 720),

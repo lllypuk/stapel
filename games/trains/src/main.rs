@@ -470,7 +470,7 @@ impl Trains {
     }
 }
 
-fn main() -> Result<(), stapel::EventLoopError> {
+fn main() -> Result<(), stapel::RunError> {
     stapel::run::<Trains>(Config {
         title: "trains".into(),
         size: (1280, 720),

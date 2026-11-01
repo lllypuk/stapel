@@ -23,7 +23,7 @@ impl Game for ClearColor {
     }
 }
 
-fn main() -> Result<(), stapel::EventLoopError> {
+fn main() -> Result<(), stapel::RunError> {
     stapel::run::<ClearColor>(Config {
         title: "clear-color".into(),
         size: (800, 600),

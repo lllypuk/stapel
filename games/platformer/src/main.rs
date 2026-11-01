@@ -1149,7 +1149,7 @@ impl Game for Platformer {
     }
 }
 
-fn main() -> Result<(), stapel::EventLoopError> {
+fn main() -> Result<(), stapel::RunError> {
     stapel::run::<Platformer>(Config {
         title: "platformer".into(),
         size: (1280, 720),

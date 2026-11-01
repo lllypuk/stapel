@@ -711,7 +711,7 @@ impl Game for Asteroids {
     }
 }
 
-fn main() -> Result<(), stapel::EventLoopError> {
+fn main() -> Result<(), stapel::RunError> {
     stapel::run::<Asteroids>(Config {
         title: "asteroids".into(),
         size: (1280, 720),

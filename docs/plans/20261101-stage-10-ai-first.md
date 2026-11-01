@@ -265,12 +265,12 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError>;
 - Create: `engine/src/cli.rs`
 - Modify: `engine/src/lib.rs`, `games/*/src/main.rs`, `README.md`
 
-- [ ] тест разбора аргументов: нет `--script`, полный набор, `--script` без пути, `--out` и `--window` без `--script`, чужой аргумент игнорируется
-- [ ] офскрин-тест: в каталоге `--out` появляются `report.json` и PNG всех снимков, повторный запуск перезаписывает
-- [ ] `run` возвращает `RunError`, при `--script` идёт в `run_script`
-- [ ] `main` восьми игр и пример в README: `Result<(), stapel::RunError>`
-- [ ] после успешного прогона — одна строка с путём `report.json` в stdout; ошибка — ненулевой код
-- [ ] проверка запуском: `cargo run -p clear-color -- --script <сценарий>`
+- [x] тест разбора аргументов: нет `--script`, полный набор, `--script` без пути, `--out` и `--window` без `--script`, чужой аргумент игнорируется
+- [x] офскрин-тест: в каталоге `--out` появляются `report.json` и PNG всех снимков, повторный запуск перезаписывает
+- [x] `run` возвращает `RunError`, при `--script` идёт в `run_script`
+- [x] `main` восьми игр и пример в README: `Result<(), stapel::RunError>`
+- [x] после успешного прогона — одна строка с путём `report.json` в stdout; ошибка — ненулевой код
+- [x] проверка запуском: `cargo run -p clear-color -- --script <сценарий>`
 
 ### Task 10: Режим --window
 

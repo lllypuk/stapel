@@ -839,7 +839,7 @@ impl Game for Shooter {
     }
 }
 
-fn main() -> Result<(), stapel::EventLoopError> {
+fn main() -> Result<(), stapel::RunError> {
     stapel::run::<Shooter>(Config {
         title: "shooter".into(),
         size: (1280, 720),

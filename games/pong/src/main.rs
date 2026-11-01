@@ -221,7 +221,7 @@ impl Game for Pong {
     }
 }
 
-fn main() -> Result<(), stapel::EventLoopError> {
+fn main() -> Result<(), stapel::RunError> {
     stapel::run::<Pong>(Config {
         title: "pong".into(),
         size: (1280, 720),

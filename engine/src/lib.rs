@@ -10,6 +10,7 @@ pub mod audio;
 pub mod camera;
 /// Цель рендера без окна.
 pub mod canvas;
+mod cli;
 /// Фиксированный шаг симуляции.
 pub mod clock;
 /// Сущности, компоненты и отложенные команды.
@@ -110,8 +111,6 @@ pub use winit::keyboard::KeyCode;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 
-pub use winit::error::EventLoopError;
-
 /// Параметры окна и цикла для `run`.
 pub struct Config {
     /// Заголовок окна.
@@ -126,13 +125,26 @@ pub struct Config {
     pub pixel_perfect: bool,
 }
 
-/// Открывает окно и крутит игру `G` до закрытия.
+/// Открывает окно и крутит игру `G` до закрытия; с `--script <путь> [--out <каталог>]` прогоняет сценарий без окна и печатает путь `report.json`.
 ///
 /// # Errors
-/// Если не создался или упал цикл событий `winit`.
-pub fn run<G: Game>(config: Config) -> Result<(), EventLoopError> {
+/// Неверные аргументы, ошибка цикла событий или прогона сценария.
+pub fn run<G: Game>(config: Config) -> Result<(), RunError> {
     env_logger::init();
+    let args = cli::parse_args(std::env::args_os().skip(1))?;
+    if let Some(script) = &args.script {
+        if args.window {
+            return Err(RunError::Args("--window пока не поддержан".into()));
+        }
+        let report = cli::run_script_file::<G>(&config, script, args.out.as_deref())?;
+        #[expect(clippy::print_stdout, reason = "путь отчёта — результат команды")]
+        {
+            println!("{}", report.display());
+        }
+        return Ok(());
+    }
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Wait);
-    event_loop.run_app(&mut app::App::<G>::new(config))
+    event_loop.run_app(&mut app::App::<G>::new(config))?;
+    Ok(())
 }

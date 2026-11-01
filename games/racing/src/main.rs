@@ -838,7 +838,7 @@ impl Game for Racing {
     }
 }
 
-fn main() -> Result<(), stapel::EventLoopError> {
+fn main() -> Result<(), stapel::RunError> {
     stapel::run::<Racing>(Config {
         title: "racing".into(),
         size: (1280, 720),
