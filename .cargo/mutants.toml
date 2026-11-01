@@ -46,4 +46,8 @@ exclude_re = [
     "replace < with <= in base_grass$",
     # При нулевом газе обе ветки дают силу 0.
     "replace < with <= in drive_force$",
+    # Бит `COPY_DST` не пересекается с `MAP_READ`: `|` и `^` равны.
+    "replace \\| with \\^ in read_texture$",
+    # Адаптер тестов даёт `VIEW_FORMATS`, ветку «без флага» не воспроизвести; выбор формата проверен в linear_only_with_both_flags.
+    "replace Canvas::has_linear_view -> bool with true$",
 ]

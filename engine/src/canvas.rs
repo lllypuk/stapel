@@ -92,55 +92,67 @@ impl Canvas {
         }
     }
 
+    /// Есть ли линейный вид.
+    #[must_use]
+    pub fn has_linear_view(&self) -> bool {
+        self.linear
+    }
+
     /// RGBA построчно сверху, без выравнивания строк; альфа 255: кадр непрозрачен.
     ///
     /// # Panics
     /// Если не отобразился буфер чтения.
     #[must_use]
     pub fn read_rgba(&self, gpu: &Gpu) -> Vec<u8> {
-        let (w, h) = self.size;
-        let row = 4 * w;
-        let padded = row.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-        let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: u64::from(padded) * u64::from(h),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        encoder.copy_texture_to_buffer(
-            self.texture.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded),
-                    rows_per_image: Some(h),
-                },
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
-        gpu.queue.submit([encoder.finish()]);
-        readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("map readback"));
-        gpu.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .expect("poll");
-        let mapped = readback.get_mapped_range(..).expect("mapped range");
-        let mut out = Vec::with_capacity((row * h) as usize);
-        for line in mapped.chunks_exact(padded as usize) {
-            out.extend_from_slice(&line[..row as usize]);
-        }
+        let mut out = read_texture(gpu, &self.texture, self.size);
         for px in out.as_chunks_mut::<4>().0 {
             px[3] = 255;
         }
         out
     }
+}
+
+/// Байты 4-байтовой текстуры построчно сверху, без выравнивания строк.
+pub(crate) fn read_texture(gpu: &Gpu, texture: &wgpu::Texture, size: (u32, u32)) -> Vec<u8> {
+    let (w, h) = size;
+    let row = 4 * w;
+    let padded = row.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback"),
+        size: u64::from(padded) * u64::from(h),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded),
+                rows_per_image: Some(h),
+            },
+        },
+        wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+    );
+    gpu.queue.submit([encoder.finish()]);
+    readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("map readback"));
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("poll");
+    let mapped = readback.get_mapped_range(..).expect("mapped range");
+    let mut out = Vec::with_capacity((row * h) as usize);
+    for line in mapped.chunks_exact(padded as usize) {
+        out.extend_from_slice(&line[..row as usize]);
+    }
+    out
 }
 
 #[cfg(test)]

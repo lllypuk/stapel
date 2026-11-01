@@ -5,17 +5,22 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::surface::{Action, action, pick_format, pick_present_mode, split, surface_size};
-use crate::{Assets, FrameRenderer, Gfx, Gpu, Shown, UiFrame};
+use crate::{
+    Assets, CANVAS_FORMAT, Canvas, FrameRenderer, Gfx, Gpu, PresentPass, Shown, UiFrame,
+    linear_present,
+};
 
-/// Поверхность окна и GPU-устройство; кадр: 3D на всю поверхность, спрайты во вписанный вьюпорт, egui — поверх.
+/// Поверхность окна и GPU-устройство; кадр рисуется в `Canvas`: 3D на всё, спрайты во вписанный вьюпорт, egui поверх, затем вывод на поверхность.
 pub struct Renderer {
     window: Arc<Window>,
     instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
     gpu: Gpu,
     config: wgpu::SurfaceConfiguration,
+    canvas: Canvas,
     frame: FrameRenderer,
-    ui_format: wgpu::TextureFormat,
+    present: PresentPass,
+    present_linear: bool,
     sized: bool,
     occluded: bool,
 }
@@ -63,20 +68,30 @@ impl Renderer {
             )
         });
         config.present_mode = pick_present_mode(vsync, &caps.present_modes);
-        // egui смешивает в гамме: в `*Srgb` вид он рисует с искажёнными полутонами и warn на старте.
-        // Второй вид поверхности без `SURFACE_VIEW_FORMATS` (у wgpu — только Vulkan) валит configure.
+        let canvas = Canvas::new(&gpu, (1, 1));
         let views = adapter.get_downlevel_capabilities().flags;
-        let ui_format = if views.contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS) {
+        let present_linear = linear_present(
+            canvas.has_linear_view(),
+            views.contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS),
+        );
+        let present_format = if present_linear {
             config.format.remove_srgb_suffix()
         } else {
             config.format
         };
-        if ui_format != config.format {
-            config.view_formats = vec![ui_format];
+        if present_linear {
+            config.view_formats = vec![present_format];
         }
         log::info!("surface: {:?}, {:?}", config.format, config.present_mode);
         // Настоящий размер — в `resize` ниже: только он зажимает его под лимит текстур.
-        let frame = FrameRenderer::new(&gpu, config.format, ui_format, (1, 1), pixel_perfect);
+        let frame = FrameRenderer::new(
+            &gpu,
+            CANVAS_FORMAT,
+            canvas.ui_format(),
+            (1, 1),
+            pixel_perfect,
+        );
+        let present = PresentPass::new(&gpu, present_format);
 
         let mut renderer = Self {
             window,
@@ -84,8 +99,10 @@ impl Renderer {
             surface,
             gpu,
             config,
+            canvas,
             frame,
-            ui_format,
+            present,
+            present_linear,
             sized: false,
             occluded: false,
         };
@@ -113,6 +130,7 @@ impl Renderer {
             self.config.width = w;
             self.config.height = h;
             self.surface.configure(&self.gpu.device, &self.config);
+            self.canvas.resize(&self.gpu, (w, h));
             self.frame.resize((w, h));
         }
     }
@@ -181,20 +199,32 @@ impl Renderer {
         assets: &Assets,
         ui: &UiFrame,
     ) -> Shown {
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let ui_view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
-            format: Some(self.ui_format),
+        let target = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(if self.present_linear {
+                self.config.format.remove_srgb_suffix()
+            } else {
+                self.config.format
+            }),
             ..Default::default()
         });
         let mut encoder = self
             .gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let (shown, mut buffers) = self
-            .frame
-            .draw(&mut encoder, &view, &ui_view, gfx, assets, ui);
+        let (shown, mut buffers) = self.frame.draw(
+            &mut encoder,
+            self.canvas.view(),
+            self.canvas.ui_view(),
+            gfx,
+            assets,
+            ui,
+        );
+        let source = if self.present_linear {
+            self.canvas.ui_view()
+        } else {
+            self.canvas.view()
+        };
+        self.present.draw(&mut encoder, source, &target);
         buffers.push(encoder.finish());
         self.gpu.queue.submit(buffers);
         // На Wayland это ограничивает `RedrawRequested` частотой монитора, даже без vsync.

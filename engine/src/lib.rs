@@ -36,6 +36,8 @@ pub mod model;
 pub mod physics;
 /// Твёрдые тела в 3D.
 pub mod physics3d;
+/// Вывод `Canvas` на поверхность.
+pub mod present;
 /// Поверхность окна и рендер кадра.
 pub mod renderer;
 /// 3D-кадр и его раскрытие в инстансы.
@@ -84,6 +86,7 @@ pub use physics::{
 pub use physics3d::{
     ContactParams, Hit, RigidBody, StaticWorld, Triangle, box_inertia, solve_contacts,
 };
+pub use present::{PresentPass, linear_present};
 pub use renderer::{RenderError, Renderer};
 pub use scene::{
     DirectionalLight, ExpandedModels, Fog, MAX_JOINTS, MAX_LIGHTS, MeshBatch, MeshDraw,
