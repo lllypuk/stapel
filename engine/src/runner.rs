@@ -330,7 +330,9 @@ impl<G: Game> Runner<G> {
     }
 
     fn drive(&mut self, out: Option<&Path>) -> Result<(), RunError> {
-        while self.advance(out)?.is_some() {}
+        for _ in 0..=self.script.ticks {
+            self.advance(out)?;
+        }
         Ok(())
     }
 }
@@ -726,9 +728,11 @@ mod tests {
         let mut runner = Runner::<Toy>::new(&gpu, &config(60), &script).unwrap();
         assert_eq!(runner.tick(), 0);
         let mut seen = Vec::new();
-        while let Some(tick) = runner.advance(None).unwrap() {
+        for _ in 0..4 {
+            let tick = runner.advance(None).unwrap().unwrap();
             seen.push((tick, runner.tick()));
         }
+        assert_eq!(runner.advance(None).unwrap(), None);
         assert_eq!(seen, [(0, 0), (1, 1), (2, 2), (3, 3)]);
         assert_eq!(runner.canvas().size(), (64, 64));
         let ticks: Vec<_> = runner.finish().snapshots.iter().map(|s| s.tick).collect();

@@ -1,0 +1,56 @@
+# Координаты курсора — из снимков: «Ехать» на тике 5, стрелка у развилки на тиках 279 и 469.
+ticks = 500
+size = [1280, 720]
+snapshots = [0, 5, 9, 279, 285, 342, 472, 500]
+
+[[event]]
+tick = 6
+cursor = [958.0, 462.0]
+
+[[event]]
+tick = 7
+button_press = "Left"
+
+[[event]]
+tick = 8
+button_release = "Left"
+
+[[event]]
+tick = 10
+press = "KeyW"
+
+[[event]]
+tick = 279
+cursor = [420.0, 160.0]
+
+[[event]]
+tick = 280
+button_press = "Left"
+
+[[event]]
+tick = 281
+button_release = "Left"
+
+[[event]]
+tick = 340
+cursor = [510.0, 285.0]
+
+[[event]]
+tick = 341
+button_press = "Left"
+
+[[event]]
+tick = 342
+button_release = "Left"
+
+[[event]]
+tick = 469
+cursor = [550.0, 308.0]
+
+[[event]]
+tick = 470
+button_press = "Left"
+
+[[event]]
+tick = 471
+button_release = "Left"

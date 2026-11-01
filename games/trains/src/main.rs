@@ -370,6 +370,17 @@ impl Game for Trains {
         self.draw_hud(&mut ctx.gfx, &ctx.assets);
     }
 
+    fn report(&self) -> stapel::serde_json::Value {
+        let (placed, _) = self.train.cars_at(&self.track);
+        let head = placed[0].pos + placed[0].dir * self.train.cars[0].front;
+        stapel::serde_json::json!({
+            "head": [head.x, head.y],
+            "speed": self.train.speed,
+            "switches": self.track.switches.iter().map(|s| s.active).collect::<Vec<_>>(),
+            "depot_open": self.depot.open,
+        })
+    }
+
     fn ui(&mut self, ui: &egui::Context) {
         stapel::ui::set_font(ui, FONT_PATH);
         if self.depot.open {
@@ -470,14 +481,18 @@ impl Trains {
     }
 }
 
-fn main() -> Result<(), stapel::RunError> {
-    stapel::run::<Trains>(Config {
+fn config() -> Config {
+    Config {
         title: "trains".into(),
         size: (1280, 720),
         tick_hz: TICK_HZ,
         vsync: std::env::var("NO_VSYNC").as_deref() != Ok("1"),
         pixel_perfect: false,
-    })
+    }
+}
+
+fn main() -> Result<(), stapel::RunError> {
+    stapel::run::<Trains>(config())
 }
 
 #[cfg(test)]
@@ -853,6 +868,70 @@ mod tests {
                 layout(&g, &ctx, "  9 KM/H", vec2(-628.0, 324.0))
             );
         }
+    }
+
+    fn run_switch_script() -> Option<stapel::RunReport> {
+        let script = stapel::Script::parse(include_str!("../tests/scripts/switch.toml")).unwrap();
+        match stapel::run_script::<Trains>(&config(), &script, None) {
+            Ok(report) => Some(report),
+            Err(stapel::RunError::NoAdapter(e)) => {
+                assert!(
+                    std::env::var("REQUIRE_GPU").as_deref() != Ok("1"),
+                    "REQUIRE_GPU=1, but no GPU adapter: {e}"
+                );
+                eprintln!("SKIPPED: no GPU adapter: {e}");
+                None
+            }
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    #[test]
+    fn report_has_head_at_front_of_locomotive() {
+        let mut ctx = Context::default();
+        let g = Trains::init(&mut ctx);
+        let report = g.report();
+        let head = |i: usize| report["head"][i].as_f64().unwrap();
+        assert!((head(0) - 26.5).abs() < 1e-3 && (head(1) - 18.0).abs() < 1e-3);
+        assert_eq!(report["speed"], 0.0);
+        assert_eq!(report["depot_open"], true);
+        assert_eq!(
+            report["switches"].as_array().unwrap().len(),
+            g.track.switches.len()
+        );
+    }
+
+    #[test]
+    fn script_toggles_switch_and_reports_busy_under_train() {
+        let Some(report) = run_switch_script() else {
+            return;
+        };
+        let at = |tick| {
+            let s = report
+                .snapshots
+                .iter()
+                .find(|s| s.tick == tick)
+                .expect("снимок");
+            (s.report.clone(), s.texts.clone())
+        };
+        let (start, _) = at(5);
+        assert_eq!(start["depot_open"], true);
+        let (go, _) = at(9);
+        assert_eq!(
+            (go["depot_open"].clone(), go["speed"].clone()),
+            (false.into(), 0.0.into())
+        );
+        let (before, texts) = at(279);
+        let (toggled, toggled_texts) = at(285);
+        assert_eq!(before["switches"][0], 0);
+        assert_eq!(toggled["switches"][0], 1);
+        assert!(toggled["head"][0].as_f64() < before["head"][0].as_f64());
+        assert!(!texts.iter().chain(&toggled_texts).any(|t| t == BUSY));
+        let (back, _) = at(342);
+        assert_eq!(back["switches"], stapel::serde_json::json!([0, 0, 0, 0]));
+        let (busy, texts) = at(472);
+        assert!(texts.iter().any(|t| t == BUSY), "{texts:?}");
+        assert_eq!(busy["switches"], back["switches"]);
     }
 
     pub(crate) fn tick(g: &mut Trains, ctx: &mut Context) {

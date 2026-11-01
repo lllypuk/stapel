@@ -6,8 +6,6 @@ exclude_re = [
     "replace main -> ",
     " in main$",
     "replace run -> ",
-    # Заглушка `advance` с Ok(Some(_)) зацикливает `drive` и `run_script`: тест не падает, а висит до таймаута.
-    "replace Runner<G>::advance -> Result<Option<u32>, RunError> with Ok\\(Some\\(",
     # | и ^ на непересекающихся битовых флагах wgpu дают одно и то же.
     "replace \\| with \\^ in (GpuTextures::upload|instance_buffer|palette_buffer|Canvas::read_rgba)$",
     # Левый край твёрдой клетки ровно под центром — круг уже в стене, из корректного положения недостижимо.
