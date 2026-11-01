@@ -313,8 +313,8 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError>;
 - [x] дымовая проверка: `cargo new` в пустом каталоге вне репозитория, зависимость на запушенный rev ветки, игра из README, прогон сценария; пути автора нигде не нужны (rev 9ab1866 по https в пустом каталоге: `cargo build` 1 мин, `cargo test` зелёный, `--script` дал report.json и PNG, PNG просмотрен; шрифт README не давал — добавлено в README и AGENTS.md; каталог удалён)
 
 ### Task 13: Проверка перед холодной сессией
-- [ ] `make check`, `REQUIRE_GPU=1 REQUIRE_DISPLAY=1 cargo test -p trains --test replay`
-- [ ] ветка запушена, её rev закреплён для холодной сессии
+- [x] `make check` (exit=0), `REQUIRE_GPU=1 REQUIRE_DISPLAY=1 cargo test -p trains --test replay` (2 passed)
+- [x] ветка запушена, её rev закреплён для холодной сессии: `50397c35349c0f116e63e89932e0f2d767bbf0c9`
 
 ### Task 14: Холодная сессия
 - [ ] ⚠️ абзац идеи игры даёт пользователь
