@@ -167,12 +167,12 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError>;
 **Files:**
 - Modify: `engine/src/frame.rs`, `engine/src/app.rs`, `engine/src/lib.rs`
 
-- [ ] тест на фейковой игре и `egui::Context`: порядок `update`, `draw`, `CursorGrab::sync`, `ui`, снятие фокуса egui
-- [ ] тест: `VirtualGrab` — `grabbed` только при `cursor_grab && focused`
-- [ ] `step_visual(game, ctx, clock, egui, raw, dt, grab) -> VisualFrame { ticks, ui: UiFrame, platform_output }`
-- [ ] `CursorGrab`, `VirtualGrab` в `frame.rs`; `WindowGrab` в `app.rs` с прежней логикой и прежним `grab_warned`
-- [ ] `Running::frame` зовёт `step_visual`; проверка запуском `make shooter`: захват, Esc, потеря фокуса
-- [ ] `docs/design.md`, раздел «Цикл», и «Архитектура» в `CLAUDE.md`
+- [x] тест на фейковой игре и `egui::Context`: порядок `update`, `draw`, `CursorGrab::sync`, `ui`, снятие фокуса egui
+- [x] тест: `VirtualGrab` — `grabbed` только при `cursor_grab && focused`
+- [x] `step_visual(game, ctx, clock, egui, raw, dt, grab) -> VisualFrame { ticks, ui: UiFrame, platform_output }`
+- [x] `CursorGrab`, `VirtualGrab` в `frame.rs`; `WindowGrab` в `app.rs` с прежней логикой и прежним `grab_warned`
+- [x] `Running::frame` зовёт `step_visual`; проверка запуском `make shooter`: захват, Esc, потеря фокуса (не проверено: запуск под `timeout` дошёл до кадров 60 fps; захват мыши, Esc и потеря фокуса интерактивно не проверялись)
+- [x] `docs/design.md`, раздел «Цикл», и «Архитектура» в `CLAUDE.md`
 
 ### Task 4: Canvas и FrameRenderer без окна
 

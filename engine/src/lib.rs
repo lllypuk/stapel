@@ -57,7 +57,10 @@ pub use camera::{
 pub use clock::FixedClock;
 pub use ecs::{Commands, Entity, SparseSet, World};
 pub use egui;
-pub use frame::{Color, Context, Game, Gfx, Shown, ShownScene, Time, step_frame};
+pub use frame::{
+    Color, Context, CursorGrab, Game, Gfx, Shown, ShownScene, Time, VirtualGrab, VisualFrame,
+    step_frame, step_visual,
+};
 pub use glam::{IVec2, Mat3, Mat4, Quat, UVec2, Vec2, Vec3, ivec2, vec2, vec3};
 pub use gpu_textures::GpuTextures;
 pub use input::{Input, InputEvent, wheel_lines};

@@ -25,6 +25,7 @@ Cargo workspace: `engine/` (библиотека, крейт `stapel`), `games/<
 
 - `winit` владеет циклом событий, поэтому движок — фреймворк, а игра реализует трейт `Game { init, update, draw(alpha), ui }`; `ui` — панели egui раз в кадр, по умолчанию пусто.
 - Симуляция — фиксированный шаг 60 Гц, отрисовка — свободная, с интерполяцией по `alpha`. `dt` за кадр ограничен 250 мс.
+- Кадр до рендера — `step_visual`: `begin_pass`, `step_frame`, `CursorGrab::sync`, `Game::ui`, `Audio::flush`, снятие фокуса egui, `end_pass`, `tessellate`. Окно и (дальше) runner различаются источником `RawInput`, `dt` и адаптером захвата (`WindowGrab`, `VirtualGrab`). → тест `frame::visual_frame_keeps_order`
 - Порядок тика: ввод → логика → физика → события коллизий → отложенное удаление сущностей.
 
 ## Рендер

@@ -10,8 +10,8 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::audio::device;
 use crate::{
-    Config, Context, FixedClock, FrameStats, Game, InputEvent, RateCounter, Renderer, UiFrame,
-    Vec2, step_frame, ui, wheel_lines,
+    Config, Context, CursorGrab, FixedClock, FrameStats, Game, InputEvent, RateCounter, Renderer,
+    Vec2, step_visual, ui, wheel_lines,
 };
 
 /// Ниже 4 FPS симуляция замедляется, а не догоняет лавиной тиков.
@@ -194,24 +194,26 @@ impl<G: Game> Running<G> {
             self.last_reload = now;
             self.ctx.assets.reload_changed();
         }
-        self.egui
-            .begin_pass(self.egui_state.take_egui_input(&self.window));
-        let ticks = step_frame(&mut self.game, &mut self.ctx, &mut self.clock, dt);
-        for _ in 0..ticks {
+        let raw = self.egui_state.take_egui_input(&self.window);
+        let mut grab = WindowGrab {
+            window: &self.window,
+            warned: &mut self.grab_warned,
+        };
+        let frame = step_visual(
+            &mut self.game,
+            &mut self.ctx,
+            &mut self.clock,
+            &self.egui,
+            raw,
+            dt,
+            &mut grab,
+        );
+        for _ in 0..frame.ticks {
             self.tps.record(now);
         }
-        self.sync_grab();
-        self.game.ui(&self.egui);
-        self.ctx.audio.flush();
-        ui::release_focus(&self.egui);
-        let out = self.egui.end_pass();
         self.egui_state
-            .handle_platform_output(&self.window, out.platform_output);
-        let ui = UiFrame {
-            jobs: self.egui.tessellate(out.shapes, out.pixels_per_point),
-            textures: out.textures_delta,
-            pixels_per_point: out.pixels_per_point,
-        };
+            .handle_platform_output(&self.window, frame.platform_output);
+        let ui = frame.ui;
         match self
             .renderer
             .render(&self.ctx.gfx, &mut self.ctx.assets, ui)
@@ -254,15 +256,29 @@ impl<G: Game> Running<G> {
         self.resume_redraw();
     }
 
-    /// Приводит захват окна к `ctx.cursor_grab`; `Locked` на X11 нет — тогда `Confined`.
-    fn sync_grab(&mut self) {
-        let want = self.ctx.cursor_grab && self.ctx.focused;
-        if want == self.ctx.grabbed {
+    /// Цепочка кадров рвётся, пока поверхность недоступна; `Resized` и `Occluded` её возобновляют.
+    fn resume_redraw(&self) {
+        if self.renderer.is_available() {
+            self.window.request_redraw();
+        }
+    }
+}
+
+/// Захват курсора окна; `Locked` на X11 нет — тогда `Confined`.
+struct WindowGrab<'a> {
+    window: &'a Window,
+    warned: &'a mut bool,
+}
+
+impl CursorGrab for WindowGrab<'_> {
+    fn sync(&mut self, ctx: &mut Context) {
+        let want = ctx.cursor_grab && ctx.focused;
+        if want == ctx.grabbed {
             return;
         }
         if !want {
-            release_cursor(&self.window);
-            self.ctx.grabbed = false;
+            release_cursor(self.window);
+            ctx.grabbed = false;
             return;
         }
         let grab = self
@@ -272,22 +288,15 @@ impl<G: Game> Running<G> {
         match grab {
             Ok(()) => {
                 self.window.set_cursor_visible(false);
-                self.ctx.grabbed = true;
+                ctx.grabbed = true;
             }
             Err(e) => {
-                self.ctx.cursor_grab = false;
-                if !self.grab_warned {
-                    self.grab_warned = true;
+                ctx.cursor_grab = false;
+                if !*self.warned {
+                    *self.warned = true;
                     log::warn!("cursor grab: {e}");
                 }
             }
-        }
-    }
-
-    /// Цепочка кадров рвётся, пока поверхность недоступна; `Resized` и `Occluded` её возобновляют.
-    fn resume_redraw(&self) {
-        if self.renderer.is_available() {
-            self.window.request_redraw();
         }
     }
 }

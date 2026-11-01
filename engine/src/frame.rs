@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::{
     Assets, Audio, Camera2D, Camera3D, FixedClock, Font, Handle, Input, InputEvent, Ray, Scene,
-    Sprite, UVec2, Vec2, Viewport, screen_to_world, text,
+    Sprite, UVec2, UiFrame, Vec2, Viewport, screen_to_world, text, ui,
 };
 
 /// Линейный RGBA.
@@ -266,6 +266,60 @@ pub fn step_frame<G: Game>(
     ctx.gfx.scene = None;
     game.draw(ctx, clock.alpha());
     ticks
+}
+
+/// Привязка захвата курсора к `ctx.cursor_grab`; зовётся раз в кадр после `draw`.
+pub trait CursorGrab {
+    /// Приводит захват к `ctx.cursor_grab` и пишет `ctx.grabbed`.
+    fn sync(&mut self, ctx: &mut Context);
+}
+
+/// Захват без окна: удался, если игра просит и окно в фокусе.
+pub struct VirtualGrab;
+
+impl CursorGrab for VirtualGrab {
+    fn sync(&mut self, ctx: &mut Context) {
+        ctx.grabbed = ctx.cursor_grab && ctx.focused;
+    }
+}
+
+/// Итог `step_visual`.
+pub struct VisualFrame {
+    /// Число выполненных тиков.
+    pub ticks: u32,
+    /// Вывод egui для `Renderer::render`.
+    pub ui: UiFrame,
+    /// Курсор, буфер обмена и ссылки, которые просит egui.
+    pub platform_output: egui::PlatformOutput,
+}
+
+/// Кадр целиком до рендера: тики, `draw`, захват курсора, панели egui.
+/// Порядок обязателен: `ui` после `draw`, а снятие фокуса egui — до `end_pass`, иначе Space и Enter нажмут сфокусированную кнопку.
+pub fn step_visual<G: Game>(
+    game: &mut G,
+    ctx: &mut Context,
+    clock: &mut FixedClock,
+    egui: &egui::Context,
+    raw: egui::RawInput,
+    dt: Duration,
+    grab: &mut impl CursorGrab,
+) -> VisualFrame {
+    egui.begin_pass(raw);
+    let ticks = step_frame(game, ctx, clock, dt);
+    grab.sync(ctx);
+    game.ui(egui);
+    ctx.audio.flush();
+    ui::release_focus(egui);
+    let out = egui.end_pass();
+    VisualFrame {
+        ticks,
+        ui: UiFrame {
+            jobs: egui.tessellate(out.shapes, out.pixels_per_point),
+            textures: out.textures_delta,
+            pixels_per_point: out.pixels_per_point,
+        },
+        platform_output: out.platform_output,
+    }
 }
 
 #[cfg(test)]
@@ -597,5 +651,76 @@ mod tests {
         ctx.input.on_key(K, Pressed, false);
         ctx.on_focus(true);
         assert!(ctx.focused && ctx.cursor_grab && ctx.grabbed && ctx.input.is_down(K));
+    }
+
+    type Log = std::rc::Rc<std::cell::RefCell<Vec<&'static str>>>;
+
+    struct Ordered(Log);
+
+    impl Game for Ordered {
+        fn init(_: &mut Context) -> Self {
+            Self(Log::default())
+        }
+
+        fn update(&mut self, _: &mut Context) {
+            self.0.borrow_mut().push("update");
+        }
+
+        fn draw(&mut self, _: &mut Context, _: f32) {
+            self.0.borrow_mut().push("draw");
+        }
+
+        fn ui(&mut self, ui: &egui::Context) {
+            self.0.borrow_mut().push("ui");
+            ui.memory_mut(|m| m.request_focus(egui::Id::new("button")));
+        }
+    }
+
+    struct LogGrab(Log);
+
+    impl CursorGrab for LogGrab {
+        fn sync(&mut self, _: &mut Context) {
+            self.0.borrow_mut().push("grab");
+        }
+    }
+
+    #[test]
+    fn visual_frame_keeps_order() {
+        let mut clock = FixedClock::new(60, Duration::from_millis(250));
+        let mut ctx = Context::new(clock.step());
+        let mut game = Ordered::init(&mut ctx);
+        let egui = egui::Context::default();
+        let mut grab = LogGrab(game.0.clone());
+        let step = clock.step();
+        let mut frame = step_visual(
+            &mut game,
+            &mut ctx,
+            &mut clock,
+            &egui,
+            egui::RawInput::default(),
+            step * 2,
+            &mut grab,
+        );
+        assert_eq!(frame.ticks, 2);
+        frame.ui.textures.clear();
+        assert_eq!(*game.0.borrow(), ["update", "update", "draw", "grab", "ui"]);
+        assert!(!egui.egui_wants_keyboard_input());
+    }
+
+    #[test]
+    fn virtual_grab_needs_focus_and_request() {
+        let mut ctx = Context::default();
+        for (grab, focused, want) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (true, true, true),
+        ] {
+            ctx.cursor_grab = grab;
+            ctx.focused = focused;
+            ctx.grabbed = !want;
+            VirtualGrab.sync(&mut ctx);
+            assert_eq!(ctx.grabbed, want, "grab {grab} focused {focused}");
+        }
     }
 }
