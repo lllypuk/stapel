@@ -8,6 +8,47 @@ use winit::keyboard::KeyCode;
 /// Логических пикселей тачпада на строку колеса.
 pub const PIXELS_PER_LINE: f32 = 20.0;
 
+/// Событие ввода движка: общий вход окна и runner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InputEvent {
+    /// Клавиша.
+    Key {
+        /// Физическая клавиша.
+        code: KeyCode,
+        /// Нажата или отпущена.
+        state: ElementState,
+        /// Автоповтор удерживаемой клавиши.
+        repeat: bool,
+    },
+    /// Кнопка мыши.
+    Button {
+        /// Кнопка.
+        button: MouseButton,
+        /// Нажата или отпущена.
+        state: ElementState,
+    },
+    /// Курсор в физических пикселях окна; `None` — ушёл из окна.
+    Cursor(Option<Vec2>),
+    /// Сырой сдвиг мыши.
+    Motion(Vec2),
+    /// Колесо в строках.
+    Wheel(Vec2),
+    /// Окно получило или потеряло фокус.
+    Focus(bool),
+}
+
+/// Колесо или тачпад в строках; `scale` — физических пикселей на логический.
+#[must_use]
+pub fn wheel_lines(delta: MouseScrollDelta, scale: f32) -> Vec2 {
+    match delta {
+        MouseScrollDelta::LineDelta(x, y) => Vec2::new(x, y),
+        MouseScrollDelta::PixelDelta(p) => {
+            let p = p.cast::<f32>();
+            Vec2::new(p.x, p.y) / (scale * PIXELS_PER_LINE)
+        }
+    }
+}
+
 /// Удерживаемые кнопки одного устройства и их фронты с прошлого тика.
 struct Buttons<T> {
     down: HashSet<T>,
@@ -80,15 +121,9 @@ impl Input {
         self.mouse_delta += delta;
     }
 
-    /// Прокрутка колеса или тачпада; `scale` — физических пикселей на логический.
-    pub fn on_wheel(&mut self, delta: MouseScrollDelta, scale: f32) {
-        self.wheel += match delta {
-            MouseScrollDelta::LineDelta(x, y) => Vec2::new(x, y),
-            MouseScrollDelta::PixelDelta(p) => {
-                let p = p.cast::<f32>();
-                Vec2::new(p.x, p.y) / (scale * PIXELS_PER_LINE)
-            }
-        };
+    /// Прокрутка колеса или тачпада в строках.
+    pub fn on_wheel(&mut self, lines: Vec2) {
+        self.wheel += lines;
     }
 
     /// Окно не получит отпускания клавиш и кнопок, отпущенных вне его.
@@ -268,23 +303,30 @@ mod tests {
     #[test]
     fn wheel_sums_lines_and_pixels_until_end_tick() {
         let mut i = Input::default();
-        i.on_wheel(MouseScrollDelta::LineDelta(1.0, -2.0), 2.0);
-        i.on_wheel(
-            MouseScrollDelta::PixelDelta(PhysicalPosition::new(
-                f64::from(4.0 * PIXELS_PER_LINE),
-                f64::from(PIXELS_PER_LINE),
-            )),
-            2.0,
-        );
+        i.on_wheel(Vec2::new(1.0, -2.0));
+        i.on_wheel(Vec2::new(2.0, 0.5));
         assert_eq!(i.wheel(), Vec2::new(3.0, -1.5));
         i.end_tick();
         assert_eq!(i.wheel(), Vec2::ZERO);
     }
 
     #[test]
+    fn wheel_lines_converts_pixels_by_scale() {
+        assert_eq!(
+            wheel_lines(MouseScrollDelta::LineDelta(1.0, -2.0), 2.0),
+            Vec2::new(1.0, -2.0)
+        );
+        let pixels = MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+            f64::from(4.0 * PIXELS_PER_LINE),
+            f64::from(PIXELS_PER_LINE),
+        ));
+        assert_eq!(wheel_lines(pixels, 2.0), Vec2::new(2.0, 0.5));
+    }
+
+    #[test]
     fn focus_lost_clears_wheel() {
         let mut i = Input::default();
-        i.on_wheel(MouseScrollDelta::LineDelta(0.0, 1.0), 1.0);
+        i.on_wheel(Vec2::new(0.0, 1.0));
         i.focus_lost();
         assert_eq!(i.wheel(), Vec2::ZERO);
     }

@@ -10,8 +10,8 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::audio::device;
 use crate::{
-    Config, Context, FixedClock, FrameStats, Game, RateCounter, Renderer, UiFrame, Vec2,
-    step_frame, ui,
+    Config, Context, FixedClock, FrameStats, Game, InputEvent, RateCounter, Renderer, UiFrame,
+    Vec2, step_frame, ui, wheel_lines,
 };
 
 /// Ниже 4 FPS симуляция замедляется, а не догоняет лавиной тиков.
@@ -104,52 +104,66 @@ impl<G: Game> ApplicationHandler for App<G> {
             return;
         };
         let _ = r.egui_state.on_window_event(&r.window, &event);
-        if !ui::to_input(&event, ui::wants_pointer(&r.egui, r.ctx.input.cursor())) {
-            return;
-        }
-        match event {
+        let cursor = r.ctx.input.cursor();
+        let input = match event {
             WindowEvent::KeyboardInput {
                 event,
                 is_synthetic,
                 ..
-            } => {
+            } => match event.physical_key {
                 // X11 присылает фальшивые нажатия удерживаемых клавиш при возврате фокуса.
-                if is_synthetic {
-                    return;
-                }
-                if let PhysicalKey::Code(code) = event.physical_key {
-                    r.ctx.input.on_key(code, event.state, event.repeat);
-                }
+                PhysicalKey::Code(code) if !is_synthetic => Some(InputEvent::Key {
+                    code,
+                    state: event.state,
+                    repeat: event.repeat,
+                }),
+                _ => None,
+            },
+            WindowEvent::MouseInput { state, button, .. } => {
+                Some(InputEvent::Button { button, state })
             }
-            WindowEvent::MouseInput { state, button, .. } => r.ctx.input.on_button(button, state),
             WindowEvent::MouseWheel { delta, .. } => {
                 #[expect(clippy::cast_possible_truncation, reason = "масштаб окна — 1–4")]
-                r.ctx.input.on_wheel(delta, r.window.scale_factor() as f32);
+                let scale = r.window.scale_factor() as f32;
+                Some(InputEvent::Wheel(wheel_lines(delta, scale)))
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let p = position.cast::<f32>();
-                r.ctx.input.on_cursor(Some(Vec2::new(p.x, p.y)));
+                Some(InputEvent::Cursor(Some(Vec2::new(p.x, p.y))))
             }
-            WindowEvent::CursorLeft { .. } => r.ctx.input.on_cursor(None),
+            WindowEvent::CursorLeft { .. } => Some(InputEvent::Cursor(None)),
             WindowEvent::Focused(focused) => {
                 if !focused && r.ctx.grabbed {
                     release_cursor(&r.window);
                 }
-                r.ctx.on_focus(focused);
+                Some(InputEvent::Focus(focused))
             }
             WindowEvent::Resized(size) => {
                 r.renderer.resize(size);
                 // Старый вьюпорт перевёл бы курсор в мир по кадру другого размера.
                 r.ctx.shown = None;
                 r.resume_redraw();
+                None
             }
             WindowEvent::Occluded(occluded) => {
                 r.renderer.set_occluded(occluded);
                 r.resume_redraw();
+                None
             }
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::RedrawRequested => r.frame(event_loop),
-            _ => {}
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+                None
+            }
+            WindowEvent::RedrawRequested => {
+                r.frame(event_loop);
+                None
+            }
+            _ => None,
+        };
+        if let Some(input) = input
+            && ui::to_input(&input, ui::wants_pointer(&r.egui, cursor))
+        {
+            r.ctx.apply(input);
         }
     }
 
@@ -161,7 +175,8 @@ impl<G: Game> ApplicationHandler for App<G> {
                 clippy::cast_possible_truncation,
                 reason = "сдвиг за событие — единицы-сотни, f32 хватает"
             )]
-            r.ctx.on_mouse_motion(Vec2::new(x as f32, y as f32));
+            r.ctx
+                .apply(InputEvent::Motion(Vec2::new(x as f32, y as f32)));
         }
     }
 }

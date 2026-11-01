@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use crate::{
-    Assets, Audio, Camera2D, Camera3D, FixedClock, Font, Handle, Input, Ray, Scene, Sprite, UVec2,
-    Vec2, Viewport, screen_to_world, text,
+    Assets, Audio, Camera2D, Camera3D, FixedClock, Font, Handle, Input, InputEvent, Ray, Scene,
+    Sprite, UVec2, Vec2, Viewport, screen_to_world, text,
 };
 
 /// Линейный RGBA.
@@ -202,6 +202,22 @@ impl Context {
         Some(scene.camera.ray(ndc, size.x / size.y))
     }
 
+    /// Применяет событие ввода: `Input`, сдвиг по захвату или фокус.
+    pub fn apply(&mut self, event: InputEvent) {
+        match event {
+            InputEvent::Key {
+                code,
+                state,
+                repeat,
+            } => self.input.on_key(code, state, repeat),
+            InputEvent::Button { button, state } => self.input.on_button(button, state),
+            InputEvent::Cursor(pos) => self.input.on_cursor(pos),
+            InputEvent::Motion(delta) => self.on_mouse_motion(delta),
+            InputEvent::Wheel(lines) => self.input.on_wheel(lines),
+            InputEvent::Focus(focused) => self.on_focus(focused),
+        }
+    }
+
     /// Без захвата сдвиг — движение курсора по другим окнам и панелям, не обзор.
     pub(crate) fn on_mouse_motion(&mut self, delta: Vec2) {
         if self.focused && self.grabbed {
@@ -257,6 +273,7 @@ mod tests {
     use super::*;
     use crate::{KeyCode, Vec2, Vec3};
     use winit::event::ElementState::Pressed;
+    use winit::event::MouseButton;
 
     const K: KeyCode = KeyCode::Space;
 
@@ -547,6 +564,31 @@ mod tests {
         assert!(!ctx.focused && !ctx.cursor_grab && !ctx.grabbed);
         assert!(!ctx.input.is_down(K));
         assert_eq!(ctx.input.mouse_delta(), Vec2::ZERO);
+    }
+
+    #[test]
+    fn apply_routes_events_to_input_and_focus() {
+        let mut ctx = grabbed_ctx();
+        ctx.apply(InputEvent::Key {
+            code: K,
+            state: Pressed,
+            repeat: false,
+        });
+        ctx.apply(InputEvent::Button {
+            button: MouseButton::Left,
+            state: Pressed,
+        });
+        ctx.apply(InputEvent::Cursor(Some(D)));
+        ctx.apply(InputEvent::Motion(D));
+        ctx.apply(InputEvent::Wheel(D));
+        assert!(ctx.input.is_down(K) && ctx.input.mouse_down(MouseButton::Left));
+        assert_eq!(ctx.input.cursor(), Some(D));
+        assert_eq!(ctx.input.mouse_delta(), D);
+        assert_eq!(ctx.input.wheel(), D);
+        ctx.apply(InputEvent::Cursor(None));
+        assert_eq!(ctx.input.cursor(), None);
+        ctx.apply(InputEvent::Focus(false));
+        assert!(!ctx.focused && !ctx.input.is_down(K));
     }
 
     #[test]

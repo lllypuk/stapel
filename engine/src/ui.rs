@@ -2,7 +2,9 @@ use std::fs;
 use std::path::Path;
 
 use glam::Vec2;
-use winit::event::{ElementState, WindowEvent};
+use winit::event::ElementState;
+
+use crate::input::InputEvent;
 
 /// Вывод egui за кадр для `Renderer::render`.
 pub struct UiFrame {
@@ -14,15 +16,15 @@ pub struct UiFrame {
     pub pixels_per_point: f32,
 }
 
-/// Идёт ли событие окна в `Input`; egui получает все события независимо от ответа.
+/// Идёт ли событие в `Input`; egui получает все события независимо от ответа.
 /// Отпускание кнопки идёт всегда: иначе нажатая в мире кнопка, отпущенная над панелью, залипнет.
-pub(crate) fn to_input(event: &WindowEvent, wants_pointer: bool) -> bool {
+pub(crate) fn to_input(event: &InputEvent, wants_pointer: bool) -> bool {
     let pointer = matches!(
         event,
-        WindowEvent::MouseInput {
+        InputEvent::Button {
             state: ElementState::Pressed,
             ..
-        } | WindowEvent::MouseWheel { .. }
+        } | InputEvent::Wheel(_)
     );
     !(pointer && wants_pointer)
 }
@@ -76,14 +78,13 @@ pub fn set_font(ctx: &egui::Context, path: impl AsRef<Path>) {
 
 #[cfg(test)]
 mod tests {
-    use winit::dpi::PhysicalPosition;
-    use winit::event::{DeviceId, MouseButton, MouseScrollDelta, TouchPhase};
+    use winit::event::MouseButton;
+    use winit::keyboard::KeyCode;
 
     use super::*;
 
-    fn button(state: ElementState) -> WindowEvent {
-        WindowEvent::MouseInput {
-            device_id: DeviceId::dummy(),
+    fn button(state: ElementState) -> InputEvent {
+        InputEvent::Button {
             state,
             button: MouseButton::Left,
         }
@@ -97,11 +98,7 @@ mod tests {
 
     #[test]
     fn wheel_over_ui_does_not_reach_input() {
-        let wheel = WindowEvent::MouseWheel {
-            device_id: DeviceId::dummy(),
-            delta: MouseScrollDelta::LineDelta(0.0, 1.0),
-            phase: TouchPhase::Moved,
-        };
+        let wheel = InputEvent::Wheel(Vec2::new(0.0, 1.0));
         assert!(!to_input(&wheel, true));
         assert!(to_input(&wheel, false));
     }
@@ -112,18 +109,18 @@ mod tests {
         assert!(to_input(&button(ElementState::Released), false));
     }
 
-    // `KeyEvent` не собрать вне winit; правило фильтрует только нажатие кнопки, прочее идёт всегда.
     #[test]
     fn other_events_always_reach_input() {
         let events = [
-            WindowEvent::CursorMoved {
-                device_id: DeviceId::dummy(),
-                position: PhysicalPosition::new(1.0, 2.0),
+            InputEvent::Key {
+                code: KeyCode::KeyA,
+                state: ElementState::Pressed,
+                repeat: false,
             },
-            WindowEvent::CursorLeft {
-                device_id: DeviceId::dummy(),
-            },
-            WindowEvent::Focused(false),
+            InputEvent::Cursor(Some(Vec2::new(1.0, 2.0))),
+            InputEvent::Cursor(None),
+            InputEvent::Motion(Vec2::ONE),
+            InputEvent::Focus(false),
         ];
         for e in &events {
             assert!(to_input(e, true), "{e:?}");

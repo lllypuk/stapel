@@ -155,12 +155,12 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError>;
 **Files:**
 - Modify: `engine/src/ui.rs`, `engine/src/input.rs`, `engine/src/frame.rs`, `engine/src/app.rs`, `engine/src/lib.rs`
 
-- [ ] тест: `InputEvent` проходит те же случаи, что `to_input` сейчас: нажатие и колесо над панелью не доходят, отпускание и остальное доходят
-- [ ] `InputEvent { Key, Button, Cursor, Motion, Wheel, Focus }` на типах `KeyCode`, `MouseButton`, `ElementState`, колесо — строки
-- [ ] `ui::to_input` принимает `&InputEvent`
-- [ ] `Context::apply(event)` вместо ветвей в `window_event`
-- [ ] `app.rs` только переводит `WindowEvent`; фильтр `is_synthetic`, снятие захвата при потере фокуса, resize и `Occluded` остаются в склейке
-- [ ] `Input::on_wheel` принимает строки, перевод `MouseScrollDelta` — в склейке; тест перевода пикселей в строки сохранить
+- [x] тест: `InputEvent` проходит те же случаи, что `to_input` сейчас: нажатие и колесо над панелью не доходят, отпускание и остальное доходят
+- [x] `InputEvent { Key, Button, Cursor, Motion, Wheel, Focus }` на типах `KeyCode`, `MouseButton`, `ElementState`, колесо — строки
+- [x] `ui::to_input` принимает `&InputEvent`
+- [x] `Context::apply(event)` вместо ветвей в `window_event`
+- [x] `app.rs` только переводит `WindowEvent`; фильтр `is_synthetic`, снятие захвата при потере фокуса, resize и `Occluded` остаются в склейке
+- [x] `Input::on_wheel` принимает строки, перевод `MouseScrollDelta` — в склейке; тест перевода пикселей в строки сохранить
 
 ### Task 3: Общий шаг кадра
 
