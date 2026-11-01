@@ -125,7 +125,7 @@ pub struct Config {
     pub pixel_perfect: bool,
 }
 
-/// Открывает окно и крутит игру `G` до закрытия; с `--script <путь> [--out <каталог>]` прогоняет сценарий без окна и печатает путь `report.json`.
+/// Открывает окно и крутит игру `G` до закрытия; с `--script <путь> [--out <каталог>] [--window]` прогоняет сценарий без окна или, с `--window`, в окне и печатает путь `report.json`.
 ///
 /// # Errors
 /// Неверные аргументы, ошибка цикла событий или прогона сценария.
@@ -133,10 +133,7 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError> {
     env_logger::init();
     let args = cli::parse_args(std::env::args_os().skip(1))?;
     if let Some(script) = &args.script {
-        if args.window {
-            return Err(RunError::Args("--window пока не поддержан".into()));
-        }
-        let report = cli::run_script_file::<G>(&config, script, args.out.as_deref())?;
+        let report = cli::run_script_file::<G>(&config, script, args.out.as_deref(), args.window)?;
         #[expect(clippy::print_stdout, reason = "путь отчёта — результат команды")]
         {
             println!("{}", report.display());

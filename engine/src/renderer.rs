@@ -157,19 +157,49 @@ impl Renderer {
         shown
     }
 
+    /// Выводит внешний `Canvas` на поверхность; `false` — кадр не показан.
+    ///
+    /// # Errors
+    /// Ошибка валидации поверхности.
+    pub fn present_canvas(&mut self, canvas: &Canvas) -> Result<bool, RenderError> {
+        let shown = self.with_frame(|this, frame| {
+            let target = this.target_view(&frame);
+            let mut encoder = this
+                .gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            this.present
+                .draw(&mut encoder, this.source(canvas), &target);
+            this.submit(frame, Vec::new(), encoder);
+        })?;
+        Ok(shown.is_some())
+    }
+
+    /// Устройство, под которое создана поверхность.
+    pub fn gpu(&self) -> &Gpu {
+        &self.gpu
+    }
+
     fn present(
         &mut self,
         gfx: &Gfx,
         assets: &Assets,
         ui: &UiFrame,
     ) -> Result<Option<Shown>, RenderError> {
+        self.with_frame(|this, frame| this.draw(frame, gfx, assets, ui))
+    }
+
+    fn with_frame<T>(
+        &mut self,
+        draw: impl FnOnce(&mut Self, wgpu::SurfaceTexture) -> T,
+    ) -> Result<Option<T>, RenderError> {
         if !self.is_available() {
             return Ok(None);
         }
         let (frame, status) = split(self.surface.get_current_texture());
         match (action(&status), frame) {
             (Action::Draw { reconfigure }, Some(frame)) => {
-                let shown = self.draw(frame, gfx, assets, ui);
+                let shown = draw(self, frame);
                 if reconfigure {
                     self.surface.configure(&self.gpu.device, &self.config);
                 }
@@ -192,39 +222,31 @@ impl Renderer {
         }
     }
 
-    fn draw(
-        &mut self,
-        frame: wgpu::SurfaceTexture,
-        gfx: &Gfx,
-        assets: &Assets,
-        ui: &UiFrame,
-    ) -> Shown {
-        let target = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+    fn target_view(&self, frame: &wgpu::SurfaceTexture) -> wgpu::TextureView {
+        frame.texture.create_view(&wgpu::TextureViewDescriptor {
             format: Some(if self.present_linear {
                 self.config.format.remove_srgb_suffix()
             } else {
                 self.config.format
             }),
             ..Default::default()
-        });
-        let mut encoder = self
-            .gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let (shown, mut buffers) = self.frame.draw(
-            &mut encoder,
-            self.canvas.view(),
-            self.canvas.ui_view(),
-            gfx,
-            assets,
-            ui,
-        );
-        let source = if self.present_linear {
-            self.canvas.ui_view()
+        })
+    }
+
+    fn source<'a>(&self, canvas: &'a Canvas) -> &'a wgpu::TextureView {
+        if self.present_linear {
+            canvas.ui_view()
         } else {
-            self.canvas.view()
-        };
-        self.present.draw(&mut encoder, source, &target);
+            canvas.view()
+        }
+    }
+
+    fn submit(
+        &self,
+        frame: wgpu::SurfaceTexture,
+        mut buffers: Vec<wgpu::CommandBuffer>,
+        encoder: wgpu::CommandEncoder,
+    ) {
         buffers.push(encoder.finish());
         self.gpu.queue.submit(buffers);
         // На Wayland это ограничивает `RedrawRequested` частотой монитора, даже без vsync.
@@ -235,6 +257,31 @@ impl Renderer {
             self.window.pre_present_notify();
         }
         self.gpu.queue.present(frame);
+    }
+
+    fn draw(
+        &mut self,
+        frame: wgpu::SurfaceTexture,
+        gfx: &Gfx,
+        assets: &Assets,
+        ui: &UiFrame,
+    ) -> Shown {
+        let target = self.target_view(&frame);
+        let mut encoder = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let (shown, buffers) = self.frame.draw(
+            &mut encoder,
+            self.canvas.view(),
+            self.canvas.ui_view(),
+            gfx,
+            assets,
+            ui,
+        );
+        self.present
+            .draw(&mut encoder, self.source(&self.canvas), &target);
+        self.submit(frame, buffers, encoder);
         shown
     }
 }

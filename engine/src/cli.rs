@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::{Config, Game, RunError, Script, run_script};
+use crate::{Config, Game, RunError, RunReport, Script, run_script};
 
 /// Разобранные аргументы командной строки игры.
 #[derive(Debug, Default, PartialEq)]
@@ -37,11 +37,12 @@ fn value(args: &mut impl Iterator<Item = OsString>, flag: &str) -> Result<PathBu
     }
 }
 
-/// Читает сценарий, прогоняет его и пишет `report.json` рядом со снимками; возвращает путь отчёта.
+/// Читает сценарий, прогоняет его (с `window` — в окне) и пишет `report.json` рядом со снимками; возвращает путь отчёта.
 pub(crate) fn run_script_file<G: Game>(
     config: &Config,
     script: &Path,
     out: Option<&Path>,
+    window: bool,
 ) -> Result<PathBuf, RunError> {
     let script_text = fs::read_to_string(script)?;
     let parsed = Script::parse(&script_text)?;
@@ -49,9 +50,18 @@ pub(crate) fn run_script_file<G: Game>(
         || Path::new("target/stapel-run").join(script.file_stem().unwrap_or(script.as_os_str())),
         Path::to_path_buf,
     );
-    let report = run_script::<G>(config, &parsed, Some(&dir))?;
+    let report = if window {
+        crate::app::run_script_window::<G>(config, &parsed, &dir)?
+    } else {
+        run_script::<G>(config, &parsed, Some(&dir))?
+    };
+    write_report(&dir, &report)
+}
+
+/// Пишет `report.json` в `dir`; возвращает его путь.
+pub(crate) fn write_report(dir: &Path, report: &RunReport) -> Result<PathBuf, RunError> {
     let path = dir.join("report.json");
-    let json = serde_json::to_string_pretty(&report).map_err(std::io::Error::from)?;
+    let json = serde_json::to_string_pretty(report).map_err(std::io::Error::from)?;
     fs::write(&path, json)?;
     Ok(path)
 }
@@ -139,7 +149,7 @@ mod tests {
             pixel_perfect: false,
         };
         fs::write(&script, "ticks = 2\nsnapshots = [0, 1]\n").unwrap();
-        let report = run_script_file::<Blank>(&config, &script, Some(&out)).unwrap();
+        let report = run_script_file::<Blank>(&config, &script, Some(&out), false).unwrap();
         assert_eq!(report, out.join("report.json"));
         for name in ["tick-000000.png", "tick-000001.png", "tick-000002.png"] {
             assert!(out.join(name).is_file(), "{name}");
@@ -149,14 +159,14 @@ mod tests {
         assert_eq!(first["ticks"], 2);
 
         fs::write(&script, "ticks = 1\n").unwrap();
-        run_script_file::<Blank>(&config, &script, Some(&out)).unwrap();
+        run_script_file::<Blank>(&config, &script, Some(&out), false).unwrap();
         let second: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
         assert_eq!(second["ticks"], 1);
         assert_eq!(second["snapshots"].as_array().unwrap().len(), 1);
 
         assert!(matches!(
-            run_script_file::<Blank>(&config, &dir.join("none.toml"), Some(&out)),
+            run_script_file::<Blank>(&config, &dir.join("none.toml"), Some(&out), false),
             Err(RunError::Io(_))
         ));
         fs::remove_dir_all(&dir).unwrap();

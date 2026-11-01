@@ -1,17 +1,18 @@
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
+use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{DeviceEvent, DeviceId, WindowEvent};
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::audio::device;
 use crate::{
     Config, Context, CursorGrab, FixedClock, FrameStats, Game, InputEvent, RateCounter, Renderer,
-    Vec2, step_visual, ui, wheel_lines,
+    RunError, RunReport, Runner, Script, Vec2, step_visual, ui, wheel_lines,
 };
 
 /// Ниже 4 FPS симуляция замедляется, а не догоняет лавиной тиков.
@@ -318,4 +319,100 @@ fn clock_seed() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(1, |d| d.as_nanos() as u64)
+}
+
+/// Прогоняет сценарий в окне: `Runner` рисует в свой `Canvas`, `Renderer` выводит его на поверхность.
+pub(crate) fn run_script_window<G: Game>(
+    config: &Config,
+    script: &Script,
+    out: &Path,
+) -> Result<RunReport, RunError> {
+    let event_loop = EventLoop::new()?;
+    event_loop.set_control_flow(ControlFlow::Wait);
+    let mut app = ScriptApp::<G> {
+        config,
+        script,
+        out,
+        running: None,
+        result: None,
+    };
+    event_loop.run_app(&mut app)?;
+    app.result.unwrap_or(Err(RunError::Closed { tick: 0 }))
+}
+
+struct ScriptApp<'a, G: Game> {
+    config: &'a Config,
+    script: &'a Script,
+    out: &'a Path,
+    running: Option<(Arc<Window>, Renderer, Runner<G>)>,
+    result: Option<Result<RunReport, RunError>>,
+}
+
+impl<G: Game> ApplicationHandler for ScriptApp<'_, G> {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.running.is_some() {
+            return;
+        }
+        let (w, h) = self.script.size.unwrap_or(self.config.size);
+        let attrs = Window::default_attributes()
+            .with_title(self.config.title.clone())
+            .with_inner_size(PhysicalSize::new(w, h));
+        let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
+        let renderer = Renderer::new(window.clone(), self.config.vsync, self.config.pixel_perfect);
+        match Runner::<G>::new(renderer.gpu(), self.config, self.script) {
+            Ok(runner) => {
+                window.request_redraw();
+                self.running = Some((window, renderer, runner));
+            }
+            Err(e) => self.stop(event_loop, Err(e)),
+        }
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        let Some((window, renderer, runner)) = self.running.as_mut() else {
+            return;
+        };
+        match event {
+            WindowEvent::Resized(size) => {
+                renderer.resize(size);
+                resume_redraw(window, renderer);
+            }
+            WindowEvent::Occluded(occluded) => {
+                renderer.set_occluded(occluded);
+                resume_redraw(window, renderer);
+            }
+            WindowEvent::CloseRequested => {
+                let tick = runner.tick();
+                self.stop(event_loop, Err(RunError::Closed { tick }));
+            }
+            WindowEvent::RedrawRequested => match runner.advance(Some(self.out)) {
+                Ok(Some(_)) => match renderer.present_canvas(runner.canvas()) {
+                    Ok(_) => resume_redraw(window, renderer),
+                    Err(e) => {
+                        let e = std::io::Error::other(e);
+                        self.stop(event_loop, Err(e.into()));
+                    }
+                },
+                Ok(None) => {
+                    let (_, _, runner) = self.running.take().expect("running");
+                    self.stop(event_loop, Ok(runner.finish()));
+                }
+                Err(e) => self.stop(event_loop, Err(e)),
+            },
+            _ => {}
+        }
+    }
+}
+
+impl<G: Game> ScriptApp<'_, G> {
+    fn stop(&mut self, event_loop: &ActiveEventLoop, result: Result<RunReport, RunError>) {
+        self.result = Some(result);
+        event_loop.exit();
+    }
+}
+
+fn resume_redraw(window: &Window, renderer: &Renderer) {
+    if renderer.is_available() {
+        window.request_redraw();
+    }
 }

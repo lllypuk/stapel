@@ -62,6 +62,11 @@ pub enum RunError {
         /// Тик снимка.
         tick: u32,
     },
+    /// Окно закрыли раньше последнего тика.
+    Closed {
+        /// Последний выполненный тик.
+        tick: u32,
+    },
     /// Ошибка файловой системы.
     Io(std::io::Error),
     /// Ошибка записи PNG.
@@ -81,6 +86,7 @@ impl fmt::Display for RunError {
                 size.0, size.1
             ),
             Self::Report { tick } => write!(f, "тик {tick}: Game::report вернул не объект"),
+            Self::Closed { tick } => write!(f, "окно закрыто на тике {tick}, сценарий не кончился"),
             Self::Io(e) => write!(f, "файл: {e}"),
             Self::Png(e) => write!(f, "PNG: {e}"),
         }
@@ -273,13 +279,34 @@ impl<G: Game> Runner<G> {
         }
     }
 
-    fn drive(&mut self, out: Option<&Path>) -> Result<(), RunError> {
-        for _ in 0..=self.script.ticks {
-            let tick = self.step().expect("сценарий кончился раньше ticks");
-            if self.script.snapshots.binary_search(&tick).is_ok() {
-                self.snapshot(out)?;
-            }
+    /// Кадр, в который рисует `step`.
+    #[must_use]
+    pub fn canvas(&self) -> &Canvas {
+        &self.canvas
+    }
+
+    /// Последний выполненный тик; до первого `step` — 0.
+    #[must_use]
+    pub fn tick(&self) -> u32 {
+        self.tick.unwrap_or(0)
+    }
+
+    /// `step` и снимок, если тик в списке сценария; `None` — сценарий кончился.
+    ///
+    /// # Errors
+    /// Ошибки `snapshot`.
+    pub fn advance(&mut self, out: Option<&Path>) -> Result<Option<u32>, RunError> {
+        let Some(tick) = self.step() else {
+            return Ok(None);
+        };
+        if self.script.snapshots.binary_search(&tick).is_ok() {
+            self.snapshot(out)?;
         }
+        Ok(Some(tick))
+    }
+
+    fn drive(&mut self, out: Option<&Path>) -> Result<(), RunError> {
+        while self.advance(out)?.is_some() {}
         Ok(())
     }
 }
@@ -664,6 +691,32 @@ mod tests {
         assert_eq!(report.ticks, 5);
         assert_eq!(report.snapshots[0].texts, ["hud"]);
         assert_eq!(report.snapshots[0].png, None);
+    }
+
+    #[test]
+    fn advance_snapshots_listed_ticks_and_ends_with_none() {
+        let Some(gpu) = gpu_full() else {
+            return;
+        };
+        let script = Script::parse("ticks = 3\nsnapshots = [1]").unwrap();
+        let mut runner = Runner::<Toy>::new(&gpu, &config(60), &script).unwrap();
+        assert_eq!(runner.tick(), 0);
+        let mut seen = Vec::new();
+        while let Some(tick) = runner.advance(None).unwrap() {
+            seen.push((tick, runner.tick()));
+        }
+        assert_eq!(seen, [(0, 0), (1, 1), (2, 2), (3, 3)]);
+        assert_eq!(runner.canvas().size(), (64, 64));
+        let ticks: Vec<_> = runner.finish().snapshots.iter().map(|s| s.tick).collect();
+        assert_eq!(ticks, [1, 3]);
+    }
+
+    #[test]
+    fn closed_error_names_tick() {
+        assert_eq!(
+            RunError::Closed { tick: 4 }.to_string(),
+            "окно закрыто на тике 4, сценарий не кончился"
+        );
     }
 
     #[test]

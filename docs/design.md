@@ -47,6 +47,9 @@ Cargo workspace: `engine/` (библиотека, крейт `stapel`), `games/<
 - Клавиши egui берутся по имени `KeyCode` (`KeyA` → `A`, `Digit1` → `Num1`); модификаторов и `Text` нет, ввод текста в панели сценарием не проверить.
 - `Game::report` — JSON-объект; иное — `RunError::Report` с тиком. `texts` в отчёте — строки, отправленные в `draw_text`, а не видимые.
 
+- `--window` — тот же `Runner`: `ScriptApp` (`app.rs`) на каждом `RedrawRequested` делает `Runner::advance`, `Renderer::present_canvas` выводит `Canvas` сценария на поверхность своего размера. События окна, кроме закрытия и resize, игнорируются; закрытие до последнего тика — `RunError::Closed`. `Gpu` создаёт `Renderer` под поверхность, `Runner` берёт его.
+- Цепочка кадров рвётся, пока композитор не даёт кадров (в окне на скрытом столе Wayland); прогон тогда стоит, артефакты не пишутся дальше. Проверено на X11 (`WAYLAND_DISPLAY` снят).
+
 ## 3D
 
 - Проходы кадра: 3D-мир (`Clear` цветом `clear_color` и глубины, на всю поверхность, aspect поверхности) → слой оружия `Scene::viewmodel` (цвет `Load`, глубина `Clear`) → спрайты с `Load` поверх (HUD — `Camera2D` с letterbox) → egui. Без `gfx.scene` спрайты сами чистят кадр — 2D-игры не меняются.
