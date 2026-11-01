@@ -97,7 +97,9 @@ mod tests {
     fn space_cycles_color() {
         let script = Script::parse(include_str!("../scripts/cycle.toml")).unwrap();
         match run_script::<ClearColor>(&config(), &script, None) {
-            Err(RunError::NoAdapter(why)) => eprintln!("SKIPPED: {why}"),
+            Err(RunError::NoAdapter(why)) if std::env::var_os("REQUIRE_GPU").is_none() => {
+                eprintln!("SKIPPED: {why}")
+            }
             Err(e) => panic!("{e}"),
             Ok(run) => assert_eq!(run.snapshots[1].report["index"], 1),
         }
