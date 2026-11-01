@@ -440,6 +440,10 @@ button_release = "Left"
             "ticks = 4\n[[event]]\ntick = 3\npress = \"KeyW\"\n[[event]]\ntick = 3\nrelease = \"KeyA\"\n[[event]]\ntick = 4\nrelease = \"KeyW\"",
         )
         .unwrap();
+        Script::parse(
+            "ticks = 4\n[[event]]\ntick = 3\nbutton_press = \"Left\"\n[[event]]\ntick = 3\nbutton_release = \"Right\"",
+        )
+        .unwrap();
     }
 
     #[test]
