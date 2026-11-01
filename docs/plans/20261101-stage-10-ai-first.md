@@ -331,12 +331,12 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError>;
 **Files:**
 - Modify: `docs/agents/AGENTS.md`, `README.md`
 
-- [ ] раздел «Assets»: символ вне ASCII 32..=126 рисуется как `?`, в `texts` строка остаётся исходной; кириллица недоступна, HUD по-английски
-- [ ] раздел «Game contract»: прозрачность — `Color { a, ..color }`; ширина строки — `ctx.assets.font(h).width(s)` в пикселях растеризации, умножать на `scale` `draw_text`
-- [ ] раздел «Setup»: где лежат исходники движка при git-зависимости (`~/.cargo/git/checkouts/stapel-*/`), читать их только оттуда, не клонировать и не выходить из каталога игры
-- [ ] README: те же строки в разделе про игру
-- [ ] проверка: фразы о `?`, `Color::a` и `Font::width` сверены с `engine/src/text.rs` и `frame.rs`; копия `AGENTS.md` в `cold/tower-defense` обновляется при итоговой приёмке (задача 23)
-- [ ] тест не нужен: правка документации; `make check`
+- [x] раздел «Assets»: символ вне ASCII 32..=126 рисуется как `?`, в `texts` строка остаётся исходной; кириллица недоступна, HUD по-английски
+- [x] раздел «Game contract»: прозрачность — `Color { a, ..color }`; ширина строки — `ctx.assets.font(h).width(s)` в пикселях растеризации, умножать на `scale` `draw_text`
+- [x] раздел «Setup»: где лежат исходники движка при git-зависимости (`~/.cargo/git/checkouts/stapel-*/`), читать их только оттуда, не клонировать и не выходить из каталога игры
+- [x] README: те же строки в разделе про игру
+- [x] проверка: фразы о `?`, `Color::a` и `Font::width` сверены с `engine/src/text.rs` и `frame.rs`; копия `AGENTS.md` в `cold/tower-defense` обновляется при итоговой приёмке (задача 23)
+- [x] тест не нужен: правка документации; `make check`
 
 ### Task 16: ➕ AGENTS.md: подбор сценария без PNG
 Из той же записи о 830 PNG за прогон.

@@ -6,6 +6,7 @@ You build a small game on Stapel, a Rust game engine, from a short idea. You can
 
 - Linux, Vulkan GPU (a software adapter such as lavapipe is enough). `cargo new <game>`, then in `Cargo.toml`: `stapel = { git = "https://github.com/lllypuk/stapel", rev = "<commit you were given>" }`. The game is its own crate with its own `Cargo.lock`.
 - Run everything from the crate root: asset paths and `target/` are relative to the working directory.
+- With the git dependency the engine source is in `~/.cargo/git/checkouts/stapel-*/`. Read it only there; do not clone the repository or leave the game's directory.
 
 ## Game contract
 
@@ -46,12 +47,14 @@ fn main() -> Result<(), stapel::RunError> {
 - Randomness only from `ctx.seed` (set before `init`); wall-clock time and `HashMap` iteration order make runs differ.
 - `fn ui(&mut self, ui: &stapel::egui::Context)` draws egui panels after `draw`. 3D: set `ctx.gfx.scene = Some(Scene { .. })` in `draw`; read the engine source for it.
 - `ctx.time.step` is the tick length. Do not use real time in `update`.
+- Transparency: `Color { a: 0.5, ..color }`. Text width: `ctx.assets.font(handle).width(s)` is in rasterisation pixels; multiply by the `scale` passed to `draw_text`.
 
 ## Assets
 
 - Load in `init` through `ctx.assets`: `load_texture` (PNG), `load_font(path, px)` (TTF), `load_sound` (WAV, OGG), `load_model` (GLB). The same path returns the same handle.
 - A missing or broken file does not fail: a texture becomes a checkerboard, a font draws solid boxes, and only a `warn` log tells you. Run with `RUST_LOG=warn` and read stderr.
 - Keep files in the crate, e.g. `assets/`. Text needs a TTF: JetBrains Mono (SIL OFL) is at `https://github.com/lllypuk/stapel/raw/main/assets/fonts/JetBrainsMono-Regular.ttf`, licence in `OFL.txt` next to it.
+- Text covers ASCII 32..=126 only: any other character draws as `?` (and is measured as `?`), while `texts` in the report keeps the original string. Cyrillic is unavailable, so write HUD text in English.
 - Use only assets you may redistribute. CC0 sources: kenney.nl/assets (sprites, UI, 3D, audio), quaternius.com, kaylousberg.itch.io, opengameart.org (check each file), freesound.org (CC0 or CC-BY per sound), fonts.google.com (OFL). CC-BY needs the author named. Record every file, source and licence in `assets/CREDITS.md`. Prefer solid-colour sprites to unlicensed art.
 
 ## Scenarios
