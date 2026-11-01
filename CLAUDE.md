@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Учебный движок на Rust (`engine/`, крейт `stapel`) и игры-проверки на нём (`games/*`). Платформа — Linux (Wayland, X11), GPU через Vulkan. Решения, их причины и список молчаливых поломок — `docs/design.md`; планы этапов — `docs/plans/` (выполненные — в `completed/`); источники ассетов и их лицензии — `docs/assets.md`.
+Учебный движок на Rust (`engine/`, крейт `stapel`) и игры-проверки на нём (`games/*`). Платформа — Linux (Wayland, X11), GPU через Vulkan. Решения, их причины и список молчаливых поломок — `docs/design.md`; планы этапов — `docs/plans/` (выполненные — в `completed/`); источники ассетов и их лицензии — `docs/assets.md`. Основной remote — GitHub (`origin`, `github.com/lllypuk/stapel`); GitLab (`gitlab`) — зеркало с CI, `git push origin` пушит в оба.
 
 ## Команды
 
