@@ -37,6 +37,16 @@ Cargo workspace: `engine/` (библиотека, крейт `stapel`), `games/<
 - Пиксель-арт (`Config::pixel_perfect`) — `letterbox_pixel`: масштаб `floor(min(W/w, H/h))`, отступы — целая половина остатка; окно меньше мира — дробный `letterbox`. Камера и края всех спрайтов — на целых мировых пикселях: позиция `round(lerp(prev, cur, alpha))` с одним `alpha` на кадр, центр спрайта нечётного размера — на `.5`. Тогда швов атласа нет без экструзии тайлов.
 - Кадр рисуется в промежуточную `Canvas` (`Rgba8UnormSrgb`), `PresentPass` копирует её на поверхность: окно и runner делят один путь рисования. Цена замера (`NO_VSYNC=1`, release, без ввода, медиана; до → после): racing (гараж) 1589 → 1538 fps (+0,021 мс на кадр), shooter (старт) 1679 → 1454 fps (+0,092 мс на кадр, падение 13,4%); адаптер тот же, AMD Radeon Graphics (RADV RENOIR), Vulkan.
 
+## Runner
+
+- `Runner<G>` (`engine/src/runner.rs`) проигрывает `Script` без окна: по одному виртуальному кадру на тик через `step_visual`, `VirtualGrab` и `FrameRenderer` в `Canvas`. `run_script` — офскрин-обёртка: `Gpu::headless`, снимки по `script.snapshots`, PNG в `out`.
+- Тик 0 — начальный кадр с `dt = 0`: `update` не вызывается, но есть `draw`, `ui`, рендер и `shown`, без которых нет геометрии панелей для `wants_pointer`. Тик N ≥ 1: события тика по порядку файла, затем кадр с ровно одним `update`. Снимок N — после рендера кадра N.
+- Часы — `FixedClock::new(tick_hz, Duration::MAX)` и `dt = clock.step()`: один `update` на кадр при любой частоте.
+- Начальное состояние: фокус есть (в `Context` и `RawInput` одинаково), курсора нет, захвата нет. Захват, запрошенный в `update` тика N, виден с N+1.
+- Для события порядок как в окне: событие в очередь egui, `wants_pointer` по прошлому проходу и курсору до события, затем `Input`. Координаты `Input` физические, в egui делятся на `scale` один раз.
+- Клавиши egui берутся по имени `KeyCode` (`KeyA` → `A`, `Digit1` → `Num1`); модификаторов и `Text` нет, ввод текста в панели сценарием не проверить.
+- `Game::report` — JSON-объект; иное — `RunError::Report` с тиком. `texts` в отчёте — строки, отправленные в `draw_text`, а не видимые.
+
 ## 3D
 
 - Проходы кадра: 3D-мир (`Clear` цветом `clear_color` и глубины, на всю поверхность, aspect поверхности) → слой оружия `Scene::viewmodel` (цвет `Load`, глубина `Clear`) → спрайты с `Load` поверх (HUD — `Camera2D` с letterbox) → egui. Без `gfx.scene` спрайты сами чистят кадр — 2D-игры не меняются.
@@ -132,6 +142,15 @@ Cargo workspace: `engine/` (библиотека, крейт `stapel`), `games/<
 - Замена текстуры идёт через тот же pending, что и создание: одна пачка может нести `[0, 1, 1]` — слот 1 создаётся и тут же заменяется. `upload` без ветки замены упал бы на ассерте порядка, а без строгого FIFO в `take_pending` замена ушла бы раньше создания. → тест `gpu_textures::reloaded_texture_replaces_its_slot`
 - Версия файла запоминается и при ошибке декода, иначе битый файл перечитывается и пишет `warn` каждые 0,5 с. → тест `assets::broken_reload_keeps_old_texture_and_remembers_version`
 - Поверхность не падает, а восстанавливается: `Outdated` — `configure`, `Lost` — пересоздать `Surface`, окно с нулевой стороной — не рисовать. → тест `surface::status_to_action`; исполнение в `Renderer::render` — запуск
+
+### Runner
+
+- Событие сценария вне `1..=ticks` молча не сработало бы, а снимок вне `0..=ticks` не снялся бы: `Script::parse` отвергает и то и другое. → тесты `script::*`
+- `ctx.shown` пишется после рендера каждого кадра: без этого `cursor_world` и `cursor_ray` тика N шли бы по кадру N−2 или не работали вовсе. → тест `runner::cursor_queries_use_previous_frame`
+- Альфа PNG принудительно 255: `Canvas` хранит альфу кадра, полупрозрачный спрайт дал бы прозрачные пиксели в просмотрщике. → тест `frame_renderer::translucent_sprite_over_translucent_clear_gives_opaque_png`
+- `texts` — отправленные строки, а не видимые: перекрытый или вышедший за кадр HUD в отчёте остаётся; видимое доказывает PNG. → тест `runner::tick_zero_has_no_update_and_snapshot_sees_its_update`
+- Недетерминизм игры (время, `HashMap` в обходе, сид не из `ctx.seed`) делает отчёты двух прогонов разными без ошибки. → сквозной тест `trains` (этап 10, задача 11)
+- Размер сценария больше лимита текстуры не зажимается: снимки разошлись бы со сценарием. → тест `runner::size_over_texture_limit_is_error`
 
 ### 3D
 

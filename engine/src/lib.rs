@@ -40,6 +40,8 @@ pub mod physics3d;
 pub mod present;
 /// Поверхность окна и рендер кадра.
 pub mod renderer;
+/// Прогон сценария без окна.
+pub mod runner;
 /// 3D-кадр и его раскрытие в инстансы.
 pub mod scene;
 /// Сценарий runner: TOML со входом по тикам.
@@ -90,6 +92,7 @@ pub use physics3d::{
 };
 pub use present::{PresentPass, linear_present};
 pub use renderer::{RenderError, Renderer};
+pub use runner::{RunError, RunReport, Runner, Snapshot, run_script};
 pub use scene::{
     DirectionalLight, ExpandedModels, Fog, MAX_JOINTS, MAX_LIGHTS, MeshBatch, MeshDraw,
     MeshInstance, ModelDraw, PointLight, Scene, SkinnedDraw, Viewmodel, batch_meshes,
