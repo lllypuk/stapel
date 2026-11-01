@@ -386,7 +386,7 @@ mod tests {
         let font = assets.load_font("missing.ttf", 16.0);
         let mut gfx = Gfx::default();
         gfx.draw_text(&assets, font, "A", Vec2::ZERO, 1.0, Color::WHITE, 0);
-        assert_eq!(gfx.texts, [0; 0].map(|_| String::new()));
+        assert_eq!(gfx.texts, Vec::<String>::new());
         gfx.record_text = true;
         gfx.draw_text(&assets, font, "SCORE 0", Vec2::ZERO, 1.0, Color::WHITE, 0);
         assert_eq!(gfx.texts, ["SCORE 0"]);

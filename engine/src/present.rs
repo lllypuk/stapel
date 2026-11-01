@@ -1,7 +1,7 @@
 use crate::Gpu;
 
 /// Вывод `Canvas` на цель 1:1 от левого верхнего угла; координаты зажаты в размер источника.
-pub struct PresentPass {
+pub(crate) struct PresentPass {
     device: wgpu::Device,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
@@ -10,7 +10,7 @@ pub struct PresentPass {
 impl PresentPass {
     /// `target_format` — формат вида цели.
     #[must_use]
-    pub fn new(gpu: &Gpu, target_format: wgpu::TextureFormat) -> Self {
+    pub(crate) fn new(gpu: &Gpu, target_format: wgpu::TextureFormat) -> Self {
         let device = &gpu.device;
         let shader = device.create_shader_module(wgpu::include_wgsl!("present.wgsl"));
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -60,7 +60,7 @@ impl PresentPass {
     }
 
     /// Копирует `source` в `target` проходом с `Clear`.
-    pub fn draw(
+    pub(crate) fn draw(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         source: &wgpu::TextureView,

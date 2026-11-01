@@ -71,6 +71,8 @@ pub enum RunError {
         /// Последний выполненный тик.
         tick: u32,
     },
+    /// Не удалось вывести кадр на поверхность окна.
+    Present(String),
     /// Ошибка файловой системы.
     Io(std::io::Error),
     /// Ошибка записи PNG.
@@ -96,9 +98,10 @@ impl fmt::Display for RunError {
             Self::Closed { tick } => write!(f, "окно закрыто на тике {tick}, сценарий не кончился"),
             Self::Stalled { tick } => write!(
                 f,
-                "нет прогресса {} с на тике {tick}; причина не установлена, можно попробовать другой дисплей (env -u WAYLAND_DISPLAY)",
+                "нет прогресса {} с на тике {tick}; попробуйте env -u WAYLAND_DISPLAY",
                 STALL_TIMEOUT.as_secs()
             ),
+            Self::Present(e) => write!(f, "вывод кадра: {e}"),
             Self::Io(e) => write!(f, "файл: {e}"),
             Self::Png(e) => write!(f, "PNG: {e}"),
         }
@@ -253,11 +256,7 @@ impl<G: Game> Runner<G> {
     ///
     /// # Errors
     /// `report` не объект; ошибка записи PNG.
-    ///
-    /// # Panics
-    /// До первого `step`.
-    fn snapshot(&mut self, out: Option<&Path>) -> Result<(), RunError> {
-        let tick = self.tick.expect("snapshot before the first step");
+    fn snapshot(&mut self, tick: u32, out: Option<&Path>) -> Result<(), RunError> {
         let report = self.game.report();
         if !report.is_object() {
             return Err(RunError::Report { tick });
@@ -319,7 +318,7 @@ impl<G: Game> Runner<G> {
             return Ok(None);
         };
         if self.script.snapshots.binary_search(&tick).is_ok() {
-            self.snapshot(out)?;
+            self.snapshot(tick, out)?;
         }
         Ok(Some(tick))
     }
@@ -660,6 +659,29 @@ mod tests {
         assert_eq!(egui_key(KeyCode::Digit1), Some(egui::Key::Num1));
         assert_eq!(egui_key(KeyCode::ArrowUp), Some(egui::Key::ArrowUp));
         assert_eq!(egui_key(KeyCode::Escape), Some(egui::Key::Escape));
+        let promised = [
+            (KeyCode::KeyA, egui::Key::A),
+            (KeyCode::KeyZ, egui::Key::Z),
+            (KeyCode::Digit0, egui::Key::Num0),
+            (KeyCode::Digit9, egui::Key::Num9),
+            (KeyCode::ArrowDown, egui::Key::ArrowDown),
+            (KeyCode::ArrowLeft, egui::Key::ArrowLeft),
+            (KeyCode::ArrowRight, egui::Key::ArrowRight),
+            (KeyCode::Enter, egui::Key::Enter),
+            (KeyCode::Space, egui::Key::Space),
+            (KeyCode::Tab, egui::Key::Tab),
+            (KeyCode::Backspace, egui::Key::Backspace),
+            (KeyCode::Delete, egui::Key::Delete),
+            (KeyCode::Home, egui::Key::Home),
+            (KeyCode::End, egui::Key::End),
+            (KeyCode::PageUp, egui::Key::PageUp),
+            (KeyCode::PageDown, egui::Key::PageDown),
+            (KeyCode::F1, egui::Key::F1),
+            (KeyCode::F12, egui::Key::F12),
+        ];
+        for (code, key) in promised {
+            assert_eq!(egui_key(code), Some(key), "{code:?}");
+        }
     }
 
     #[test]
@@ -764,7 +786,7 @@ mod tests {
         let text = RunError::Stalled { tick: 7 }.to_string();
         assert_eq!(
             text,
-            "нет прогресса 10 с на тике 7; причина не установлена, можно попробовать другой дисплей (env -u WAYLAND_DISPLAY)"
+            "нет прогресса 10 с на тике 7; попробуйте env -u WAYLAND_DISPLAY"
         );
     }
 

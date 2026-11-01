@@ -262,9 +262,7 @@ impl<G: Game> Running<G> {
 
     /// Цепочка кадров рвётся, пока поверхность недоступна; `Resized` и `Occluded` её возобновляют.
     fn resume_redraw(&self) {
-        if self.renderer.is_available() {
-            self.window.request_redraw();
-        }
+        resume_redraw(&self.window, self.renderer.is_available());
     }
 }
 
@@ -383,11 +381,11 @@ impl<G: Game> ApplicationHandler for ScriptApp<'_, G> {
         match event {
             WindowEvent::Resized(size) => {
                 out.resize(size);
-                resume_redraw(window, out);
+                resume_redraw(window, out.is_available());
             }
             WindowEvent::Occluded(occluded) => {
                 out.set_occluded(occluded);
-                resume_redraw(window, out);
+                resume_redraw(window, out.is_available());
             }
             WindowEvent::CloseRequested => {
                 let tick = runner.tick();
@@ -404,12 +402,9 @@ impl<G: Game> ApplicationHandler for ScriptApp<'_, G> {
                                 "размер окна {surface:?} не равен размеру сценария {canvas:?}: картинка искажена"
                             );
                         }
-                        resume_redraw(window, out);
+                        resume_redraw(window, out.is_available());
                     }
-                    Err(e) => {
-                        let e = std::io::Error::other(e);
-                        self.stop(event_loop, Err(e.into()));
-                    }
+                    Err(e) => self.stop(event_loop, Err(RunError::Present(e.to_string()))),
                 },
                 Ok(None) => {
                     let (_, _, runner) = self.running.take().expect("running");
@@ -442,8 +437,8 @@ impl<G: Game> ScriptApp<'_, G> {
     }
 }
 
-fn resume_redraw(window: &Window, out: &Output) {
-    if out.is_available() {
+fn resume_redraw(window: &Window, available: bool) {
+    if available {
         window.request_redraw();
     }
 }

@@ -289,13 +289,7 @@ mod tests {
         let dir = TempDir::new("cli");
         let script = dir.0.join("s.toml");
         let out = dir.0.join("out");
-        let config = Config {
-            title: String::new(),
-            size: (16, 16),
-            tick_hz: 60,
-            vsync: false,
-            pixel_perfect: false,
-        };
+        let config = config16();
         fs::write(&script, "ticks = 2\nsnapshots = [0, 1]\n").unwrap();
         let report = run_script_file::<Blank>(&config, &script, &args(&out, false, false)).unwrap();
         assert_eq!(report, out.join("report.json"));
@@ -327,13 +321,7 @@ mod tests {
         let dir = TempDir::new("nopng");
         let script = dir.0.join("s.toml");
         let out = dir.0.join("out");
-        let config = Config {
-            title: String::new(),
-            size: (16, 16),
-            tick_hz: 60,
-            vsync: false,
-            pixel_perfect: false,
-        };
+        let config = config16();
         fs::write(&script, "ticks = 2\nsnapshots = [0, 1]\n").unwrap();
         let report = run_script_file::<Blank>(&config, &script, &args(&out, false, true)).unwrap();
         let names: Vec<_> = fs::read_dir(&out)

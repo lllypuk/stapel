@@ -9,7 +9,7 @@ pub mod audio;
 /// Ортокамера и вписывание кадра в окно.
 pub mod camera;
 /// Цель рендера без окна.
-pub mod canvas;
+mod canvas;
 mod cli;
 /// Фиксированный шаг симуляции.
 pub mod clock;
@@ -18,9 +18,9 @@ pub mod ecs;
 /// Контекст кадра, трейт `Game` и шаг кадра.
 pub mod frame;
 /// Кадр в переданные виды.
-pub mod frame_renderer;
+mod frame_renderer;
 /// Адаптер, устройство и очередь.
-pub mod gpu;
+mod gpu;
 #[cfg(test)]
 mod gpu_test;
 /// Текстуры на GPU, общие для конвейеров.
@@ -38,7 +38,7 @@ pub mod physics;
 /// Твёрдые тела в 3D.
 pub mod physics3d;
 /// Вывод `Canvas` на поверхность.
-pub mod present;
+mod present;
 /// Поверхность окна и рендер кадра.
 pub mod renderer;
 /// Прогон сценария без окна.
