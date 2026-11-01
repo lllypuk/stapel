@@ -1,6 +1,6 @@
 use std::fmt;
 
-use engine::{Aabb, Axis, IVec2, ivec2};
+use stapel::{Aabb, Axis, IVec2, ivec2};
 
 use crate::TILE;
 

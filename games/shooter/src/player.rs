@@ -1,4 +1,4 @@
-use engine::{Camera3D, IVec2, Input, KeyCode, MAX_PITCH, Vec2, ivec2, vec3};
+use stapel::{Camera3D, IVec2, Input, KeyCode, MAX_PITCH, Vec2, ivec2, vec3};
 
 use crate::CELL;
 use crate::obstacle::Obstacles;
@@ -138,7 +138,7 @@ fn slide(pos: Vec2, d: f32, axis: usize, radius: f32, solid: impl Fn(IVec2) -> b
 mod tests {
     use std::f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2, PI};
 
-    use engine::{ElementState::Pressed, vec2};
+    use stapel::{ElementState::Pressed, vec2};
 
     use super::*;
     use crate::map::{Dir, Map};

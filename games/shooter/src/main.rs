@@ -10,7 +10,7 @@ mod weapon;
 use std::f32::consts::FRAC_PI_2;
 use std::{fs, iter, mem};
 
-use engine::{
+use stapel::{
     Aabb3, Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Fog, Font, Game,
     Gfx, Handle, IVec2, KeyCode, Mat4, Mesh, MeshDraw, Model, ModelDraw, MouseButton, PointLight,
     Pose, Quat, Scene, Sprite, Vec2, Vec3, Vertex, Viewmodel, vec2, vec3,
@@ -839,8 +839,8 @@ impl Game for Shooter {
     }
 }
 
-fn main() -> Result<(), engine::EventLoopError> {
-    engine::run::<Shooter>(Config {
+fn main() -> Result<(), stapel::EventLoopError> {
+    stapel::run::<Shooter>(Config {
         title: "shooter".into(),
         size: (1280, 720),
         tick_hz: TICK_HZ,
@@ -854,7 +854,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::time::Duration;
 
-    use engine::{
+    use stapel::{
         ElementState::{Pressed, Released},
         FixedClock, Texture, ivec2, text,
     };

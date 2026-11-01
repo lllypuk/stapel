@@ -1,4 +1,4 @@
-use engine::{Ray, vec2};
+use stapel::{Ray, vec2};
 
 use crate::track::Track;
 use crate::train::Train;
@@ -63,7 +63,7 @@ pub(crate) fn toggle(track: &mut Track, train: &Train, switch: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use engine::{Assets, Vec2, Vec3, vec3};
+    use stapel::{Assets, Vec2, Vec3, vec3};
 
     use super::*;
     use crate::DT;

@@ -1,40 +1,92 @@
-# game-engine
+# Stapel
 
-Учебный движок на Rust: сначала 2D, потом 3D. Функции движка появляются вместе с играми в `games/`, которым они нужны. Решения и структура — в [docs/design.md](docs/design.md).
+A small 2D and 3D game engine in Rust, built as a framework: `winit` owns the event loop, `wgpu` draws, your game implements one trait. The engine grows only when a game in `games/` needs something, so every feature has a working consumer next to it.
 
-## Запуск
+Status: preliminary. Linux only (Wayland and X11, Vulkan through `wgpu`); other platforms are untested and not promised. The API is not stable: depend on a pinned commit and read the breaking-change notes when you move it.
+
+## What you get
+
+- Fixed 60 Hz simulation with free-running rendering and interpolation.
+- Sprites with a batcher and an orthographic camera; text from TTF fonts.
+- 3D: meshes, glTF models with GPU skinning, directional and point lights, fog, a perspective or orthographic camera, a separate view-model layer.
+- A small ECS, 2D collisions, and a 3D rigid-body library with a static triangle world.
+- Audio mixer with music, spatial effects, and live-tuned looping voices.
+- Hot reload of textures, sounds, and game data files; `egui` panels for in-game editors.
+
+## Run the example games
 
 ```sh
 cargo test --workspace
-make platformer                                   # платформер: A/D или ←/→ — бег, Space/W — прыжок, Enter — следующий уровень после финиша, F1 — редактор
-make racing                                       # гонки на время: WASD или стрелки, Space — ручник, R — на чекпоинт, Tab до старта — машина; TRACK=track02 — другая трасса
-make maze                                         # лабиринт от первого лица: WASD — ходьба, мышь — обзор, клик — захват мыши, Esc — отпустить, Enter — заново после выхода, F1 — панель света и тумана
-make shooter                                      # шутер в лесу: WASD — ход, мышь — обзор, клик — захват мыши, Esc — отпустить, ЛКМ — огонь, 1/2 — оружие, Enter — заново после смерти или выхода
-make trains                                       # поезда в изометрии: W/S или ↑/↓ — вперёд/назад, E — стрелка впереди, ЛКМ — стрелка под курсором, Tab — депо
-make asteroids                                    # Asteroids: A/D — поворот, W — тяга, Space — огонь, Enter — рестарт
-RUST_LOG=info cargo run -p pong                   # Pong на двоих: W/S — левая ракетка, O/L — правая
-RUST_LOG=info cargo run -p clear-color            # Space меняет цвет фона
-NO_VSYNC=1 RUST_LOG=info cargo run -p clear-color # без vsync
+make pong          # or any directory name from games/, release build
 ```
 
-С `RUST_LOG=info` движок раз в секунду пишет в лог FPS, TPS, худший кадр и число спрайтов, а при открытом звуковом устройстве — время аудиоколбэка против бюджета и число отброшенных команд (`audio cb 0.4/10.7ms dropped 0`). `make <игра>` — release-сборка.
+| Game | What it exercises | Controls |
+|---|---|---|
+| `clear-color` | window, fixed step, input | Space cycles the background |
+| `pong` | sprites, camera, text | W/S left paddle, O/L right paddle |
+| `asteroids` | ECS, 5 000+ sprites | A/D turn, W thrust, Space fire, Enter restart |
+| `platformer` | collisions, audio, levels from files, editor | A/D run, Space jump, Enter next level, F1 editor |
+| `maze` | first-person 3D, skinning, lights, fog | WASD, mouse look, click to grab, Esc to release, F1 panel |
+| `racing` | 3D physics, track files, editor, engine sound | WASD, Space handbrake, R respawn, F1 editor, F2 tuning |
+| `shooter` | spatial audio, view-model layer, bots | WASD, mouse, 1/2 weapon, Enter restart |
+| `trains` | orthographic 3D, data-driven track with switches | W/S drive, E switch ahead, click switch, Tab depot |
 
-Платформа — Linux (Wayland, X11), нужен Vulkan. Для сборки нужны `alsa-lib` и `pkg-config` (в Debian — `libasound2-dev pkg-config`): их требует `cpal`.
+## Use it from your own project
 
-Уровни и редактор уровней платформера (F1) — [games/platformer/README.md](games/platformer/README.md); формат карты лабиринта — [games/maze/README.md](games/maze/README.md); трассы и машины гонок — [games/racing/README.md](games/racing/README.md); карта и враги шутера — [games/shooter/README.md](games/shooter/README.md); карта и депо поездов — [games/trains/README.md](games/trains/README.md).
+Cargo.toml:
 
-Ассеты платформера — CC0 (Kenney, Juhani Junkala), источники и команды конвертации — в [games/platformer/assets/CREDITS.md](games/platformer/assets/CREDITS.md); ассеты `maze` — CC0 (Kenney Mini Dungeon), [games/maze/assets/CREDITS.md](games/maze/assets/CREDITS.md); ассеты `racing` — CC0 (Kenney Racing Kit, Car Kit), [games/racing/assets/CREDITS.md](games/racing/assets/CREDITS.md); ассеты `shooter` — CC0 (Kenney Mini Forest, Blaster Kit, Blocky Characters, Mini Dungeon, звуки Kenney), [games/shooter/assets/CREDITS.md](games/shooter/assets/CREDITS.md); ассеты `trains` — CC0 (Kenney Train Kit, 3D Road Tiles, City Kit Commercial), [games/trains/assets/CREDITS.md](games/trains/assets/CREDITS.md).
-
-## Проверки
-
-Версия Rust и компоненты закреплены в `rust-toolchain.toml`, rustup поставит их сам. Инструменты — в `~/.cargo/bin` (Makefile добавляет его в `PATH`), версии те же, что в `ci/Dockerfile`:
-
-```sh
-cargo install cargo-binstall
-cargo binstall --locked cargo-llvm-cov@0.9.1 cargo-mutants@27.1.0 cargo-deny@0.20.2 cargo-machete@0.9.2 typos-cli@1.51.1
-make check    # линты, документация, зависимости, тесты
-make cov      # покрытие с порогом
-make mutants  # мутационное тестирование
+```toml
+[dependencies]
+stapel = { git = "https://github.com/lllypuk/stapel", rev = "<commit>" }
 ```
 
-CI — `.gitlab-ci.yml`: на каждый push линты и `make cov` (он же прогон тестов, офскрин-тесты 2D и 3D — на lavapipe), мутанты — по расписанию раз в неделю.
+`src/main.rs`, the whole `clear-color` game:
+
+```rust
+use stapel::{Color, Config, Context, Game, KeyCode};
+
+const PALETTE: [[u8; 3]; 4] = [[30, 30, 46], [180, 60, 60], [60, 160, 90], [70, 110, 200]];
+
+struct ClearColor {
+    index: usize,
+}
+
+impl Game for ClearColor {
+    fn init(_ctx: &mut Context) -> Self {
+        Self { index: 0 }
+    }
+
+    fn update(&mut self, ctx: &mut Context) {
+        if ctx.input.just_pressed(KeyCode::Space) {
+            self.index = (self.index + 1) % PALETTE.len();
+        }
+    }
+
+    fn draw(&mut self, ctx: &mut Context, _alpha: f32) {
+        let [r, g, b] = PALETTE[self.index];
+        ctx.gfx.clear_color = Color::from_srgb8(r, g, b);
+    }
+}
+
+fn main() -> Result<(), stapel::EventLoopError> {
+    stapel::run::<ClearColor>(Config {
+        title: "clear-color".into(),
+        size: (800, 600),
+        tick_hz: 60,
+        vsync: true,
+        pixel_perfect: false,
+    })
+}
+```
+
+`init` loads assets once through `ctx.assets`. `update` runs every fixed tick and reads the input snapshot in `ctx.input`. `draw` fills `ctx.gfx` immediate-mode every frame; for 3D set `ctx.gfx.scene`. The optional `ui` method draws `egui` panels. The games in `games/` are the reference for everything else: each has a README with its data formats.
+
+## Documentation
+
+- `docs/design.md` (Russian): decisions and their reasons, the list of silent failure modes and what catches each, the stage table.
+- `docs/assets.md` (Russian): where to get assets and under which licenses.
+- `CLAUDE.md` (Russian): architecture summary and the commands for checks, coverage, and mutation testing. Written for coding agents, useful for people too.
+
+## License
+
+Code: MIT, see `LICENSE`. Assets are credited per game in `games/<name>/assets/CREDITS.md`; they are CC0 unless that file says otherwise. The bundled font `assets/fonts/JetBrainsMono-Regular.ttf` is under the SIL Open Font License, see `assets/fonts/OFL.txt`.

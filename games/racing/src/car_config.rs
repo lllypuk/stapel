@@ -1,8 +1,8 @@
 use std::fmt;
 use std::ops::RangeInclusive;
 
-use engine::{Model, Vec3};
 use serde::{Deserialize, Serialize};
+use stapel::{Model, Vec3};
 
 use crate::pieces::CARS;
 
@@ -255,7 +255,7 @@ pub(crate) fn wheels(model: &Model) -> Result<Wheels, CarError> {
 mod tests {
     use std::fs;
 
-    use engine::{Aabb3, Assets, Mat4, Node, Quat, vec3};
+    use stapel::{Aabb3, Assets, Mat4, Node, Quat, vec3};
 
     use super::*;
     use crate::ASSETS;

@@ -1,8 +1,8 @@
 use std::f32::consts::FRAC_PI_2;
 use std::fmt;
 
-use engine::{IVec2, Mat4, Vec2, vec2, vec3};
 use serde::Deserialize;
+use stapel::{IVec2, Mat4, Vec2, vec2, vec3};
 
 use crate::piece::{self, Piece};
 
@@ -442,7 +442,7 @@ fn graph(rails: Vec<Rail>) -> Result<(Vec<Edge>, Vec<Port>), TrackError> {
 pub(crate) mod fixture {
     use std::fmt::Write as _;
 
-    use engine::IVec2;
+    use stapel::IVec2;
 
     use super::Track;
     use crate::piece::Piece;
@@ -479,7 +479,7 @@ pub(crate) mod fixture {
 /// Точки стрелок и тупика отростка в `level01`.
 #[cfg(test)]
 pub(crate) mod level01 {
-    use engine::{Vec2, vec2};
+    use stapel::{Vec2, vec2};
 
     use super::Track;
     use crate::piece::Piece;
@@ -501,7 +501,7 @@ pub(crate) mod level01 {
 
 #[cfg(test)]
 mod tests {
-    use engine::Assets;
+    use stapel::Assets;
 
     use super::fixture::{RailRow, edge, map};
     use super::level01::{A, B, C, D, T, set};

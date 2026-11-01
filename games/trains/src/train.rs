@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use engine::Vec2;
+use stapel::Vec2;
 
 use crate::consist::{self, Car, GAP};
 use crate::track::{MARGIN, Pass, Track};
@@ -202,7 +202,7 @@ fn toward_zero(v: f32, by: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use engine::{Assets, vec2};
+    use stapel::{Assets, vec2};
 
     use super::*;
     use crate::DT;

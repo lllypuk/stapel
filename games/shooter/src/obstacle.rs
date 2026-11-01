@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use engine::{IVec2, Vec2};
+use stapel::{IVec2, Vec2};
 
 use crate::map::{Dir, Map, Tile};
 
@@ -135,7 +135,7 @@ fn first_edge(p: f32, cell: i32, d: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use engine::{ivec2, vec2};
+    use stapel::{ivec2, vec2};
 
     use super::*;
 

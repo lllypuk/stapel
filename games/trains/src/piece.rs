@@ -1,4 +1,4 @@
-use engine::{Mat4, Vec2, vec2, vec3};
+use stapel::{Mat4, Vec2, vec2, vec3};
 
 /// Верх рельса над землёй.
 pub(crate) const RAIL_TOP: f32 = 0.1;
@@ -148,7 +148,7 @@ fn flip(v: Vec2, mirror: bool) -> Vec2 {
 mod tests {
     use std::f32::consts::{FRAC_1_SQRT_2, PI};
 
-    use engine::{Assets, Model};
+    use stapel::{Assets, Model};
 
     use super::*;
 

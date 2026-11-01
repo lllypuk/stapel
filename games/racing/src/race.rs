@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use engine::{IVec2, Vec3};
+use stapel::{IVec2, Vec3};
 
 use crate::TICK_HZ;
 use crate::track::{Checkpoint, TrackDraft, cell_at};
@@ -106,7 +106,7 @@ pub(crate) fn lap_time(ticks: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use engine::vec3;
+    use stapel::vec3;
 
     use super::*;
     use crate::pieces::KIT_SCALE;

@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use engine::{ElementState, Input, KeyCode, Vec2};
+use stapel::{ElementState, Input, KeyCode, Vec2};
 
 use crate::piece::Piece;
 use crate::switch;
@@ -135,7 +135,7 @@ pub(crate) fn press(action: Action, input: &mut Input) {
 mod tests {
     use std::collections::BTreeSet;
 
-    use engine::{Context, Game};
+    use stapel::{Context, Game};
 
     use super::*;
     use crate::consist;

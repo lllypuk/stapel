@@ -1,6 +1,6 @@
 use std::ops::RangeInclusive;
 
-use engine::{IVec2, Vec3, ivec2, vec3};
+use stapel::{IVec2, Vec3, ivec2, vec3};
 
 /// Метров в единице Racing Kit.
 pub(crate) const KIT_SCALE: f32 = 4.0;

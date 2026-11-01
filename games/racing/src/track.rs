@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use engine::{IVec2, Mat4, Vec3, ivec2, vec3};
 use serde::{Deserialize, Serialize};
+use stapel::{IVec2, Mat4, Vec3, ivec2, vec3};
 use toml::Spanned;
 
 use crate::pieces::{DecorPiece, End, KIT_SCALE, LEVEL, Piece, Rot, decor_piece, piece};
@@ -463,7 +463,7 @@ impl TrackDraft {
 mod tests {
     use std::fmt::Write;
 
-    use engine::vec3;
+    use stapel::vec3;
 
     use super::*;
 

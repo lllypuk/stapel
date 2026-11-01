@@ -2,10 +2,11 @@
 name = "asteroids"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
 publish = false
 
 [dependencies]
-engine.workspace = true
+stapel.workspace = true
 
 [lints]
 workspace = true

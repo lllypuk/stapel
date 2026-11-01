@@ -8,15 +8,15 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use std::{fs, mem};
 
 use enemy::Orc;
-use engine::{
-    Assets, Camera2D, Camera3D, Color, Config, Context, Fog, Font, Game, Gfx, Handle, IVec2,
-    KeyCode, Mat4, Model, ModelDraw, MouseButton, PointLight, Pose, Quat, Scene, Texture, Vec2,
-    egui, vec2, vec3,
-};
 use map::{Dir, Map, Torch, cell_center};
 use minimap::Minimap;
 use panel::Cmd;
 use player::{Player, RADIUS};
+use stapel::{
+    Assets, Camera2D, Camera3D, Color, Config, Context, Fog, Font, Game, Gfx, Handle, IVec2,
+    KeyCode, Mat4, Model, ModelDraw, MouseButton, PointLight, Pose, Quat, Scene, Texture, Vec2,
+    egui, vec2, vec3,
+};
 
 const TICK_HZ: u32 = 60;
 /// Тиков на оборот монеты.
@@ -482,7 +482,7 @@ impl Game for Maze {
     }
 
     fn ui(&mut self, ui: &egui::Context) {
-        engine::ui::set_font(ui, FONT_PATH);
+        stapel::ui::set_font(ui, FONT_PATH);
         if !self.panel {
             return;
         }
@@ -494,8 +494,8 @@ impl Game for Maze {
     }
 }
 
-fn main() -> Result<(), engine::EventLoopError> {
-    engine::run::<Maze>(Config {
+fn main() -> Result<(), stapel::EventLoopError> {
+    stapel::run::<Maze>(Config {
         title: "maze".into(),
         size: (1280, 720),
         tick_hz: TICK_HZ,
@@ -512,7 +512,7 @@ mod tests {
         Harness,
         kittest::{NodeT, Queryable},
     };
-    use engine::{
+    use stapel::{
         ElementState::{Pressed, Released},
         FixedClock, MAX_PITCH, Sprite, Vec2, Vec3,
         egui::accesskit::{Action, ActionData, ActionRequest, Role},
@@ -712,7 +712,7 @@ mod tests {
     fn flicker_stays_in_bounds_and_differs_between_torches() {
         let mut lo = f32::INFINITY;
         let mut hi = f32::NEG_INFINITY;
-        for i in 0..engine::MAX_LIGHTS {
+        for i in 0..stapel::MAX_LIGHTS {
             for tick in 0..10_000 {
                 let b = flicker(tick, i);
                 assert!((1.0 - FLICKER..=1.0).contains(&b), "{tick} {i}: {b}");

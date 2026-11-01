@@ -1,6 +1,6 @@
 use std::f32::consts::{FRAC_PI_3, FRAC_PI_6};
 
-use engine::{
+use stapel::{
     Camera2D, Config, Context, Game, Handle, Input, KeyCode, Sprite, Texture, Vec2, vec2,
 };
 
@@ -221,8 +221,8 @@ impl Game for Pong {
     }
 }
 
-fn main() -> Result<(), engine::EventLoopError> {
-    engine::run::<Pong>(Config {
+fn main() -> Result<(), stapel::EventLoopError> {
+    stapel::run::<Pong>(Config {
         title: "pong".into(),
         size: (1280, 720),
         tick_hz: TICK_HZ,
@@ -234,7 +234,7 @@ fn main() -> Result<(), engine::EventLoopError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::ElementState::Pressed;
+    use stapel::ElementState::Pressed;
 
     const EPS: f32 = 1e-3;
 

@@ -2,7 +2,7 @@
 
 use std::f32::consts::TAU;
 
-use engine::{Camera3D, IVec2, Mat4, Vec3, egui, vec3};
+use stapel::{Camera3D, IVec2, Mat4, Vec3, egui, vec3};
 
 use crate::car_config::CarConfig;
 use crate::pieces::{self, KIT_SCALE, Rot};
@@ -105,8 +105,8 @@ mod tests {
     use egui_kittest::kittest::{NodeT, Queryable};
     use std::f32::consts::PI;
 
-    use engine::egui::accesskit::Toggled;
-    use engine::vec2;
+    use stapel::egui::accesskit::Toggled;
+    use stapel::vec2;
 
     use super::*;
     use crate::{CARS_DIR, load_cars};

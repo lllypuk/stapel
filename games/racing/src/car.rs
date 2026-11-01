@@ -1,7 +1,7 @@
-use engine::physics3d::Contact;
+use stapel::physics3d::Contact;
 use std::f32::consts::TAU;
 
-use engine::{
+use stapel::{
     ContactParams, Hit, Mat3, Mat4, Model, Pose, Quat, RigidBody, StaticWorld, Vec2, Vec3,
     box_inertia, solve_contacts,
 };
@@ -344,7 +344,7 @@ impl Car {
 mod tests {
     use std::fs;
 
-    use engine::{Assets, Triangle, vec3};
+    use stapel::{Assets, Triangle, vec3};
 
     use super::*;
     use crate::ASSETS;

@@ -1,4 +1,4 @@
-use engine::{Camera3D, Quat, Vec3};
+use stapel::{Camera3D, Quat, Vec3};
 
 /// За машиной по горизонтали, м.
 const BEHIND: f32 = 6.0;
@@ -62,7 +62,7 @@ impl Chase {
 
 #[cfg(test)]
 mod tests {
-    use engine::vec3;
+    use stapel::vec3;
 
     use super::*;
 

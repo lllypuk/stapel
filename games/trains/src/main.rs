@@ -10,7 +10,7 @@ mod train;
 use std::collections::BTreeMap;
 use std::f32::consts::FRAC_PI_4;
 
-use engine::{
+use stapel::{
     Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Font, Game, Gfx, Handle,
     Input, KeyCode, Mat4, Mesh, MeshDraw, Model, ModelDraw, MouseButton, Quat, Scene, Vec2, Vec3,
     Vertex, egui, vec2, vec3,
@@ -371,7 +371,7 @@ impl Game for Trains {
     }
 
     fn ui(&mut self, ui: &egui::Context) {
-        engine::ui::set_font(ui, FONT_PATH);
+        stapel::ui::set_font(ui, FONT_PATH);
         if self.depot.open {
             let catalog: Vec<_> = self.cars.keys().copied().collect();
             self.depot.ui(ui, &catalog);
@@ -470,8 +470,8 @@ impl Trains {
     }
 }
 
-fn main() -> Result<(), engine::EventLoopError> {
-    engine::run::<Trains>(Config {
+fn main() -> Result<(), stapel::EventLoopError> {
+    stapel::run::<Trains>(Config {
         title: "trains".into(),
         size: (1280, 720),
         tick_hz: TICK_HZ,
@@ -484,7 +484,7 @@ fn main() -> Result<(), engine::EventLoopError> {
 mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
-    use engine::{ElementState, Fog, Shown, ShownScene, Sprite, Texture, UVec2, Viewport, text};
+    use stapel::{ElementState, Fog, Shown, ShownScene, Sprite, Texture, UVec2, Viewport, text};
 
     use super::*;
     use crate::depot::DepotCmd;

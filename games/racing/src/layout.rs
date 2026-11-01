@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
-use engine::{
+use stapel::{
     Aabb3, Assets, Color, Handle, IVec2, Mat4, Model, ModelDraw, StaticWorld, Triangle, Vec3, vec3,
 };
 
@@ -209,7 +209,7 @@ impl Layout {
 
 #[cfg(test)]
 mod tests {
-    use engine::{ExpandedModels, IVec2, Vec3, ivec2};
+    use stapel::{ExpandedModels, IVec2, Vec3, ivec2};
 
     use super::*;
     use crate::pieces::{LEVEL, Piece, Rot};

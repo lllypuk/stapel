@@ -1,7 +1,7 @@
 use std::f32::consts::TAU;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use engine::{
+use stapel::{
     Camera2D, Color, Commands, Config, Context, Entity, Font, Game, Gfx, Handle, Input, KeyCode,
     Sprite, Texture, Vec2, World, vec2,
 };
@@ -719,8 +719,8 @@ impl Game for Asteroids {
     }
 }
 
-fn main() -> Result<(), engine::EventLoopError> {
-    engine::run::<Asteroids>(Config {
+fn main() -> Result<(), stapel::EventLoopError> {
+    stapel::run::<Asteroids>(Config {
         title: "asteroids".into(),
         size: (1280, 720),
         tick_hz: TICK_HZ,
@@ -732,7 +732,7 @@ fn main() -> Result<(), engine::EventLoopError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::ElementState::Pressed;
+    use stapel::ElementState::Pressed;
 
     const EPS: f32 = 1e-3;
 
@@ -1168,7 +1168,7 @@ mod tests {
         let Hud { font, big } = *g.hud.as_ref().unwrap();
         let width = |f, s| ctx.assets.font(f).width(s) * HUD_SCALE;
         let text = |f, s, pos| {
-            engine::text::layout(
+            stapel::text::layout(
                 ctx.assets.font(f),
                 s,
                 pos,

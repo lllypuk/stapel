@@ -2,7 +2,7 @@
 
 use std::f64::consts::TAU;
 
-use engine::audio::MAX_RATE;
+use stapel::audio::MAX_RATE;
 
 use crate::Mode;
 

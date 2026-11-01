@@ -1,4 +1,4 @@
-use engine::{IVec2, Vec2};
+use stapel::{IVec2, Vec2};
 
 use crate::map::{Dir, Map};
 use crate::player;
@@ -75,7 +75,7 @@ impl Orc {
 mod tests {
     use std::f32::consts::{FRAC_PI_2, PI};
 
-    use engine::{Quat, Vec3, ivec2, vec2, vec3};
+    use stapel::{Quat, Vec3, ivec2, vec2, vec3};
 
     use super::*;
 

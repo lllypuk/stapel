@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use engine::{Context, Game, Vec2, Vec3};
+use stapel::{Context, Game, Vec2, Vec3};
 
 use crate::car::{Car, Controls, steer_angle};
 use crate::garage::GarageCmd;

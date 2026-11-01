@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, iter, path::PathBuf};
 
-use engine::{Color, Gfx, Handle, IVec2, Input, MouseButton, Sprite, Texture, Vec2, ivec2, vec2};
+use stapel::{Color, Gfx, Handle, IVec2, Input, MouseButton, Sprite, Texture, Vec2, ivec2, vec2};
 
 use crate::{
     BLOCK, COIN, DIRT, ENEMY_LAYER, FLAG, GRASS, IDLE, ITEM_LAYER, PLANK, PLATFORM_LAYER,
@@ -400,7 +400,7 @@ mod tests {
     use super::*;
     use crate::LEVEL01;
 
-    use engine::{
+    use stapel::{
         Assets,
         ElementState::{Pressed, Released},
     };

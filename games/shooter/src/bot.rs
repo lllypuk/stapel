@@ -1,6 +1,6 @@
 //! Бот сквозных тестов: проходит уровень через `Input`, как игрок.
 
-use engine::{ElementState, IVec2, Input, KeyCode, MouseButton, Vec2};
+use stapel::{ElementState, IVec2, Input, KeyCode, MouseButton, Vec2};
 
 use crate::Level;
 use crate::enemy::Enemy;
@@ -136,7 +136,7 @@ pub(crate) fn press(action: Action, yaw: f32, input: &mut Input) {
 
 #[cfg(test)]
 mod tests {
-    use engine::{Context, ivec2, vec2};
+    use stapel::{Context, ivec2, vec2};
 
     use super::*;
     use crate::Shooter;

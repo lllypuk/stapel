@@ -1,7 +1,7 @@
 use std::f32::consts::{FRAC_PI_2, PI};
 use std::fmt;
 
-use engine::{IVec2, MAX_LIGHTS, Vec3, ivec2, vec3};
+use stapel::{IVec2, MAX_LIGHTS, Vec3, ivec2, vec3};
 
 /// Ошибка разбора карты; `line` — с единицы.
 #[derive(Debug, PartialEq)]

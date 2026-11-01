@@ -9,12 +9,12 @@ use std::{
 };
 
 use editor::{Editor, EditorCmd};
-use engine::{
+use level::{Level, LevelError, PlatformSpawn};
+use stapel::{
     Aabb, Actor, Assets, Axis, Camera2D, Color, Commands, Config, Contact, Context, Entity, Font,
     Game, Gfx, Handle, IVec2, Input, KeyCode, Rect, Solid, Sound, SparseSet, Sprite, Texture,
     Tilemap, Vec2, Watcher, World, egui, grounded, ivec2, move_actor, move_solid, vec2,
 };
-use level::{Level, LevelError, PlatformSpawn};
 
 const TICK_HZ: u32 = 60;
 /// Сторона тайла в мировых пикселях.
@@ -1136,7 +1136,7 @@ impl Game for Platformer {
     }
 
     fn ui(&mut self, ui: &egui::Context) {
-        engine::ui::set_font(ui, FONT_PATH);
+        stapel::ui::set_font(ui, FONT_PATH);
         if !self.editing {
             return;
         }
@@ -1149,8 +1149,8 @@ impl Game for Platformer {
     }
 }
 
-fn main() -> Result<(), engine::EventLoopError> {
-    engine::run::<Platformer>(Config {
+fn main() -> Result<(), stapel::EventLoopError> {
+    stapel::run::<Platformer>(Config {
         title: "platformer".into(),
         size: (1280, 720),
         tick_hz: TICK_HZ,
@@ -1348,7 +1348,7 @@ mod tests {
         }
     }
 
-    use engine::ElementState::{Pressed, Released};
+    use stapel::ElementState::{Pressed, Released};
 
     fn input(keys: &[KeyCode]) -> Input {
         let mut i = Input::default();
@@ -2375,7 +2375,7 @@ mod tests {
         let font = ctx.assets.font(font);
         let at = vec2(344.0, 168.0);
         let want: Vec<Sprite> =
-            engine::text::layout(font, &status, at, HUD_SCALE, ink, HUD_LAYER).collect();
+            stapel::text::layout(font, &status, at, HUD_SCALE, ink, HUD_LAYER).collect();
         assert_ne!(want, []);
         assert_eq!(hud(&ctx.gfx), want);
     }
@@ -2405,7 +2405,7 @@ mod tests {
             .flat_map(|(f, s, y)| {
                 let f = ctx.assets.font(f);
                 let at = vec2(500.0 - f.width(s) * HUD_SCALE / 2.0, 90.0 + y);
-                engine::text::layout(f, s, at, HUD_SCALE, ink, HUD_LAYER)
+                stapel::text::layout(f, s, at, HUD_SCALE, ink, HUD_LAYER)
             })
             .collect();
         assert_eq!(hud(&ctx.gfx), want);
@@ -2515,7 +2515,7 @@ mod tests {
     fn changed_level_file_restarts_with_new_map() {
         let (mut g, mut ctx) = edited("reload", CLEAR);
         g.deaths = 1;
-        for _ in 1..engine::WATCH_TICKS {
+        for _ in 1..stapel::WATCH_TICKS {
             g.update(&mut ctx);
         }
         assert_eq!(g.level, parse(SECOND));
@@ -2530,13 +2530,13 @@ mod tests {
     #[test]
     fn unparsable_level_file_opens_editor_and_freezes_world() {
         let (mut g, mut ctx) = edited("reload-broken", "P?\n");
-        for _ in 0..engine::WATCH_TICKS {
+        for _ in 0..stapel::WATCH_TICKS {
             g.update(&mut ctx);
         }
         assert_broken(&g, &g.levels_dir.join("level01.txt"), "P?\n");
         assert_eq!(g.level, parse(SECOND));
         g.update(&mut ctx);
-        assert_eq!(g.ticks, engine::WATCH_TICKS);
+        assert_eq!(g.ticks, stapel::WATCH_TICKS);
     }
 
     #[test]
@@ -2572,7 +2572,7 @@ mod tests {
         Platformer::open(dir);
     }
 
-    use engine::{MouseButton, Shown, Viewport};
+    use stapel::{MouseButton, Shown, Viewport};
 
     /// Игра на уровне `text` из файла, как после `open`.
     fn editable(text: &str) -> Platformer {
@@ -2772,7 +2772,7 @@ mod tests {
 
     /// `WATCH_TICKS` тиков: наблюдатель перечитывает файл ровно один раз.
     fn watch_once(g: &mut Platformer, ctx: &mut Context) {
-        for _ in 0..engine::WATCH_TICKS {
+        for _ in 0..stapel::WATCH_TICKS {
             g.update(ctx);
         }
     }

@@ -19,7 +19,7 @@ use std::fs;
 use std::mem;
 use std::path::{Path, PathBuf};
 
-use engine::{
+use stapel::{
     Assets, Camera2D, Camera3D, Color, Config, Context, DirectionalLight, Fog, Font, Game, Gfx,
     Handle, IVec2, Input, KeyCode, LoopId, Mat4, Mesh, MeshDraw, ModelDraw, MouseButton, Pose,
     Scene, Sound, StaticWorld, Vec2, Vec3, Watcher, egui, vec2, vec3,
@@ -811,7 +811,7 @@ impl Game for Racing {
     }
 
     fn ui(&mut self, ui: &egui::Context) {
-        engine::ui::set_font(ui, FONT_PATH);
+        stapel::ui::set_font(ui, FONT_PATH);
         let config = &self.cars[self.garage.selected];
         match self.mode {
             Mode::Garage => {
@@ -838,8 +838,8 @@ impl Game for Racing {
     }
 }
 
-fn main() -> Result<(), engine::EventLoopError> {
-    engine::run::<Racing>(Config {
+fn main() -> Result<(), stapel::EventLoopError> {
+    stapel::run::<Racing>(Config {
         title: "racing".into(),
         size: (1280, 720),
         tick_hz: TICK_HZ,
@@ -852,9 +852,9 @@ fn main() -> Result<(), engine::EventLoopError> {
 mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
-    use engine::ElementState::{Pressed, Released};
-    use engine::egui::accesskit::Role;
-    use engine::{Quat, Ray, Sprite, Triangle, text};
+    use stapel::ElementState::{Pressed, Released};
+    use stapel::egui::accesskit::Role;
+    use stapel::{Quat, Ray, Sprite, Triangle, text};
 
     use super::*;
     use crate::editor::Tool;
@@ -975,7 +975,7 @@ mod tests {
         ctx.input.on_key(KeyCode::KeyW, Pressed, false);
         ticks(&mut g, &mut ctx, 60);
         assert!(g.rpm.rate() > 2.0 * idle, "{} vs {idle}", g.rpm.rate());
-        assert!(g.rpm.rate() < engine::audio::MAX_RATE, "{}", g.rpm.rate());
+        assert!(g.rpm.rate() < stapel::audio::MAX_RATE, "{}", g.rpm.rate());
         assert_eq!(g.voice, None);
         let sound = engine_sound::command(g.mode, &g.rpm, g.voice.is_some());
         assert_eq!(sound, SoundCmd::Start);
@@ -1458,19 +1458,19 @@ mod tests {
 
     /// Кадр показан камерой редактора на поверхности `size`, курсор в её середине.
     fn show_editor(g: &Racing, ctx: &mut Context) {
-        let size = engine::UVec2::new(1280, 720);
-        ctx.shown = Some(engine::Shown {
+        let size = stapel::UVec2::new(1280, 720);
+        ctx.shown = Some(stapel::Shown {
             camera: Camera2D {
                 center: Vec2::ZERO,
                 size: VIEW,
             },
-            viewport: engine::Viewport {
+            viewport: stapel::Viewport {
                 x: 0.0,
                 y: 0.0,
                 w: VIEW.x,
                 h: VIEW.y,
             },
-            scene: Some(engine::ShownScene {
+            scene: Some(stapel::ShownScene {
                 camera: g.editor.camera(1.0),
                 size,
             }),
@@ -1835,7 +1835,7 @@ mod tests {
     /// Отъехала от старта и смотрит на файл трассы ещё раз через `WATCH_TICKS`.
     fn drive_off(g: &mut Racing, ctx: &mut Context) {
         ctx.input.on_key(KeyCode::KeyW, Pressed, false);
-        ticks(g, ctx, engine::WATCH_TICKS - 1);
+        ticks(g, ctx, stapel::WATCH_TICKS - 1);
         ctx.input.on_key(KeyCode::KeyW, Released, false);
         assert!(!placed_at(g, g.start));
     }
@@ -2273,7 +2273,7 @@ mod tests {
         add_cone(&mut g, &mut ctx);
         let draft = g.editor.draft.clone();
         fs::write(&g.path, EIGHT).expect("запись");
-        ticks(&mut g, &mut ctx, engine::WATCH_TICKS);
+        ticks(&mut g, &mut ctx, stapel::WATCH_TICKS);
         assert_eq!(g.editor.draft, draft);
         assert!(g.panel.changed_on_disk);
         g.panel.queue.push(PanelCmd::LoadFromDisk);
@@ -2282,18 +2282,18 @@ mod tests {
         assert_eq!((&g.editor.draft, &g.track), (&eight, &eight));
         assert!(!g.editor.dirty() && !g.panel.changed_on_disk);
         assert_eq!(g.panel.error, None);
-        ticks(&mut g, &mut ctx, engine::WATCH_TICKS);
+        ticks(&mut g, &mut ctx, stapel::WATCH_TICKS);
         assert_eq!(g.editor.draft, eight, "загруженный текст — не изменение");
 
         let oval = fs::read_to_string(OVAL).expect("овал");
         fs::write(&g.path, &oval).expect("запись");
-        ticks(&mut g, &mut ctx, engine::WATCH_TICKS);
+        ticks(&mut g, &mut ctx, stapel::WATCH_TICKS);
         let want = TrackDraft::parse(&oval).expect("овал");
         assert_eq!((&g.editor.draft, &g.track), (&want, &want));
         assert!(!g.panel.changed_on_disk);
 
         fs::write(&g.path, "car = \"race\"\n").expect("запись");
-        ticks(&mut g, &mut ctx, engine::WATCH_TICKS);
+        ticks(&mut g, &mut ctx, stapel::WATCH_TICKS);
         assert_eq!(g.editor.draft.roads, []);
         assert_eq!(g.track, want, "заезд — по прежней цельной");
         assert!(g.error.is_some());

@@ -2,7 +2,7 @@
 
 use std::mem;
 
-use engine::{Color, Mat4, ModelDraw};
+use stapel::{Color, Mat4, ModelDraw};
 
 use crate::layout::Models;
 use crate::race::Pass;
@@ -119,7 +119,7 @@ impl Ghost {
 
 #[cfg(test)]
 mod tests {
-    use engine::{Assets, Quat, Vec3, vec3};
+    use stapel::{Assets, Quat, Vec3, vec3};
 
     use super::*;
 

@@ -1,4 +1,4 @@
-use engine::{Color, Config, Context, Game, KeyCode};
+use stapel::{Color, Config, Context, Game, KeyCode};
 
 const PALETTE: [[u8; 3]; 4] = [[30, 30, 46], [180, 60, 60], [60, 160, 90], [70, 110, 200]];
 
@@ -23,8 +23,8 @@ impl Game for ClearColor {
     }
 }
 
-fn main() -> Result<(), engine::EventLoopError> {
-    engine::run::<ClearColor>(Config {
+fn main() -> Result<(), stapel::EventLoopError> {
+    stapel::run::<ClearColor>(Config {
         title: "clear-color".into(),
         size: (800, 600),
         tick_hz: 60,
@@ -36,7 +36,7 @@ fn main() -> Result<(), engine::EventLoopError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::{ElementState::Pressed, FixedClock, step_frame};
+    use stapel::{ElementState::Pressed, FixedClock, step_frame};
     use std::time::Duration;
 
     #[test]

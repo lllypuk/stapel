@@ -1,4 +1,4 @@
-use engine::{Assets, Camera3D, Handle, Sound, Stereo, Vec2, vec3};
+use stapel::{Assets, Camera3D, Handle, Sound, Stereo, Vec2, vec3};
 
 use crate::CELL;
 
@@ -90,7 +90,7 @@ pub(crate) fn wound(before: i32, after: i32, pos: Vec2) -> Option<Event> {
 
 #[cfg(test)]
 mod tests {
-    use engine::vec2;
+    use stapel::vec2;
 
     use super::*;
 

@@ -1,6 +1,6 @@
 //! Живая панель характеристик: слайдеры по `TUNING`, сохранение и сброс файла машины.
 
-use engine::egui;
+use stapel::egui;
 
 use crate::car_config::{CarConfig, TUNING};
 
@@ -62,7 +62,7 @@ impl TuningPanel {
 mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
-    use engine::egui::accesskit::{Action, ActionData, ActionRequest, Role};
+    use stapel::egui::accesskit::{Action, ActionData, ActionRequest, Role};
 
     use super::*;
     use crate::{CARS_DIR, load_cars};

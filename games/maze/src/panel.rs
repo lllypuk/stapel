@@ -1,6 +1,6 @@
 use std::ops::RangeInclusive;
 
-use engine::egui::{Slider, Ui};
+use stapel::egui::{Slider, Ui};
 
 /// Множитель ambient на ползунке.
 pub(crate) const AMBIENT: RangeInclusive<f32> = 0.0..=8.0;

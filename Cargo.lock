@@ -214,7 +214,7 @@ dependencies = [
 name = "asteroids"
 version = "0.1.0"
 dependencies = [
- "engine",
+ "stapel",
 ]
 
 [[package]]
@@ -378,7 +378,7 @@ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 name = "clear-color"
 version = "0.1.0"
 dependencies = [
- "engine",
+ "stapel",
 ]
 
 [[package]]
@@ -717,30 +717,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52c8d4141cf0f60fb2f7aefaf352d3ffa5171ef0ab09731c64391801e95e48f1"
 dependencies = [
  "bytemuck",
-]
-
-[[package]]
-name = "engine"
-version = "0.1.0"
-dependencies = [
- "allocation-counter",
- "bytemuck",
- "cpal",
- "egui",
- "egui-wgpu",
- "egui-winit",
- "env_logger",
- "fontdue",
- "glam",
- "gltf",
- "hound",
- "image",
- "lewton",
- "log",
- "pollster",
- "rtrb",
- "wgpu",
- "winit",
 ]
 
 [[package]]
@@ -1467,7 +1443,7 @@ name = "maze"
 version = "0.1.0"
 dependencies = [
  "egui_kittest",
- "engine",
+ "stapel",
 ]
 
 [[package]]
@@ -2098,8 +2074,8 @@ name = "platformer"
 version = "0.1.0"
 dependencies = [
  "egui_kittest",
- "engine",
  "log",
+ "stapel",
 ]
 
 [[package]]
@@ -2148,7 +2124,7 @@ dependencies = [
 name = "pong"
 version = "0.1.0"
 dependencies = [
- "engine",
+ "stapel",
 ]
 
 [[package]]
@@ -2237,9 +2213,9 @@ name = "racing"
 version = "0.1.0"
 dependencies = [
  "egui_kittest",
- "engine",
  "log",
  "serde",
+ "stapel",
  "toml",
 ]
 
@@ -2507,7 +2483,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 name = "shooter"
 version = "0.1.0"
 dependencies = [
- "engine",
+ "stapel",
 ]
 
 [[package]]
@@ -2604,6 +2580,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9571ea910ebd84c86af4b3ed27f9dbdc6ad06f17c5f96146b2b671e2976744f"
 dependencies = [
  "bitflags 2.13.2",
+]
+
+[[package]]
+name = "stapel"
+version = "0.1.0"
+dependencies = [
+ "allocation-counter",
+ "bytemuck",
+ "cpal",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "env_logger",
+ "fontdue",
+ "glam",
+ "gltf",
+ "hound",
+ "image",
+ "lewton",
+ "log",
+ "pollster",
+ "rtrb",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]
@@ -2801,8 +2801,8 @@ name = "trains"
 version = "0.1.0"
 dependencies = [
  "egui_kittest",
- "engine",
  "serde",
+ "stapel",
  "toml",
 ]
 

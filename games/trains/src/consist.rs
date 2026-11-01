@@ -1,4 +1,4 @@
-use engine::{Handle, Model};
+use stapel::{Handle, Model};
 
 /// Вагонов за локомотивом не больше.
 pub(crate) const MAX_CARS: usize = 5;
@@ -58,21 +58,21 @@ pub(crate) fn max_len(catalog: &[Car]) -> f32 {
 
 /// Машина игры по имени из `MODELS`.
 #[cfg(test)]
-pub(crate) fn load(assets: &mut engine::Assets, name: &str) -> Car {
+pub(crate) fn load(assets: &mut stapel::Assets, name: &str) -> Car {
     let h = assets.load_model(format!("{}{name}.glb", crate::ASSETS));
     Car::new(h, assets.model(h)).unwrap_or_else(|| panic!("{name}"))
 }
 
 /// Все машины игры, как в `init`.
 #[cfg(test)]
-pub(crate) fn all(assets: &mut engine::Assets) -> Vec<Car> {
+pub(crate) fn all(assets: &mut stapel::Assets) -> Vec<Car> {
     let models = crate::load_models(assets);
     crate::catalog(&models, assets).into_values().collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use engine::Assets;
+    use stapel::Assets;
 
     use super::*;
 

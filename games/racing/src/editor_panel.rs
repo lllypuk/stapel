@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use engine::egui::{self, Ui};
+use stapel::egui::{self, Ui};
 
 use crate::editor::{Editor, EditorCmd, Tool};
 use crate::pieces::{DECOR, PIECES, Rot};
@@ -156,8 +156,8 @@ impl EditorPanel {
 mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
-    use engine::egui::accesskit::Toggled;
-    use engine::{Assets, IVec2};
+    use stapel::egui::accesskit::Toggled;
+    use stapel::{Assets, IVec2};
 
     use super::*;
     use crate::layout::Models;
@@ -196,7 +196,7 @@ mod tests {
                 move |ui, s: &mut State| s.panel.ui(ui.ctx(), &s.editor, &current),
                 State { panel, editor },
             );
-        engine::ui::set_font(&h.ctx, crate::FONT_PATH);
+        stapel::ui::set_font(&h.ctx, crate::FONT_PATH);
         h.run();
         h
     }

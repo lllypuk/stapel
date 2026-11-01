@@ -1,4 +1,4 @@
-use engine::{Handle, Input, KeyCode, Model, Vec2, Vec3};
+use stapel::{Handle, Input, KeyCode, Model, Vec2, Vec3};
 
 use crate::obstacle::Obstacles;
 
@@ -238,7 +238,7 @@ impl Arsenal {
 
 #[cfg(test)]
 mod tests {
-    use engine::{Assets, ElementState::Pressed, ivec2, vec2};
+    use stapel::{Assets, ElementState::Pressed, ivec2, vec2};
 
     use super::*;
     use crate::map::Map;

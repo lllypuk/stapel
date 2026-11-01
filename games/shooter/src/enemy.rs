@@ -1,4 +1,4 @@
-use engine::{IVec2, Mat3, Mat4, Model, Pose, Quat, Vec2, Vec3, vec3};
+use stapel::{IVec2, Mat3, Mat4, Model, Pose, Quat, Vec2, Vec3, vec3};
 
 use crate::map::EnemyKind;
 use crate::obstacle::Obstacles;
@@ -322,7 +322,7 @@ fn bottom(model: &Model, pose: &Pose) -> f32 {
 mod tests {
     use std::f32::consts::FRAC_PI_2;
 
-    use engine::{Assets, ElementState::Pressed, Handle, Input, KeyCode, ivec2, vec2};
+    use stapel::{Assets, ElementState::Pressed, Handle, Input, KeyCode, ivec2, vec2};
 
     use super::*;
     use crate::map::{Dir, Map};

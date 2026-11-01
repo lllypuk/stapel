@@ -1,4 +1,4 @@
-use engine::{Color, Gfx, Handle, IVec2, Sprite, Texture, Vec2, vec2};
+use stapel::{Color, Gfx, Handle, IVec2, Sprite, Texture, Vec2, vec2};
 
 use crate::map::Map;
 
@@ -105,7 +105,7 @@ impl Minimap {
 
 #[cfg(test)]
 mod tests {
-    use engine::{Assets, ivec2};
+    use stapel::{Assets, ivec2};
 
     use super::*;
 

@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use std::f32::consts::FRAC_PI_2;
 
-use engine::{
+use stapel::{
     Aabb3, Assets, Camera3D, Color, IVec2, Input, KeyCode, Mat4, ModelDraw, Quat, Ray, Vec2, Vec3,
     Vertex, vec2, vec3,
 };
@@ -435,8 +435,8 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use engine::ElementState::{Pressed, Released};
-    use engine::{ivec2, vec3};
+    use stapel::ElementState::{Pressed, Released};
+    use stapel::{ivec2, vec3};
 
     use super::*;
     use crate::layout::BASE;

@@ -4,9 +4,10 @@ members = ["engine", "games/*"]
 
 [workspace.package]
 edition = "2024"
+license = "MIT"
 
 [workspace.dependencies]
-engine = { path = "engine" }
+stapel = { path = "engine" }
 winit = "0.30.13"
 wgpu = "30.0.1"
 pollster = "1.0.1"

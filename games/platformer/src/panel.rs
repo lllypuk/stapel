@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use engine::egui::{Color32, Ui};
+use stapel::egui::{Color32, Ui};
 
 use crate::editor::{Editor, EditorCmd, Resize};
 
@@ -79,7 +79,7 @@ mod tests {
         Harness,
         kittest::{NodeT, Queryable},
     };
-    use engine::egui::{self, accesskit::Toggled};
+    use stapel::egui::{self, accesskit::Toggled};
 
     use super::*;
 
@@ -103,7 +103,7 @@ mod tests {
                     queue: Vec::new(),
                 },
             );
-        engine::ui::set_font(&h.ctx, crate::FONT_PATH);
+        stapel::ui::set_font(&h.ctx, crate::FONT_PATH);
         h
     }
 

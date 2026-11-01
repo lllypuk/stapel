@@ -1,6 +1,6 @@
 //! Депо: сборка состава на пути депо.
 
-use engine::egui;
+use stapel::egui;
 
 use crate::consist::MAX_CARS;
 use crate::track::Track;
@@ -119,7 +119,7 @@ mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
 
-    use engine::egui::accesskit::Toggled;
+    use stapel::egui::accesskit::Toggled;
 
     use super::*;
 
