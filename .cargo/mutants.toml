@@ -7,7 +7,7 @@ exclude_re = [
     " in main$",
     "replace run -> ",
     # | и ^ на непересекающихся битовых флагах wgpu дают одно и то же.
-    "replace \\| with \\^ in (GpuTextures::upload|instance_buffer|palette_buffer)$",
+    "replace \\| with \\^ in (GpuTextures::upload|instance_buffer|palette_buffer|Canvas::read_rgba)$",
     # Левый край твёрдой клетки ровно под центром — круг уже в стене, из корректного положения недостижимо.
     "replace > with >= in slide$",
     # Расстояние ровно PICKUP до предмета — граница нулевой меры, ходьбой не воспроизводится.

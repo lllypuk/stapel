@@ -4,28 +4,18 @@ use std::sync::Arc;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-use crate::gpu_textures::depth_texture;
 use crate::surface::{Action, action, pick_format, pick_present_mode, split, surface_size};
-use crate::{
-    Assets, Gfx, GpuTextures, MeshPipeline, Shown, ShownScene, SpritePipeline, UVec2, UiFrame,
-    viewport,
-};
+use crate::{Assets, FrameRenderer, Gfx, Gpu, Shown, UiFrame};
 
 /// Поверхность окна и GPU-устройство; кадр: 3D на всю поверхность, спрайты во вписанный вьюпорт, egui — поверх.
 pub struct Renderer {
     window: Arc<Window>,
     instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    gpu: Gpu,
     config: wgpu::SurfaceConfiguration,
-    textures: GpuTextures,
-    meshes: MeshPipeline,
-    sprites: SpritePipeline,
-    depth: wgpu::Texture,
-    ui: egui_wgpu::Renderer,
+    frame: FrameRenderer,
     ui_format: wgpu::TextureFormat,
-    pixel_perfect: bool,
     sized: bool,
     occluded: bool,
 }
@@ -58,14 +48,13 @@ impl Renderer {
         }))
         .expect("no GPU adapter for this surface");
         log::info!("adapter: {:?}", adapter.get_info());
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-                .expect("request device");
+        let gpu = Gpu::new(adapter);
+        let adapter = &gpu.adapter;
 
         let size = window.inner_size();
-        let caps = surface.get_capabilities(&adapter);
+        let caps = surface.get_capabilities(adapter);
         let mut config = surface
-            .get_default_config(&adapter, size.width.max(1), size.height.max(1))
+            .get_default_config(adapter, size.width.max(1), size.height.max(1))
             .expect("surface not supported by adapter");
         config.format = pick_format(&caps.formats).unwrap_or_else(|| {
             panic!(
@@ -86,28 +75,17 @@ impl Renderer {
             config.view_formats = vec![ui_format];
         }
         log::info!("surface: {:?}, {:?}", config.format, config.present_mode);
-        let textures = GpuTextures::new(&device, &queue);
-        let meshes = MeshPipeline::new(&device, &queue, config.format, &textures);
-        let sprites = SpritePipeline::new(&device, &queue, config.format, &textures);
         // Настоящий размер — в `resize` ниже: только он зажимает его под лимит текстур.
-        let depth = depth_texture(&device, (1, 1));
-        let ui =
-            egui_wgpu::Renderer::new(&device, ui_format, egui_wgpu::RendererOptions::default());
+        let frame = FrameRenderer::new(&gpu, config.format, ui_format, (1, 1), pixel_perfect);
 
         let mut renderer = Self {
             window,
             instance,
             surface,
-            device,
-            queue,
+            gpu,
             config,
-            textures,
-            meshes,
-            sprites,
-            depth,
-            ui,
+            frame,
             ui_format,
-            pixel_perfect,
             sized: false,
             occluded: false,
         };
@@ -128,14 +106,14 @@ impl Renderer {
 
     /// Перенастраивает поверхность под новый размер окна.
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
-        let max = self.device.limits().max_texture_dimension_2d;
+        let max = self.gpu.device.limits().max_texture_dimension_2d;
         let fitted = surface_size(size, max);
         self.sized = fitted.is_some();
         if let Some((w, h)) = fitted {
             self.config.width = w;
             self.config.height = h;
-            self.surface.configure(&self.device, &self.config);
-            self.depth = depth_texture(&self.device, (w, h));
+            self.surface.configure(&self.gpu.device, &self.config);
+            self.frame.resize((w, h));
         }
     }
 
@@ -154,21 +132,10 @@ impl Renderer {
     ) -> Result<Option<Shown>, RenderError> {
         // До проверки поверхности: иначе текстуры, загруженные при свёрнутом окне, ждали бы его показа,
         // а атлас шрифта egui присылает один раз и потерялся бы.
-        self.textures.upload(assets);
-        self.meshes.upload(assets);
-        for (id, deltas) in &ui.textures.set {
-            for delta in deltas {
-                self.ui
-                    .update_texture(&self.device, &self.queue, *id, delta);
-            }
-        }
+        self.frame.upload(assets, &ui);
         let shown = self.present(gfx, assets, &ui);
         // После submit кадра или сразу, если кадр пропущен.
-        for id in &ui.textures.free {
-            self.ui.free_texture(id);
-        }
-        // Неочищенный `TexturesDelta` паникует при drop в debug.
-        ui.textures.clear();
+        self.frame.release(&mut ui);
         shown
     }
 
@@ -186,12 +153,12 @@ impl Renderer {
             (Action::Draw { reconfigure }, Some(frame)) => {
                 let shown = self.draw(frame, gfx, assets, ui);
                 if reconfigure {
-                    self.surface.configure(&self.device, &self.config);
+                    self.surface.configure(&self.gpu.device, &self.config);
                 }
                 Ok(Some(shown))
             }
             (Action::Reconfigure, _) => {
-                self.surface.configure(&self.device, &self.config);
+                self.surface.configure(&self.gpu.device, &self.config);
                 Ok(None)
             }
             (Action::Recreate, _) => {
@@ -199,7 +166,7 @@ impl Renderer {
                     .instance
                     .create_surface(self.window.clone())
                     .expect("recreate surface");
-                self.surface.configure(&self.device, &self.config);
+                self.surface.configure(&self.gpu.device, &self.config);
                 Ok(None)
             }
             (Action::Fail, _) => Err(RenderError),
@@ -217,67 +184,19 @@ impl Renderer {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let ui_view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.ui_format),
+            ..Default::default()
+        });
         let mut encoder = self
+            .gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let viewport = viewport(
-            (self.config.width, self.config.height),
-            &gfx.camera,
-            self.pixel_perfect,
-        );
-        if let Some(scene) = &gfx.scene {
-            self.meshes.draw_scene(
-                &mut encoder,
-                &view,
-                &self.depth,
-                &self.textures,
-                scene,
-                assets,
-                gfx.clear_color,
-            );
-        }
-        // С `Clear` спрайты стёрли бы 3D.
-        self.sprites.draw(
-            &mut encoder,
-            &view,
-            &self.textures,
-            viewport,
-            gfx,
-            gfx.scene.is_none(),
-        );
-        let mut buffers = Vec::new();
-        if !ui.jobs.is_empty() {
-            let screen = egui_wgpu::ScreenDescriptor {
-                size_in_pixels: [self.config.width, self.config.height],
-                pixels_per_point: ui.pixels_per_point,
-            };
-            buffers =
-                self.ui
-                    .update_buffers(&self.device, &self.queue, &mut encoder, &ui.jobs, &screen);
-            let ui_view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
-                format: Some(self.ui_format),
-                ..Default::default()
-            });
-            let mut pass = encoder
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("egui"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &ui_view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        // `Clear` стёр бы спрайты под панелью.
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    ..Default::default()
-                })
-                .forget_lifetime();
-            self.ui.render(&mut pass, &ui.jobs, &screen);
-        }
+        let (shown, mut buffers) = self
+            .frame
+            .draw(&mut encoder, &view, &ui_view, gfx, assets, ui);
         buffers.push(encoder.finish());
-        self.queue.submit(buffers);
+        self.gpu.queue.submit(buffers);
         // На Wayland это ограничивает `RedrawRequested` частотой монитора, даже без vsync.
         if matches!(
             self.config.present_mode,
@@ -285,15 +204,8 @@ impl Renderer {
         ) {
             self.window.pre_present_notify();
         }
-        self.queue.present(frame);
-        Shown {
-            camera: gfx.camera,
-            viewport,
-            scene: gfx.scene.as_ref().map(|scene| ShownScene {
-                camera: scene.camera,
-                size: UVec2::new(self.config.width, self.config.height),
-            }),
-        }
+        self.gpu.queue.present(frame);
+        shown
     }
 }
 

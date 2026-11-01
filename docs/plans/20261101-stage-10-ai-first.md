@@ -180,14 +180,14 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError>;
 - Create: `engine/src/gpu.rs`, `engine/src/canvas.rs`, `engine/src/frame_renderer.rs`
 - Modify: `engine/src/renderer.rs`, `engine/src/lib.rs`
 
-- [ ] офскрин-тест: заливка известным цветом, readback отдаёт ожидаемые sRGB-байты при ширине, требующей выравнивания строки
-- [ ] офскрин-тест: при полупрозрачном спрайте альфа PNG равна 255
-- [ ] `Gpu`, `Gpu::headless`; `Renderer::new` строит `Gpu` из поверхности и совместимого адаптера
-- [ ] `Canvas { new, resize, view, ui_view, read_rgba }`; `read_rgba` — `copy_texture_to_buffer`, `poll` до готовности, снятие паддинга
-- [ ] `FrameRenderer::new(&gpu, format, ui_format, size, pixel_perfect)`: пайплайны, `depth`, egui; рисует в переданные `view` и `ui_view`
-- [ ] в него переносятся заливка ресурсов и `draw`; порядок заливка до проверки поверхности сохраняется с прежним комментарием
-- [ ] офскрин-тест: `FrameRenderer` с 3D, `viewmodel`, спрайтами в letterbox и панелью egui рисует все четыре слоя
-- [ ] `Renderer` держит `FrameRenderer` и передаёт ему оба view кадра поверхности: окно работает, `Canvas` пока только в тестах
+- [x] офскрин-тест: заливка известным цветом, readback отдаёт ожидаемые sRGB-байты при ширине, требующей выравнивания строки
+- [x] офскрин-тест: при полупрозрачном спрайте альфа PNG равна 255
+- [x] `Gpu`, `Gpu::headless`; `Renderer::new` строит `Gpu` из поверхности и совместимого адаптера
+- [x] `Canvas { new, resize, view, ui_view, read_rgba }`; `read_rgba` — `copy_texture_to_buffer`, `poll` до готовности, снятие паддинга
+- [x] `FrameRenderer::new(&gpu, format, ui_format, size, pixel_perfect)`: пайплайны, `depth`, egui; рисует в переданные `view` и `ui_view`
+- [x] в него переносятся заливка ресурсов и `draw`; порядок заливка до проверки поверхности сохраняется с прежним комментарием
+- [x] офскрин-тест: `FrameRenderer` с 3D, `viewmodel`, спрайтами в letterbox и панелью egui рисует все четыре слоя
+- [x] `Renderer` держит `FrameRenderer` и передаёт ему оба view кадра поверхности: окно работает, `Canvas` пока только в тестах (запуск platformer и shooter под `timeout`: 60 fps, кадры идут; ресайз и гамма egui интерактивно не проверялись)
 
 ### Task 5: Проход вывода на поверхность
 

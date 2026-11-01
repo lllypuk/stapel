@@ -8,12 +8,18 @@ pub mod assets;
 pub mod audio;
 /// Ортокамера и вписывание кадра в окно.
 pub mod camera;
+/// Цель рендера без окна.
+pub mod canvas;
 /// Фиксированный шаг симуляции.
 pub mod clock;
 /// Сущности, компоненты и отложенные команды.
 pub mod ecs;
 /// Контекст кадра, трейт `Game` и шаг кадра.
 pub mod frame;
+/// Кадр в переданные виды.
+pub mod frame_renderer;
+/// Адаптер, устройство и очередь.
+pub mod gpu;
 #[cfg(test)]
 mod gpu_test;
 /// Текстуры на GPU, общие для конвейеров.
@@ -54,6 +60,7 @@ pub use camera::{
     Camera2D, Camera3D, MAX_PITCH, Ray, Viewport, letterbox, letterbox_pixel, screen_to_world,
     viewport,
 };
+pub use canvas::{CANVAS_FORMAT, Canvas};
 pub use clock::FixedClock;
 pub use ecs::{Commands, Entity, SparseSet, World};
 pub use egui;
@@ -61,7 +68,9 @@ pub use frame::{
     Color, Context, CursorGrab, Game, Gfx, Shown, ShownScene, Time, VirtualGrab, VisualFrame,
     step_frame, step_visual,
 };
+pub use frame_renderer::FrameRenderer;
 pub use glam::{IVec2, Mat3, Mat4, Quat, UVec2, Vec2, Vec3, ivec2, vec2, vec3};
+pub use gpu::Gpu;
 pub use gpu_textures::GpuTextures;
 pub use input::{Input, InputEvent, wheel_lines};
 pub use mesh::{Mesh, PendingMesh, Vertex};

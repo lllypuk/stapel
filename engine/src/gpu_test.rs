@@ -2,7 +2,7 @@
 
 use std::sync::OnceLock;
 
-use crate::{Assets, Handle, Texture};
+use crate::{Assets, Gpu, Handle, Texture};
 
 /// Сторона квадратной цели рендера в пикселях.
 pub(crate) const SIZE: u32 = 64;
@@ -12,31 +12,30 @@ pub(crate) const TOL: u8 = 2;
 /// Устройство на адаптере из окружения, одно на процесс; `None` — адаптера нет и `REQUIRE_GPU` не стоит.
 /// Одно — потому что параллельное создание экземпляров Vulkan роняет загрузчик в SIGSEGV.
 pub(crate) fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
-    static GPU: OnceLock<Option<(wgpu::Device, wgpu::Queue)>> = OnceLock::new();
+    gpu_full().map(|g| (g.device, g.queue))
+}
+
+/// То же, что `gpu`, вместе с адаптером.
+pub(crate) fn gpu_full() -> Option<Gpu> {
+    static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
     GPU.get_or_init(open_gpu).clone()
 }
 
-fn open_gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    let adapter =
-        match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-        {
-            Ok(a) => a,
-            Err(e) => {
-                assert!(
-                    std::env::var("REQUIRE_GPU").as_deref() != Ok("1"),
-                    "REQUIRE_GPU=1, but no GPU adapter: {e}"
-                );
-                eprintln!("SKIPPED: no GPU adapter: {e}");
-                return None;
-            }
-        };
-    eprintln!("adapter: {:?}", adapter.get_info());
-    Some(
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-            .expect("request device"),
-    )
+fn open_gpu() -> Option<Gpu> {
+    match Gpu::headless() {
+        Ok(gpu) => {
+            eprintln!("adapter: {:?}", gpu.adapter.get_info());
+            Some(gpu)
+        }
+        Err(e) => {
+            assert!(
+                std::env::var("REQUIRE_GPU").as_deref() != Ok("1"),
+                "REQUIRE_GPU=1, but no GPU adapter: {e}"
+            );
+            eprintln!("SKIPPED: no GPU adapter: {e}");
+            None
+        }
+    }
 }
 
 /// Рисует `draw` в цель `SIZE × SIZE` формата `Rgba8UnormSrgb` и возвращает её RGBA построчно сверху.
