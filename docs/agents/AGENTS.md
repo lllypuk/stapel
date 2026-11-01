@@ -80,6 +80,7 @@ Ticks:
 - At tick N >= 1 the events of that tick are applied in file order, then one `update`, `draw` (`alpha = 0`), `ui` and render run. Snapshot N is taken after that frame.
 - Start state: focused, no cursor until a `cursor` event, no grab. A `press` is seen by `just_pressed` in that tick's `update` and stays down until `release`; a click needs a `cursor` event first, then `button_press` and a later `button_release`.
 - Aim clicks with coordinates read off an earlier snapshot, not guessed.
+- A click that depends on the economy goes by the `report` of the previous run; shifting one click changes everything after it.
 
 ## Running and reading
 
@@ -100,6 +101,7 @@ It prints the path of `target/run/win/report.json` and exits; without `--out` fi
 - `report` is your `Game::report` at that tick. `sprites` counts sprites in the frame. `texts` lists strings passed to `draw_text`: sent, not visible.
 - View every snapshot PNG with your image-reading tool and check what is on screen against the report. A covered, off-screen or invisible element still appears in `texts`.
 - The same run from a test: `stapel::run_script::<Mine>(&config, &stapel::Script::parse(text)?, None)` returns the data above as `RunReport` (`snapshots[i].report`, `.texts`, `.sprites`). Match `Err(RunError::NoAdapter(why))` to print `SKIPPED: {why}` and return; a machine without a GPU must not fail the suite, and with `REQUIRE_GPU=1` in the environment the test must panic instead.
+- To tune ticks, take frequent snapshots through `run_script(.., None)` in a test or a throwaway program and read `report` and `texts`: no PNG is written or read back from the GPU, so it is faster than `--out`. Use PNG only to look.
 - Text typed into egui fields cannot be scripted; clicks and keys can.
 
 ## Report fields

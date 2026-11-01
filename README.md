@@ -143,7 +143,7 @@ Ticks:
 ]}
 ```
 
-`sprites` is the sprite count of the frame; `texts` lists the strings passed to `draw_text`; `report` is `Game::report` at that tick (a JSON object, anything else is an error). The same run is available from code: `stapel::run_script::<G>(&config, &script, Some(out_dir))` returns the same data as `RunReport`; with `None` no PNG is read back. It returns `RunError::NoAdapter` when the machine has no Vulkan adapter, so a test can skip on it.
+`sprites` is the sprite count of the frame; `texts` lists the strings passed to `draw_text`; `report` is `Game::report` at that tick (a JSON object, anything else is an error). The same run is available from code: `stapel::run_script::<G>(&config, &script, Some(out_dir))` returns the same data as `RunReport`; with `None` no PNG is read back, which makes it faster than `--out` for tuning a scenario. It returns `RunError::NoAdapter` when the machine has no Vulkan adapter, so a test can skip on it.
 
 What to rely on and what not to:
 
