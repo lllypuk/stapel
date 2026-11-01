@@ -10,6 +10,7 @@ use winit::keyboard::PhysicalKey;
 use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::audio::device;
+use crate::runner::{STALL_TIMEOUT, stalled};
 use crate::{
     Config, Context, CursorGrab, FixedClock, FrameStats, Game, InputEvent, RateCounter, Renderer,
     RunError, RunReport, Runner, Script, Vec2, step_visual, ui, wheel_lines,
@@ -335,6 +336,7 @@ pub(crate) fn run_script_window<G: Game>(
         out,
         running: None,
         result: None,
+        last_frame: Instant::now(),
     };
     event_loop.run_app(&mut app)?;
     app.result.unwrap_or(Err(RunError::Closed { tick: 0 }))
@@ -346,6 +348,7 @@ struct ScriptApp<'a, G: Game> {
     out: &'a Path,
     running: Option<(Arc<Window>, Renderer, Runner<G>)>,
     result: Option<Result<RunReport, RunError>>,
+    last_frame: Instant,
 }
 
 impl<G: Game> ApplicationHandler for ScriptApp<'_, G> {
@@ -358,7 +361,9 @@ impl<G: Game> ApplicationHandler for ScriptApp<'_, G> {
             .with_title(self.config.title.clone())
             .with_inner_size(PhysicalSize::new(w, h));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
-        let renderer = Renderer::new(window.clone(), self.config.vsync, self.config.pixel_perfect);
+        // Без vsync: под Fifo Wayland не шлёт кадры скрытому окну, и прогон встаёт.
+        let renderer = Renderer::new(window.clone(), false, self.config.pixel_perfect);
+        self.last_frame = Instant::now();
         match Runner::<G>::new(renderer.gpu(), self.config, self.script) {
             Ok(runner) => {
                 window.request_redraw();
@@ -387,7 +392,10 @@ impl<G: Game> ApplicationHandler for ScriptApp<'_, G> {
             }
             WindowEvent::RedrawRequested => match runner.advance(Some(self.out)) {
                 Ok(Some(_)) => match renderer.present_canvas(runner.canvas()) {
-                    Ok(_) => resume_redraw(window, renderer),
+                    Ok(_) => {
+                        self.last_frame = Instant::now();
+                        resume_redraw(window, renderer);
+                    }
                     Err(e) => {
                         let e = std::io::Error::other(e);
                         self.stop(event_loop, Err(e.into()));
@@ -400,6 +408,19 @@ impl<G: Game> ApplicationHandler for ScriptApp<'_, G> {
                 Err(e) => self.stop(event_loop, Err(e)),
             },
             _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let Some((_, _, runner)) = self.running.as_ref() else {
+            return;
+        };
+        let idle = self.last_frame.elapsed();
+        if stalled(idle) {
+            let tick = runner.tick();
+            self.stop(event_loop, Err(RunError::Stalled { tick }));
+        } else {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.last_frame + STALL_TIMEOUT));
         }
     }
 }

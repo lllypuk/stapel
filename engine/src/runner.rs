@@ -40,7 +40,6 @@ pub struct RunReport {
 }
 
 /// Ошибка запуска или прогона.
-#[derive(Debug)]
 pub enum RunError {
     /// Не создался или упал цикл событий окна.
     EventLoop(winit::error::EventLoopError),
@@ -67,10 +66,23 @@ pub enum RunError {
         /// Последний выполненный тик.
         tick: u32,
     },
+    /// Окно не просит кадров дольше `STALL_TIMEOUT`.
+    Stalled {
+        /// Последний выполненный тик.
+        tick: u32,
+    },
     /// Ошибка файловой системы.
     Io(std::io::Error),
     /// Ошибка записи PNG.
     Png(image::ImageError),
+}
+
+/// Сколько окно режима `--window` может не просить кадров, прежде чем прогон кончится ошибкой.
+pub(crate) const STALL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Окно простояло без кадров слишком долго.
+pub(crate) fn stalled(idle: Duration) -> bool {
+    idle >= STALL_TIMEOUT
 }
 
 impl fmt::Display for RunError {
@@ -87,9 +99,21 @@ impl fmt::Display for RunError {
             ),
             Self::Report { tick } => write!(f, "тик {tick}: Game::report вернул не объект"),
             Self::Closed { tick } => write!(f, "окно закрыто на тике {tick}, сценарий не кончился"),
+            Self::Stalled { tick } => write!(
+                f,
+                "окно не просит кадров {} с на тике {tick}: композитор не шлёт frame callback скрытому окну; сделайте окно видимым или запустите под X11 (env -u WAYLAND_DISPLAY)",
+                STALL_TIMEOUT.as_secs()
+            ),
             Self::Io(e) => write!(f, "файл: {e}"),
             Self::Png(e) => write!(f, "PNG: {e}"),
         }
+    }
+}
+
+/// `main` возвращает `Result`, и без этого пользователь видит `Stalled { tick: 0 }` вместо причины.
+impl fmt::Debug for RunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }
 
@@ -717,6 +741,25 @@ mod tests {
             RunError::Closed { tick: 4 }.to_string(),
             "окно закрыто на тике 4, сценарий не кончился"
         );
+    }
+
+    #[test]
+    fn debug_shows_message() {
+        let e = RunError::Closed { tick: 4 };
+        assert_eq!(format!("{e:?}"), e.to_string());
+    }
+
+    #[test]
+    fn stall_starts_at_timeout() {
+        assert!(!stalled(Duration::from_millis(9_999)));
+        assert!(stalled(STALL_TIMEOUT));
+        assert!(stalled(STALL_TIMEOUT * 2));
+    }
+
+    #[test]
+    fn stalled_error_names_tick_and_timeout() {
+        let text = RunError::Stalled { tick: 7 }.to_string();
+        assert!(text.contains("10 с на тике 7"), "{text}");
     }
 
     #[test]
