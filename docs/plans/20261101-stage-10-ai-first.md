@@ -440,7 +440,7 @@ shooter (старт):
   - `make mutants-diff BASE=main` exit=0: 195 mutants tested in 11m: 163 caught, 32 unviable, 0 missed
   - игра на fda3623 (`cargo update -p stapel`, `AGENTS.md` из этого rev): сборка без правок игры, `cargo test` 4 passed; win, lost, rules, без защиты и `--window` (с X11 и без `env -u WAYLAND_DISPLAY`) дали `diff -rq` пустой с прежними результатами. Ломающих изменений нет
   - внешний каталог по README (https-зависимость на fda3623): `REQUIRE_GPU=1 cargo test` 1 passed, `--script` дал `report.json` с `index` 0 и 1; каталог удалён
-  - CI: пайплайн 1228 на 3e88954 — success; на fda3623 не запускался (не пушил)
+  - CI: пайплайн 1228 на 3e88954 — success; пайплайн 1229 на fda3623 при переносе плана — running
 
 ### Task 24: [Final] Документация
 - [x] `README.md` и `CLAUDE.md` соответствуют итогу разбора журнала
