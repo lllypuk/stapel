@@ -1,5 +1,7 @@
 //! Офскрин-хелперы GPU-тестов: адаптер, цель рендера, чтение пикселей.
 
+use std::fs;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use crate::{Assets, Gpu, Handle, Texture};
@@ -122,6 +124,24 @@ pub(crate) fn load_png(
         std::env::temp_dir().join(format!("engine-gpu-test-{}-{name}.png", std::process::id()));
     image::save_buffer(&path, rgba, w, h, image::ExtendedColorType::Rgba8).unwrap();
     let id = assets.load_texture(&path);
-    std::fs::remove_file(&path).unwrap();
+    fs::remove_file(&path).unwrap();
     id
+}
+
+/// Временный каталог процесса, который убирается и после упавшего теста.
+pub(crate) struct TempDir(pub(crate) PathBuf);
+
+impl TempDir {
+    pub(crate) fn new(tag: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("stapel-{tag}-{}", std::process::id()));
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.0).ok();
+    }
 }

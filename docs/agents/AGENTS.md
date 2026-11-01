@@ -65,14 +65,14 @@ A scenario is a TOML file that plays input by tick.
 ticks = 300             # update calls; required
 size = [1280, 720]      # physical pixels; default Config::size
 snapshots = [0, 150]    # ticks to capture as PNG; the last tick is always captured
-# seed = 7  scale = 1.0 (physical pixels per egui point)
+# seed = 7  (any u64, default 0)  scale = 1.0 (physical pixels per egui point)
 
 [[event]]
 tick = 10               # 1..=ticks, non-decreasing down the file
 press = "KeyD"          # exactly one action per event
 ```
 
-Actions: `press` / `release = "<KeyCode name>"`, `cursor = [x, y]`, `cursor_left = true`, `button_press` / `button_release = "Left"`, `motion = [dx, dy]`, `wheel = [x, y]`, `focus = false`. Coordinates are physical pixels. Mistakes (unknown field, tick out of range, two actions) are errors naming `event[N]`.
+Actions: `press` / `release = "<KeyCode name>"`, `cursor = [x, y]`, `cursor_left = true`, `button_press` / `button_release = "Left"`, `motion = [dx, dy]`, `wheel = [x, y]`, `focus = false`. Coordinates are physical pixels. Mistakes (unknown field, tick out of range, two actions, non-finite coordinates, `press` and `release` of one key or button in the same tick) are errors naming `event[N]`; release in a later tick.
 
 Ticks:
 
@@ -88,7 +88,7 @@ Ticks:
 cargo run -- --script scripts/win.toml --out target/run/win
 ```
 
-It prints the path of `target/run/win/report.json` and exits; without `--out` files go to `target/stapel-run/<scenario name>/`. `--window` plays the same scenario in a window. `--no-png` writes `report.json` only (`png` is `null`, nothing is read back from the GPU): use it while tuning a scenario, then run once without it to look at the pictures. Other arguments are ignored.
+It prints the path of `target/run/win/report.json` and exits; without `--out` files go to `target/stapel-run/<scenario name>/`. Old `tick-*.png` and `report.json` in that directory are deleted at the start of a run; other files stay. `--window` plays the same scenario in a window. `--no-png` writes `report.json` only (`png` is `null`, nothing is read back from the GPU): use it while tuning a scenario, then run once without it to look at the pictures. Other arguments are ignored.
 
 `report.json`:
 
@@ -102,7 +102,8 @@ It prints the path of `target/run/win/report.json` and exits; without `--out` fi
 - View every snapshot PNG with your image-reading tool and check what is on screen against the report. A covered, off-screen or invisible element still appears in `texts`.
 - The same run from a test: `stapel::run_script::<Mine>(&config, &stapel::Script::parse(text)?, None)` returns the data above as `RunReport` (`snapshots[i].report`, `.texts`, `.sprites`). Match `Err(RunError::NoAdapter(why))` to print `SKIPPED: {why}` and return; a machine without a GPU must not fail the suite, and with `REQUIRE_GPU=1` in the environment the test must panic instead.
 - To tune ticks, take frequent snapshots through `run_script(.., None)` in a test or a throwaway program and read `report` and `texts`: no PNG is written or read back from the GPU, so it is faster than `--out`. Use PNG only to look.
-- Text typed into egui fields cannot be scripted; clicks and keys can.
+- Text typed into egui fields and modifier keys (Ctrl, Shift, Alt) cannot be scripted; clicks and keys can.
+- `--window` shows the picture 1:1 from the top left corner: a window of another size than the scenario crops or smears it (one `warn` with both sizes).
 
 ## Report fields
 

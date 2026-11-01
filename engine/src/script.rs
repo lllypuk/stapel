@@ -99,6 +99,15 @@ fn invalid<T>(reason: impl Into<String>) -> Result<T, ScriptError> {
 
 impl RawEvent {
     fn into_event(self) -> Result<InputEvent, String> {
+        for (name, v) in [
+            ("cursor", self.cursor),
+            ("motion", self.motion),
+            ("wheel", self.wheel),
+        ] {
+            if v.is_some_and(|[x, y]| !(x.is_finite() && y.is_finite())) {
+                return Err(format!("{name}: нужны конечные числа"));
+            }
+        }
         let key = |code, state| InputEvent::Key {
             code,
             state,
@@ -148,6 +157,31 @@ impl RawEvent {
     }
 }
 
+/// Нажатие и отпускание одной клавиши или кнопки: `update` видел бы только итог.
+fn opposite(first: InputEvent, second: InputEvent) -> bool {
+    match (first, second) {
+        (
+            InputEvent::Key {
+                code: a, state: sa, ..
+            },
+            InputEvent::Key {
+                code: b, state: sb, ..
+            },
+        ) => a == b && sa != sb,
+        (
+            InputEvent::Button {
+                button: a,
+                state: sa,
+            },
+            InputEvent::Button {
+                button: b,
+                state: sb,
+            },
+        ) => a == b && sa != sb,
+        _ => false,
+    }
+}
+
 impl Script {
     /// Разбирает и проверяет сценарий.
     ///
@@ -180,10 +214,14 @@ impl Script {
             if events.last().is_some_and(|p| p.tick > tick) {
                 return Err(fail(format!("tick = {tick} меньше предыдущего")));
             }
-            events.push(ScriptEvent {
-                tick,
-                event: ev.into_event().map_err(fail)?,
-            });
+            let event = ev.into_event().map_err(fail)?;
+            let same_tick = events.iter().rev().take_while(|p| p.tick == tick);
+            if same_tick.into_iter().any(|p| opposite(p.event, event)) {
+                return Err(fail(
+                    "нажатие и отпускание одной клавиши или кнопки в одном тике: нажатие потеряется".into(),
+                ));
+            }
+            events.push(ScriptEvent { tick, event });
         }
         let mut snapshots = raw.snapshots;
         snapshots.push(raw.ticks);
@@ -372,6 +410,51 @@ button_release = "Left"
         assert_eq!(i, 0);
         let (i, _) = event_err("[[event]]\nfocus = true");
         assert_eq!(i, 0);
+    }
+
+    #[test]
+    fn non_finite_event_values_name_the_record() {
+        for field in ["cursor", "motion", "wheel"] {
+            for bad in ["nan", "inf", "-inf"] {
+                let (i, r) = event_err(&format!(
+                    "[[event]]\ntick = 1\nfocus = true\n[[event]]\ntick = 2\n{field} = [1.0, {bad}]"
+                ));
+                assert_eq!(i, 1);
+                assert!(r.contains(field), "{r}");
+            }
+        }
+    }
+
+    #[test]
+    fn press_and_release_in_one_tick_is_error() {
+        let (i, r) = event_err(
+            "[[event]]\ntick = 3\npress = \"KeyW\"\n[[event]]\ntick = 3\nrelease = \"KeyW\"",
+        );
+        assert_eq!(i, 1);
+        assert!(r.contains("одном тике"), "{r}");
+        let (i, _) = event_err(
+            "[[event]]\ntick = 3\nbutton_release = \"Left\"\n[[event]]\ntick = 3\nbutton_press = \"Left\"",
+        );
+        assert_eq!(i, 1);
+        Script::parse(
+            "ticks = 4\n[[event]]\ntick = 3\npress = \"KeyW\"\n[[event]]\ntick = 3\nrelease = \"KeyA\"\n[[event]]\ntick = 4\nrelease = \"KeyW\"",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn seed_takes_full_u64() {
+        let seed = |text: &str| Script::parse(text).map(|s| s.seed);
+        assert_eq!(seed("ticks = 1\nseed = 18446744073709551615"), Ok(u64::MAX));
+        assert!(seed("ticks = 1\nseed = 18446744073709551616").is_err());
+    }
+
+    #[test]
+    fn bad_tick_and_snapshot_types_are_errors() {
+        assert!(Script::parse("ticks = 3\n[[event]]\ntick = -1\nfocus = true").is_err());
+        assert!(Script::parse("ticks = 3\n[[event]]\ntick = 1.5\nfocus = true").is_err());
+        assert!(Script::parse("ticks = 3\nsnapshots = [\"a\"]").is_err());
+        assert!(Script::parse("ticks = 3\n[[event]]").is_err());
     }
 
     #[test]

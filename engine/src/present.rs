@@ -1,12 +1,5 @@
 use crate::Gpu;
 
-/// Линейна ли пара «источник, цель»: нужны оба флага `VIEW_FORMATS`; иначе обе стороны `*Srgb`.
-/// Линейный источник при цели `*Srgb` дал бы лишнее кодирование и светлую картинку.
-#[must_use]
-pub fn linear_present(canvas_views: bool, surface_views: bool) -> bool {
-    canvas_views && surface_views
-}
-
 /// Вывод `Canvas` на цель 1:1 от левого верхнего угла; координаты зажаты в размер источника.
 pub struct PresentPass {
     device: wgpu::Device,
@@ -107,14 +100,6 @@ mod tests {
     use crate::{Assets, Camera2D, Canvas, FrameRenderer, Gfx, Sprite, UiFrame, Vec2, vec2};
 
     const BGRA: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
-
-    #[test]
-    fn linear_only_with_both_flags() {
-        assert!(linear_present(true, true));
-        assert!(!linear_present(true, false));
-        assert!(!linear_present(false, true));
-        assert!(!linear_present(false, false));
-    }
 
     fn target(gpu: &Gpu, size: (u32, u32)) -> wgpu::Texture {
         gpu.device.create_texture(&wgpu::TextureDescriptor {

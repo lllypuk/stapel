@@ -91,7 +91,7 @@ pub use physics::{
 pub use physics3d::{
     ContactParams, Hit, RigidBody, StaticWorld, Triangle, box_inertia, solve_contacts,
 };
-pub use present::{PresentPass, linear_present};
+pub(crate) use present::PresentPass;
 pub use renderer::{RenderError, Renderer};
 pub use runner::{RunError, RunReport, Runner, Snapshot, run_script};
 pub use scene::{
@@ -133,13 +133,7 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError> {
     env_logger::init();
     let args = cli::parse_args(std::env::args_os().skip(1))?;
     if let Some(script) = &args.script {
-        let report = cli::run_script_file::<G>(
-            &config,
-            script,
-            args.out.as_deref(),
-            args.window,
-            args.no_png,
-        )?;
+        let report = cli::run_script_file::<G>(&config, script, &args)?;
         #[expect(clippy::print_stdout, reason = "путь отчёта — результат команды")]
         {
             println!("{}", report.display());

@@ -10,7 +10,8 @@ use winit::keyboard::PhysicalKey;
 use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::audio::device;
-use crate::runner::{STALL_TIMEOUT, stalled};
+use crate::renderer::Output;
+use crate::runner::STALL_TIMEOUT;
 use crate::{
     Config, Context, CursorGrab, FixedClock, FrameStats, Game, InputEvent, RateCounter, Renderer,
     RunError, RunReport, Runner, Script, Vec2, step_visual, ui, wheel_lines,
@@ -322,7 +323,7 @@ fn clock_seed() -> u64 {
         .map_or(1, |d| d.as_nanos() as u64)
 }
 
-/// Прогоняет сценарий в окне: `Runner` рисует в свой `Canvas`, `Renderer` выводит его на поверхность.
+/// Прогоняет сценарий в окне: `Runner` рисует в свой `Canvas`, `Output` выводит его на поверхность.
 pub(crate) fn run_script_window<G: Game>(
     config: &Config,
     script: &Script,
@@ -335,6 +336,7 @@ pub(crate) fn run_script_window<G: Game>(
         script,
         out,
         running: None,
+        size_warned: false,
         result: None,
         last_frame: Instant::now(),
     };
@@ -346,7 +348,8 @@ struct ScriptApp<'a, G: Game> {
     config: &'a Config,
     script: &'a Script,
     out: &'a Path,
-    running: Option<(Arc<Window>, Renderer, Runner<G>)>,
+    running: Option<(Arc<Window>, Output, Runner<G>)>,
+    size_warned: bool,
     result: Option<Result<RunReport, RunError>>,
     last_frame: Instant,
 }
@@ -362,39 +365,46 @@ impl<G: Game> ApplicationHandler for ScriptApp<'_, G> {
             .with_inner_size(PhysicalSize::new(w, h));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         // Без vsync: под Fifo на Wayland прогон вставал после тика 0 (design.md, «Рендер»).
-        let renderer = Renderer::new(window.clone(), false, self.config.pixel_perfect);
+        let out = Output::new(window.clone(), false);
         self.last_frame = Instant::now();
-        match Runner::<G>::new(renderer.gpu(), self.config, self.script) {
+        match Runner::<G>::new(&out.gpu, self.config, self.script) {
             Ok(runner) => {
                 window.request_redraw();
-                self.running = Some((window, renderer, runner));
+                self.running = Some((window, out, runner));
             }
             Err(e) => self.stop(event_loop, Err(e)),
         }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        let Some((window, renderer, runner)) = self.running.as_mut() else {
+        let Some((window, out, runner)) = self.running.as_mut() else {
             return;
         };
         match event {
             WindowEvent::Resized(size) => {
-                renderer.resize(size);
-                resume_redraw(window, renderer);
+                out.resize(size);
+                resume_redraw(window, out);
             }
             WindowEvent::Occluded(occluded) => {
-                renderer.set_occluded(occluded);
-                resume_redraw(window, renderer);
+                out.set_occluded(occluded);
+                resume_redraw(window, out);
             }
             WindowEvent::CloseRequested => {
                 let tick = runner.tick();
                 self.stop(event_loop, Err(RunError::Closed { tick }));
             }
             WindowEvent::RedrawRequested => match runner.advance(Some(self.out)) {
-                Ok(Some(_)) => match renderer.present_canvas(runner.canvas()) {
+                Ok(Some(_)) => match out.present_canvas(runner.canvas()) {
                     Ok(_) => {
                         self.last_frame = Instant::now();
-                        resume_redraw(window, renderer);
+                        let (canvas, surface) = (runner.canvas().size(), out.size());
+                        if canvas != surface && !self.size_warned {
+                            self.size_warned = true;
+                            log::warn!(
+                                "размер окна {surface:?} не равен размеру сценария {canvas:?}: картинка искажена"
+                            );
+                        }
+                        resume_redraw(window, out);
                     }
                     Err(e) => {
                         let e = std::io::Error::other(e);
@@ -416,7 +426,7 @@ impl<G: Game> ApplicationHandler for ScriptApp<'_, G> {
             return;
         };
         let idle = self.last_frame.elapsed();
-        if stalled(idle) {
+        if idle >= STALL_TIMEOUT {
             let tick = runner.tick();
             self.stop(event_loop, Err(RunError::Stalled { tick }));
         } else {
@@ -432,8 +442,8 @@ impl<G: Game> ScriptApp<'_, G> {
     }
 }
 
-fn resume_redraw(window: &Window, renderer: &Renderer) {
-    if renderer.is_available() {
+fn resume_redraw(window: &Window, out: &Output) {
+    if out.is_available() {
         window.request_redraw();
     }
 }

@@ -80,11 +80,6 @@ pub enum RunError {
 /// Сколько окно режима `--window` может не просить кадров, прежде чем прогон кончится ошибкой.
 pub(crate) const STALL_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Окно простояло без кадров слишком долго.
-pub(crate) fn stalled(idle: Duration) -> bool {
-    idle >= STALL_TIMEOUT
-}
-
 impl fmt::Display for RunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -205,7 +200,7 @@ impl<G: Game> Runner<G> {
     }
 
     /// Выполняет следующий тик, начиная с нулевого; `None` — сценарий кончился.
-    pub fn step(&mut self) -> Option<u32> {
+    fn step(&mut self) -> Option<u32> {
         let tick = match self.tick {
             None => 0,
             Some(t) if t < self.script.ticks => t + 1,
@@ -261,7 +256,7 @@ impl<G: Game> Runner<G> {
     ///
     /// # Panics
     /// До первого `step`.
-    pub fn snapshot(&mut self, out: Option<&Path>) -> Result<(), RunError> {
+    fn snapshot(&mut self, out: Option<&Path>) -> Result<(), RunError> {
         let tick = self.tick.expect("snapshot before the first step");
         let report = self.game.report();
         if !report.is_object() {
@@ -434,7 +429,7 @@ fn egui_key(code: crate::KeyCode) -> Option<egui::Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gpu_test::gpu_full;
+    use crate::gpu_test::{TempDir, gpu_full};
     use crate::{Camera2D, Camera3D, Color, Font, Handle, KeyCode, Scene, vec2, vec3};
     use winit::event::ElementState::{Pressed, Released};
 
@@ -465,6 +460,8 @@ mod tests {
         rays: Vec<Option<f32>>,
         deltas: Vec<Vec2>,
         grab: bool,
+        seed: u64,
+        clear: Color,
         font: Handle<Font>,
     }
 
@@ -482,6 +479,8 @@ mod tests {
                 rays: Vec::new(),
                 deltas: Vec::new(),
                 grab: false,
+                seed: ctx.seed,
+                clear: Color::BLACK,
             }
         }
 
@@ -497,6 +496,7 @@ mod tests {
 
         fn draw(&mut self, ctx: &mut Context, _: f32) {
             self.draws += 1;
+            ctx.gfx.clear_color = self.clear;
             #[expect(clippy::cast_precision_loss, reason = "тиков единицы")]
             let x = self.updates as f32;
             ctx.gfx.camera = Camera2D {
@@ -689,34 +689,39 @@ mod tests {
     }
 
     #[test]
-    fn tick_zero_has_no_update_and_snapshot_sees_its_update() {
+    fn tick_zero_has_no_update_and_snapshots_follow_listed_ticks() {
         let Some(gpu) = gpu_full() else {
             return;
         };
         let script = Script::parse("ticks = 5\nsnapshots = [0, 2]").unwrap();
         let mut runner = Runner::<Toy>::new(&gpu, &config(60), &script).unwrap();
         assert!(runner.game.init_focused);
-        assert_eq!(runner.step(), Some(0));
+        assert_eq!(runner.advance(None).unwrap(), Some(0));
         assert_eq!((runner.game.updates, runner.game.draws), (0, 1));
-        runner.snapshot(None).unwrap();
         for tick in 1..=5 {
-            assert_eq!(runner.step(), Some(tick));
-            if tick == 2 {
-                runner.snapshot(None).unwrap();
-            }
+            assert_eq!(runner.advance(None).unwrap(), Some(tick));
         }
         assert_eq!((runner.game.updates, runner.game.draws), (5, 6));
-        assert_eq!(runner.step(), None);
+        assert_eq!(runner.advance(None).unwrap(), None);
         let report = runner.finish();
         let updates: Vec<_> = report
             .snapshots
             .iter()
             .map(|s| (s.tick, s.report["updates"].as_u64().unwrap()))
             .collect();
-        assert_eq!(updates, [(0, 0), (2, 2)]);
+        assert_eq!(updates, [(0, 0), (2, 2), (5, 5)]);
         assert_eq!(report.ticks, 5);
         assert_eq!(report.snapshots[0].texts, ["hud"]);
         assert_eq!(report.snapshots[0].png, None);
+    }
+
+    #[test]
+    fn script_seed_reaches_init() {
+        let Some(gpu) = gpu_full() else {
+            return;
+        };
+        assert_eq!(run::<Toy>(&gpu, 60, "ticks = 1\nseed = 7").game.seed, 7);
+        assert_eq!(run::<Toy>(&gpu, 60, "ticks = 1").game.seed, 0);
     }
 
     #[test]
@@ -755,18 +760,12 @@ mod tests {
     }
 
     #[test]
-    fn stall_starts_at_timeout() {
-        assert!(!stalled(Duration::from_millis(9_999)));
-        assert!(stalled(STALL_TIMEOUT));
-        assert!(stalled(STALL_TIMEOUT * 2));
-    }
-
-    #[test]
     fn stalled_error_names_tick_and_timeout() {
         let text = RunError::Stalled { tick: 7 }.to_string();
-        assert!(text.contains("нет прогресса 10 с на тике 7"), "{text}");
-        assert!(!text.contains("композитор"), "{text}");
-        assert!(!text.contains("NO_VSYNC"), "{text}");
+        assert_eq!(
+            text,
+            "нет прогресса 10 с на тике 7; причина не установлена, можно попробовать другой дисплей (env -u WAYLAND_DISPLAY)"
+        );
     }
 
     #[test]
@@ -821,6 +820,42 @@ mod tests {
             .filter_map(|(i, &d)| d.then_some(i + 1))
             .collect();
         assert_eq!(downs, [8, 9]);
+    }
+
+    #[test]
+    fn panel_click_at_scale_two_hits_the_button() {
+        let Some(gpu) = gpu_full() else {
+            return;
+        };
+        let runner = run::<Toy>(
+            &gpu,
+            60,
+            r#"
+            ticks = 6
+            scale = 2.0
+            size = [128, 128]
+            [[event]]
+            tick = 3
+            cursor = [60.0, 50.0]
+            [[event]]
+            tick = 4
+            button_press = "Left"
+            [[event]]
+            tick = 5
+            button_release = "Left"
+            "#,
+        );
+        assert_eq!((runner.game.clicked, runner.game.presses), (1, 0));
+    }
+
+    #[test]
+    fn cursor_queries_without_cursor_are_none() {
+        let Some(gpu) = gpu_full() else {
+            return;
+        };
+        let runner = run::<Toy>(&gpu, 60, "ticks = 3");
+        assert_eq!(runner.game.worlds, [None; 3]);
+        assert_eq!(runner.game.rays, [None; 3]);
     }
 
     #[test]
@@ -897,16 +932,34 @@ mod tests {
         let Some(gpu) = gpu_full() else {
             return;
         };
-        let dir = std::env::temp_dir().join(format!("stapel-runner-{}", std::process::id()));
+        let dir = TempDir::new("runner");
         let script = Script::parse("ticks = 2\nsnapshots = [0]").unwrap();
-        for _ in 0..2 {
+        let mut corners = Vec::new();
+        for clear in [
+            Color {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+            Color {
+                r: 0.0,
+                g: 0.0,
+                b: 1.0,
+                a: 1.0,
+            },
+        ] {
             let mut runner = Runner::<Toy>::new(&gpu, &config(60), &script).unwrap();
-            runner.drive(Some(&dir)).unwrap();
+            runner.game.clear = clear;
+            runner.drive(Some(&dir.0)).unwrap();
             let report = runner.finish();
             assert_eq!(report.snapshots[1].png.as_deref(), Some("tick-000002.png"));
+            let img = image::open(dir.0.join("tick-000002.png"))
+                .unwrap()
+                .to_rgba8();
+            assert_eq!((img.width(), img.height()), (64, 64));
+            corners.push(img.get_pixel(63, 63).0);
         }
-        let img = image::open(dir.join("tick-000000.png")).unwrap();
-        assert_eq!((img.width(), img.height()), (64, 64));
-        fs::remove_dir_all(dir).unwrap();
+        assert_eq!(corners, [[255, 0, 0, 255], [0, 0, 255, 255]]);
     }
 }

@@ -111,6 +111,7 @@ fn two_offscreen_processes_agree() {
 }
 
 #[test]
+#[ignore = "нужен дисплей и до 10 с на прогон: make test и make cov включают"]
 fn window_agrees_with_offscreen() {
     if !gpu_present() || !display_present() {
         return;

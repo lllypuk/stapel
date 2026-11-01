@@ -109,7 +109,7 @@ mod tests {
 
 ## Check a game without a window
 
-Every game started through `stapel::run` also takes `--script <file.toml> [--out <dir>] [--window] [--no-png]`: it plays the scenario tick by tick on an offscreen GPU target, saves PNG snapshots and `report.json`, prints the path of the report and exits. `--window` plays the same scenario in a window; pixels and report match the offscreen run. Without `--out` the files go to `target/stapel-run/<scenario name>/`. `--no-png` writes `report.json` only, with `png` set to `null`: use it while tuning a scenario, then run once without it for the pictures. Other arguments are ignored; `--out`, `--window` and `--no-png` without `--script` are an error, as is `--no-png` with `--window`.
+Every game started through `stapel::run` also takes `--script <file.toml> [--out <dir>] [--window] [--no-png]`: it plays the scenario tick by tick on an offscreen GPU target, saves PNG snapshots and `report.json`, prints the path of the report and exits. `--window` plays the same scenario in a window; pixels and report match the offscreen run. Without `--out` the files go to `target/stapel-run/<scenario name>/`; old `tick-*.png` and `report.json` there are deleted at the start of a run, other files are left alone. `--no-png` writes `report.json` only, with `png` set to `null`: use it while tuning a scenario, then run once without it for the pictures. Other arguments are ignored; `--out`, `--window` and `--no-png` without `--script` are an error, as is `--no-png` with `--window`.
 
 `scripts/cycle.toml` for the game above:
 
@@ -117,7 +117,7 @@ Every game started through `stapel::run` also takes `--script <file.toml> [--out
 ticks = 10            # how many times update runs; required
 size = [320, 240]     # physical pixels; default is Config::size
 snapshots = [0, 5]    # ticks to capture; the last tick is always captured
-# seed = 7            # ctx.seed before Game::init; default 0
+# seed = 7            # ctx.seed before Game::init; default 0; any u64
 # scale = 1.0         # physical pixels per egui point; default 1
 
 [[event]]
@@ -129,7 +129,7 @@ tick = 3
 release = "Space"
 ```
 
-Each `[[event]]` has `tick` (`1..=ticks`, non-decreasing down the file) and exactly one action: `press`, `release`, `cursor = [x, y]`, `cursor_left = true`, `button_press` / `button_release = "Left"`, `motion = [dx, dy]`, `wheel = [x, y]`, `focus = false`. Coordinates are physical pixels. Unknown fields and out-of-range ticks are errors that name the entry (`event[N]`).
+Each `[[event]]` has `tick` (`1..=ticks`, non-decreasing down the file) and exactly one action: `press`, `release`, `cursor = [x, y]`, `cursor_left = true`, `button_press` / `button_release = "Left"`, `motion = [dx, dy]`, `wheel = [x, y]`, `focus = false`. Coordinates are physical pixels. Unknown fields, out-of-range ticks, non-finite coordinates and a `press` with a `release` of the same key (or button) in one tick are errors that name the entry (`event[N]`): the press would never reach `update`. Release in a later tick.
 
 Ticks:
 
@@ -151,7 +151,8 @@ What to rely on and what not to:
 
 - Linux only. Offscreen needs a Vulkan adapter (a software one, such as lavapipe, is enough); `--window` needs a display.
 - `--window` on Wayland can stop after tick 0 with no output; the cause is not established. After 10 s without progress the run ends with `Stalled` and the tick; try `env -u WAYLAND_DISPLAY`. The offscreen run is not affected.
-- Text typed into egui panels cannot be scripted yet; clicks, drags, keys and the wheel work, including over panels.
+- Text typed into egui panels and modifier keys (Ctrl, Shift, Alt) cannot be scripted yet; clicks, drags, keys and the wheel work, including over panels.
+- `--window` shows the picture 1:1 from the top left corner: a window of another size than the scenario crops or smears it (one `warn` with both sizes); byte equality with the offscreen run holds for equal sizes.
 - `texts` shows what the game sent to `draw_text`, not what is visible: a HUD covered by something else still appears there. Look at the PNG.
 - The game must be deterministic: time, `HashMap` iteration order and random numbers not taken from `ctx.seed` make two runs differ without any error.
 

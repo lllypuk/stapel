@@ -4,26 +4,9 @@ use std::sync::Arc;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
+use crate::canvas::has_view_formats;
 use crate::surface::{Action, action, pick_format, pick_present_mode, split, surface_size};
-use crate::{
-    Assets, CANVAS_FORMAT, Canvas, FrameRenderer, Gfx, Gpu, PresentPass, Shown, UiFrame,
-    linear_present,
-};
-
-/// Поверхность окна и GPU-устройство; кадр рисуется в `Canvas`: 3D на всё, спрайты во вписанный вьюпорт, egui поверх, затем вывод на поверхность.
-pub struct Renderer {
-    window: Arc<Window>,
-    instance: wgpu::Instance,
-    surface: wgpu::Surface<'static>,
-    gpu: Gpu,
-    config: wgpu::SurfaceConfiguration,
-    canvas: Canvas,
-    frame: FrameRenderer,
-    present: PresentPass,
-    present_linear: bool,
-    sized: bool,
-    occluded: bool,
-}
+use crate::{Assets, CANVAS_FORMAT, Canvas, FrameRenderer, Gfx, Gpu, PresentPass, Shown, UiFrame};
 
 /// Поверхность сломана так, что продолжать нельзя.
 #[derive(Debug)]
@@ -37,10 +20,30 @@ impl fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
-impl Renderer {
+/// Поверхность окна, GPU-устройство и вывод готового `Canvas`; кадр не рисует.
+pub(crate) struct Output {
+    window: Arc<Window>,
+    instance: wgpu::Instance,
+    surface: wgpu::Surface<'static>,
+    pub(crate) gpu: Gpu,
+    config: wgpu::SurfaceConfiguration,
+    present: PresentPass,
+    present_linear: bool,
+    sized: bool,
+    occluded: bool,
+}
+
+/// Кадр рисуется в `Canvas`: 3D на всё, спрайты во вписанный вьюпорт, egui поверх, затем вывод на поверхность.
+pub struct Renderer {
+    out: Output,
+    canvas: Canvas,
+    frame: FrameRenderer,
+}
+
+impl Output {
     /// # Panics
     /// Без поверхности, адаптера, устройства или sRGB-формата поверхности.
-    pub fn new(window: Arc<Window>, vsync: bool, pixel_perfect: bool) -> Self {
+    pub(crate) fn new(window: Arc<Window>, vsync: bool) -> Self {
         let instance = wgpu::Instance::new(
             wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(window.clone())),
         );
@@ -68,12 +71,12 @@ impl Renderer {
             )
         });
         config.present_mode = pick_present_mode(vsync, &caps.present_modes);
-        let canvas = Canvas::new(&gpu, (1, 1));
-        let views = adapter.get_downlevel_capabilities().flags;
-        let present_linear = linear_present(
-            canvas.has_linear_view(),
-            views.contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS),
-        );
+        // Нужны оба флага: линейный источник при цели `*Srgb` дал бы лишнее кодирование и светлую картинку.
+        let present_linear = has_view_formats(&gpu)
+            && adapter
+                .get_downlevel_capabilities()
+                .flags
+                .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS);
         let present_format = if present_linear {
             config.format.remove_srgb_suffix()
         } else {
@@ -83,46 +86,40 @@ impl Renderer {
             config.view_formats = vec![present_format];
         }
         log::info!("surface: {:?}, {:?}", config.format, config.present_mode);
-        // Настоящий размер — в `resize` ниже: только он зажимает его под лимит текстур.
-        let frame = FrameRenderer::new(
-            &gpu,
-            CANVAS_FORMAT,
-            canvas.ui_format(),
-            (1, 1),
-            pixel_perfect,
-        );
         let present = PresentPass::new(&gpu, present_format);
 
-        let mut renderer = Self {
+        let mut out = Self {
             window,
             instance,
             surface,
             gpu,
             config,
-            canvas,
-            frame,
             present,
             present_linear,
             sized: false,
             occluded: false,
         };
-        renderer.resize(size);
-        renderer
+        out.resize(size);
+        out
     }
 
     /// Можно ли сейчас брать кадр: у окна нет нулевой стороны и X11 не сообщил, что оно скрыто.
     /// Свёрнутое окно на Wayland остаётся доступным: о сворачивании там не сообщают.
-    pub fn is_available(&self) -> bool {
+    pub(crate) fn is_available(&self) -> bool {
         self.sized && !self.occluded
     }
 
-    /// X11 сообщил, скрыто ли окно.
-    pub fn set_occluded(&mut self, occluded: bool) {
+    pub(crate) fn set_occluded(&mut self, occluded: bool) {
         self.occluded = occluded;
     }
 
-    /// Перенастраивает поверхность под новый размер окна.
-    pub fn resize(&mut self, size: PhysicalSize<u32>) {
+    /// Размер поверхности после зажима под лимит текстур.
+    pub(crate) fn size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
+    }
+
+    /// Перенастраивает поверхность; `Some(размер)` — окно годно для кадров.
+    pub(crate) fn resize(&mut self, size: PhysicalSize<u32>) -> Option<(u32, u32)> {
         let max = self.gpu.device.limits().max_texture_dimension_2d;
         let fitted = surface_size(size, max);
         self.sized = fitted.is_some();
@@ -130,38 +127,12 @@ impl Renderer {
             self.config.width = w;
             self.config.height = h;
             self.surface.configure(&self.gpu.device, &self.config);
-            self.canvas.resize(&self.gpu, (w, h));
-            self.frame.resize((w, h));
         }
+        fitted
     }
 
-    /// Что показано; `None` — кадр не показан.
-    ///
-    /// # Errors
-    /// Ошибка валидации поверхности.
-    ///
-    /// # Panics
-    /// Если не пересоздалась потерянная поверхность.
-    pub fn render(
-        &mut self,
-        gfx: &Gfx,
-        assets: &mut Assets,
-        mut ui: UiFrame,
-    ) -> Result<Option<Shown>, RenderError> {
-        // До проверки поверхности: иначе текстуры, загруженные при свёрнутом окне, ждали бы его показа,
-        // а атлас шрифта egui присылает один раз и потерялся бы.
-        self.frame.upload(assets, &ui);
-        let shown = self.present(gfx, assets, &ui);
-        // После submit кадра или сразу, если кадр пропущен.
-        self.frame.release(&mut ui);
-        shown
-    }
-
-    /// Выводит внешний `Canvas` на поверхность; `false` — кадр не показан.
-    ///
-    /// # Errors
-    /// Ошибка валидации поверхности.
-    pub fn present_canvas(&mut self, canvas: &Canvas) -> Result<bool, RenderError> {
+    /// Выводит `Canvas` на поверхность; `false` — кадр не показан.
+    pub(crate) fn present_canvas(&mut self, canvas: &Canvas) -> Result<bool, RenderError> {
         let shown = self.with_frame(|this, frame| {
             let target = this.target_view(&frame);
             let mut encoder = this
@@ -173,20 +144,6 @@ impl Renderer {
             this.submit(frame, Vec::new(), encoder);
         })?;
         Ok(shown.is_some())
-    }
-
-    /// Устройство, под которое создана поверхность.
-    pub fn gpu(&self) -> &Gpu {
-        &self.gpu
-    }
-
-    fn present(
-        &mut self,
-        gfx: &Gfx,
-        assets: &Assets,
-        ui: &UiFrame,
-    ) -> Result<Option<Shown>, RenderError> {
-        self.with_frame(|this, frame| this.draw(frame, gfx, assets, ui))
     }
 
     fn with_frame<T>(
@@ -258,31 +215,89 @@ impl Renderer {
         }
         self.gpu.queue.present(frame);
     }
+}
 
-    fn draw(
-        &mut self,
-        frame: wgpu::SurfaceTexture,
-        gfx: &Gfx,
-        assets: &Assets,
-        ui: &UiFrame,
-    ) -> Shown {
-        let target = self.target_view(&frame);
-        let mut encoder = self
-            .gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let (shown, buffers) = self.frame.draw(
-            &mut encoder,
-            self.canvas.view(),
-            self.canvas.ui_view(),
-            gfx,
-            assets,
-            ui,
+impl Renderer {
+    /// # Panics
+    /// Без поверхности, адаптера, устройства или sRGB-формата поверхности.
+    pub fn new(window: Arc<Window>, vsync: bool, pixel_perfect: bool) -> Self {
+        let out = Output::new(window, vsync);
+        let size = out.window.inner_size();
+        let canvas = Canvas::new(&out.gpu, (1, 1));
+        // Настоящий размер — в `resize` ниже: только он зажимает его под лимит текстур.
+        let frame = FrameRenderer::new(
+            &out.gpu,
+            CANVAS_FORMAT,
+            canvas.ui_format(),
+            (1, 1),
+            pixel_perfect,
         );
-        self.present
-            .draw(&mut encoder, self.source(&self.canvas), &target);
-        self.submit(frame, buffers, encoder);
+        let mut renderer = Self { out, canvas, frame };
+        renderer.resize(size);
+        renderer
+    }
+
+    /// Можно ли сейчас брать кадр: у окна нет нулевой стороны и X11 не сообщил, что оно скрыто.
+    pub fn is_available(&self) -> bool {
+        self.out.is_available()
+    }
+
+    /// X11 сообщил, скрыто ли окно.
+    pub fn set_occluded(&mut self, occluded: bool) {
+        self.out.set_occluded(occluded);
+    }
+
+    /// Перенастраивает поверхность под новый размер окна.
+    pub fn resize(&mut self, size: PhysicalSize<u32>) {
+        if let Some((w, h)) = self.out.resize(size) {
+            self.canvas.resize(&self.out.gpu, (w, h));
+            self.frame.resize((w, h));
+        }
+    }
+
+    /// Что показано; `None` — кадр не показан.
+    ///
+    /// # Errors
+    /// Ошибка валидации поверхности.
+    ///
+    /// # Panics
+    /// Если не пересоздалась потерянная поверхность.
+    pub fn render(
+        &mut self,
+        gfx: &Gfx,
+        assets: &mut Assets,
+        mut ui: UiFrame,
+    ) -> Result<Option<Shown>, RenderError> {
+        // До проверки поверхности: иначе текстуры, загруженные при свёрнутом окне, ждали бы его показа,
+        // а атлас шрифта egui присылает один раз и потерялся бы.
+        self.frame.upload(assets, &ui);
+        let shown = self.out.with_frame(|out, frame| {
+            let target = out.target_view(&frame);
+            let mut encoder = out
+                .gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let (shown, buffers) = self.frame.draw(
+                &mut encoder,
+                self.canvas.view(),
+                self.canvas.ui_view(),
+                gfx,
+                assets,
+                &ui,
+            );
+            out.present
+                .draw(&mut encoder, out.source(&self.canvas), &target);
+            out.submit(frame, buffers, encoder);
+            shown
+        });
+        // После submit кадра или сразу, если кадр пропущен.
+        self.frame.release(&mut ui);
         shown
+    }
+
+    /// Устройство, под которое создана поверхность.
+    pub fn gpu(&self) -> &Gpu {
+        &self.out.gpu
     }
 }
 

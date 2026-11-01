@@ -3,12 +3,19 @@ use crate::Gpu;
 /// Формат цвета `Canvas`.
 pub const CANVAS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
+/// Даёт ли устройство второй формат вида для текстуры.
+pub(crate) fn has_view_formats(gpu: &Gpu) -> bool {
+    gpu.adapter
+        .get_downlevel_capabilities()
+        .flags
+        .contains(wgpu::DownlevelFlags::VIEW_FORMATS)
+}
+
 /// Цель рендера без окна: `Rgba8UnormSrgb` и, где можно, линейный вид для egui.
 pub struct Canvas {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     ui_view: Option<wgpu::TextureView>,
-    linear: bool,
     size: (u32, u32),
 }
 
@@ -17,11 +24,7 @@ impl Canvas {
     /// Если сторона нулевая или больше лимита устройства.
     #[must_use]
     pub fn new(gpu: &Gpu, size: (u32, u32)) -> Self {
-        let linear = gpu
-            .adapter
-            .get_downlevel_capabilities()
-            .flags
-            .contains(wgpu::DownlevelFlags::VIEW_FORMATS);
+        let linear = has_view_formats(gpu);
         let view_formats: &[wgpu::TextureFormat] = if linear {
             &[CANVAS_FORMAT.remove_srgb_suffix()]
         } else {
@@ -54,7 +57,6 @@ impl Canvas {
             texture,
             view,
             ui_view,
-            linear,
             size,
         }
     }
@@ -85,7 +87,7 @@ impl Canvas {
     /// Формат `ui_view`.
     #[must_use]
     pub fn ui_format(&self) -> wgpu::TextureFormat {
-        if self.linear {
+        if self.ui_view.is_some() {
             CANVAS_FORMAT.remove_srgb_suffix()
         } else {
             CANVAS_FORMAT
@@ -95,7 +97,7 @@ impl Canvas {
     /// Есть ли линейный вид.
     #[must_use]
     pub fn has_linear_view(&self) -> bool {
-        self.linear
+        self.ui_view.is_some()
     }
 
     /// RGBA построчно сверху, без выравнивания строк; альфа 255: кадр непрозрачен.
@@ -204,12 +206,7 @@ mod tests {
         };
         let canvas = Canvas::new(&gpu, (4, 4));
         assert_eq!(canvas.size(), (4, 4));
-        let linear = gpu
-            .adapter
-            .get_downlevel_capabilities()
-            .flags
-            .contains(wgpu::DownlevelFlags::VIEW_FORMATS);
-        let expected = if linear {
+        let expected = if has_view_formats(&gpu) {
             CANVAS_FORMAT.remove_srgb_suffix()
         } else {
             CANVAS_FORMAT
