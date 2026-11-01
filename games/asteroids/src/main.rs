@@ -1,5 +1,4 @@
 use std::f32::consts::TAU;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use stapel::{
     Camera2D, Color, Commands, Config, Context, Entity, Font, Game, Gfx, Handle, Input, KeyCode,
@@ -683,14 +682,7 @@ impl Game for Asteroids {
             center: Vec2::ZERO,
             size: HALF_WORLD * 2.0,
         };
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "для сида хватает младших 64 бит"
-        )]
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(1, |d| d.as_nanos() as u64);
-        let mut game = Self::new(seed);
+        let mut game = Self::new(ctx.seed);
         let assets = &mut ctx.assets;
         let mut texture = |name: &str| {
             assets.load_texture(format!("{}/assets/{name}", env!("CARGO_MANIFEST_DIR")))

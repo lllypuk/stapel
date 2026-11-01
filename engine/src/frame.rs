@@ -87,6 +87,10 @@ pub struct Gfx {
     pub sprites: Vec<Sprite>,
     /// 3D под спрайтами; `None` перед каждым `draw`.
     pub scene: Option<Scene>,
+    /// Копить строки `draw_text` в `texts`; включает runner.
+    pub record_text: bool,
+    /// Строки `draw_text` кадра при `record_text`; очищается перед `draw`.
+    pub texts: Vec<String>,
 }
 
 impl Gfx {
@@ -110,6 +114,9 @@ impl Gfx {
         color: Color,
         layer: i32,
     ) {
+        if self.record_text {
+            self.texts.push(text.to_owned());
+        }
         let font = assets.font(font);
         self.sprites
             .extend(text::layout(font, text, pos, scale, color, layer));
@@ -170,6 +177,8 @@ pub struct Context {
     pub cursor_grab: bool,
     /// Курсор захвачен и спрятан; ставит app.
     pub grabbed: bool,
+    /// Сид игры: от часов в окне, из сценария в runner; ставится до `Game::init`.
+    pub seed: u64,
 }
 
 impl Context {
@@ -246,6 +255,10 @@ pub trait Game {
     fn draw(&mut self, ctx: &mut Context, alpha: f32);
     /// Панели egui, раз в кадр после `draw`.
     fn ui(&mut self, _ui: &egui::Context) {}
+    /// JSON-объект состояния для отчёта runner.
+    fn report(&self) -> serde_json::Value {
+        serde_json::json!({})
+    }
 }
 
 /// Возвращает число выполненных тиков.
@@ -263,6 +276,7 @@ pub fn step_frame<G: Game>(
     }
     // Здесь, а не после рендера: на кадрах без рендера спрайты копились бы.
     ctx.gfx.sprites.clear();
+    ctx.gfx.texts.clear();
     ctx.gfx.scene = None;
     game.draw(ctx, clock.alpha());
     ticks
@@ -364,6 +378,32 @@ mod tests {
         let mut ctx = Context::new(clock.step());
         let step = clock.step();
         (Fake::init(&mut ctx), ctx, clock, step)
+    }
+
+    #[test]
+    fn draw_text_records_only_when_asked() {
+        let mut assets = Assets::default();
+        let font = assets.load_font("missing.ttf", 16.0);
+        let mut gfx = Gfx::default();
+        gfx.draw_text(&assets, font, "A", Vec2::ZERO, 1.0, Color::WHITE, 0);
+        assert_eq!(gfx.texts, [0; 0].map(|_| String::new()));
+        gfx.record_text = true;
+        gfx.draw_text(&assets, font, "SCORE 0", Vec2::ZERO, 1.0, Color::WHITE, 0);
+        assert_eq!(gfx.texts, ["SCORE 0"]);
+    }
+
+    #[test]
+    fn step_frame_clears_texts() {
+        let (mut g, mut ctx, mut clock, step) = setup();
+        ctx.gfx.texts.push("old".into());
+        step_frame(&mut g, &mut ctx, &mut clock, step);
+        assert_eq!(ctx.gfx.texts.len(), 0);
+    }
+
+    #[test]
+    fn default_report_is_empty_object() {
+        let (g, ..) = setup();
+        assert_eq!(g.report(), serde_json::json!({}));
     }
 
     #[test]

@@ -95,6 +95,7 @@ pub use scene::{
     MeshInstance, ModelDraw, PointLight, Scene, SkinnedDraw, Viewmodel, batch_meshes,
 };
 pub use script::{Script, ScriptError, ScriptEvent};
+pub use serde_json;
 pub use sprite::{Batch, Instance, Rect, Sprite, batch};
 pub use sprite_pipeline::SpritePipeline;
 pub use stats::{FrameReport, FrameStats, RateCounter};

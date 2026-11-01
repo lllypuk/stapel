@@ -231,14 +231,14 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError>;
 ### Task 7: Seed, Game::report и строки кадра
 
 **Files:**
-- Modify: `engine/src/frame.rs`, `engine/src/lib.rs`, `engine/Cargo.toml`, `Cargo.toml`, `games/asteroids/src/main.rs`
+- Modify: `engine/src/frame.rs`, `engine/src/lib.rs`, `engine/src/app.rs`, `engine/Cargo.toml`, `Cargo.toml`, `games/asteroids/src/main.rs`
 
-- [ ] тест: `Gfx::draw_text` пишет строку при `record_text` и не пишет без него; `step_frame` очищает строки
-- [ ] тест: `Game::report` по умолчанию — пустой объект
-- [ ] `Context::seed: u64`; вне сценария app ставит его от `SystemTime` до `G::init`
-- [ ] Asteroids берёт `ctx.seed`; импорт времени из игры уходит
-- [ ] `Gfx::record_text`, `Gfx::texts`; в обычном кадре выключено, кадр не аллоцирует лишнего
-- [ ] проверить обход `HashMap` и `HashSet` в логике `asteroids` и `racing`; там, где порядок влияет на исход, — `BTreeMap` или сортировка
+- [x] тест: `Gfx::draw_text` пишет строку при `record_text` и не пишет без него; `step_frame` очищает строки
+- [x] тест: `Game::report` по умолчанию — пустой объект
+- [x] `Context::seed: u64`; вне сценария app ставит его от `SystemTime` до `G::init`
+- [x] Asteroids берёт `ctx.seed`; импорт времени из игры уходит
+- [x] `Gfx::record_text`, `Gfx::texts`; в обычном кадре выключено, кадр не аллоцирует лишнего
+- [x] (нет изменений: все `HashMap`/`HashSet` — только поиск и `collect`, обход не влияет на исход) проверить обход `HashMap` и `HashSet` в логике `asteroids` и `racing`; там, где порядок влияет на исход, — `BTreeMap` или сортировка
 
 ### Task 8: Runner и run_script
 

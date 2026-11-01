@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -66,6 +66,7 @@ impl<G: Game> ApplicationHandler for App<G> {
         let clock = FixedClock::new(self.config.tick_hz, MAX_FRAME);
         let mut ctx = Context::new(clock.step());
         ctx.focused = window.has_focus();
+        ctx.seed = clock_seed();
         let stream = device::open().map(|(stream, audio, rate)| {
             ctx.audio = audio;
             ctx.assets.set_sample_rate(rate);
@@ -307,4 +308,14 @@ fn release_cursor(window: &Window) {
         log::warn!("cursor release: {e}");
     }
     window.set_cursor_visible(true);
+}
+
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "для сида хватает младших 64 бит"
+)]
+fn clock_seed() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(1, |d| d.as_nanos() as u64)
 }
