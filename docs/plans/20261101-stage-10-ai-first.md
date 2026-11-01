@@ -140,8 +140,15 @@ pub fn run<G: Game>(config: Config) -> Result<(), RunError>;
 
 ### Task 1: Замер до правки рендера
 
-- [ ] на текущем `main`: `NO_VSYNC=1 RUST_LOG=info cargo run --release -p racing`, 30 с в гараже; `fps` и `worst` по логу записать сюда
-- [ ] то же для `shooter` на старте уровня
+- [x] на текущем `main`: `NO_VSYNC=1 RUST_LOG=info cargo run --release -p racing`, 30 с в гараже; `fps` и `worst` по логу записать сюда
+- [x] то же для `shooter` на старте уровня
+
+Замер (NO_VSYNC=1, release, без ввода; первые 5 с отброшены):
+
+| игра | median fps | max worst | sprites | adapter |
+|---|---|---|---|---|
+| racing (гараж) | 1589 (34 с) | 6.2 ms | 0..0 | AMD Radeon Graphics (RADV RENOIR), Vulkan |
+| shooter (старт) | 1679 (29 с) | 16.7 ms | 13..13 | AMD Radeon Graphics (RADV RENOIR), Vulkan |
 
 ### Task 2: Событие ввода движка
 
