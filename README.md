@@ -37,7 +37,7 @@ Cargo.toml:
 
 ```toml
 [dependencies]
-stapel = { git = "https://github.com/lllypuk/stapel", rev = "3e88954f4b7447ca1e3ff93e7e6409e683712f36" }
+stapel = { git = "https://github.com/lllypuk/stapel", rev = "fda36236f4043be4b82d85313728cc062520fa96" }
 ```
 
 This rev is the one the sample game was verified on, not a promise of stability.

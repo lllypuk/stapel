@@ -434,6 +434,13 @@ shooter (старт):
 - [x] копия `AGENTS.md` обновлена из 3e88954, игра пересобрана
 - [x] сценарий без защиты: тик 6000 и 9000 `phase=lost`, `lives=0`, `kills=0`, `towers=0`; побайтно равен прежнему прогону
 - [x] ревью `revmux` (final, 2/2, не degraded): 1 major — параллельный `Gpu::headless` без замка; исправлено `Mutex` в `gpu.rs`
+- [x] повторная приёмка на финальном rev fda36236f4043be4b82d85313728cc062520fa96 (запушен; правки ревью шли после первой приёмки):
+  - `make check` exit=0; `REQUIRE_GPU=1 WGPU_BACKEND=vulkan make cov` exit=0 (TOTAL строк 99.01%)
+  - `REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p stapel` exit=0 (467 passed); `... cargo test -p trains --test replay -- --include-ignored` exit=0 (2 passed)
+  - `make mutants-diff BASE=main` exit=0: 195 mutants tested in 11m: 163 caught, 32 unviable, 0 missed
+  - игра на fda3623 (`cargo update -p stapel`, `AGENTS.md` из этого rev): сборка без правок игры, `cargo test` 4 passed; win, lost, rules, без защиты и `--window` (с X11 и без `env -u WAYLAND_DISPLAY`) дали `diff -rq` пустой с прежними результатами. Ломающих изменений нет
+  - внешний каталог по README (https-зависимость на fda3623): `REQUIRE_GPU=1 cargo test` 1 passed, `--script` дал `report.json` с `index` 0 и 1; каталог удалён
+  - CI: пайплайн 1228 на 3e88954 — success; на fda3623 не запускался (не пушил)
 
 ### Task 24: [Final] Документация
 - [x] `README.md` и `CLAUDE.md` соответствуют итогу разбора журнала
