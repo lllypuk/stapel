@@ -393,6 +393,18 @@ mod tests {
     }
 
     #[test]
+    fn texts_keep_original_non_ascii_string() {
+        let mut assets = Assets::default();
+        let font = assets.load_font("missing.ttf", 16.0);
+        let mut gfx = Gfx {
+            record_text: true,
+            ..Gfx::default()
+        };
+        gfx.draw_text(&assets, font, "Счёт", Vec2::ZERO, 1.0, Color::WHITE, 0);
+        assert_eq!(gfx.texts, ["Счёт"]);
+    }
+
+    #[test]
     fn step_frame_clears_texts() {
         let (mut g, mut ctx, mut clock, step) = setup();
         ctx.gfx.texts.push("old".into());

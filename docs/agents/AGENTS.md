@@ -54,7 +54,7 @@ fn main() -> Result<(), stapel::RunError> {
 - Load in `init` through `ctx.assets`: `load_texture` (PNG), `load_font(path, px)` (TTF), `load_sound` (WAV, OGG), `load_model` (GLB). The same path returns the same handle.
 - A missing or broken file does not fail: a texture becomes a checkerboard, a font draws solid boxes, and only a `warn` log tells you. Run with `RUST_LOG=warn` and read stderr.
 - Keep files in the crate, e.g. `assets/`. Text needs a TTF: JetBrains Mono (SIL OFL) is at `https://github.com/lllypuk/stapel/raw/main/assets/fonts/JetBrainsMono-Regular.ttf`, licence in `OFL.txt` next to it.
-- Text covers ASCII 32..=126 only: any other character draws as `?` (and is measured as `?`), while `texts` in the report keeps the original string. Cyrillic is unavailable, so write HUD text in English.
+- Text covers ASCII 32..=126 only: any other character draws as `?` (and is measured as `?`), while `texts` in the report keeps the original string. The engine logs a `warn` once per character and font (draw or `width`), so read the log. Cyrillic is unavailable, so write HUD text in English.
 - Use only assets you may redistribute. CC0 sources: kenney.nl/assets (sprites, UI, 3D, audio), quaternius.com, kaylousberg.itch.io, opengameart.org (check each file), freesound.org (CC0 or CC-BY per sound), fonts.google.com (OFL). CC-BY needs the author named. Record every file, source and licence in `assets/CREDITS.md`. Prefer solid-colour sprites to unlicensed art.
 
 ## Scenarios

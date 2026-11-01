@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+use std::sync::Mutex;
+
 use glam::Vec2;
 
 use crate::Color;
@@ -29,6 +32,16 @@ pub struct Glyph {
     pub advance: f32,
 }
 
+/// Символы, о которых шрифт уже предупредил; для сравнения шрифтов не значит ничего.
+#[derive(Debug, Default)]
+struct Warned(Mutex<HashSet<char>>);
+
+impl PartialEq for Warned {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
 /// Шрифт одного размера; `atlas == None` — заглушка, глифы рисуются текстурой `WHITE`.
 #[derive(Debug, PartialEq)]
 pub struct FontData {
@@ -37,6 +50,7 @@ pub struct FontData {
     /// Шаг строки в пикселях растеризации.
     pub line_height: f32,
     pub(crate) glyphs: Vec<Glyph>,
+    warned: Warned,
 }
 
 impl FontData {
@@ -46,12 +60,52 @@ impl FontData {
         self.glyphs.get(i)
     }
 
+    /// Глиф `c` или `'?'`; первый такой `c` в шрифте пишет `warn`.
+    fn glyph_or_fallback(&self, c: char) -> Option<&Glyph> {
+        self.glyph(c).or_else(|| {
+            self.warn_missing(c);
+            self.glyph('?')
+        })
+    }
+
+    /// `true`, если `c` предупреждён впервые.
+    fn warn_missing(&self, c: char) -> bool {
+        let first = self
+            .warned
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(c);
+        if first {
+            log::warn!(
+                "символ {c:?} (U+{:04X}) вне ASCII 32..=126, шрифт {} px рисует его как '?'",
+                c as u32,
+                self.line_height
+            );
+        }
+        first
+    }
+
     /// Ширина строки без переносов в пикселях растеризации; символ вне ASCII 32..=126 — как `'?'`.
     pub fn width(&self, text: &str) -> f32 {
         text.chars()
-            .filter_map(|c| self.glyph(c).or_else(|| self.glyph('?')))
+            .filter(|&c| c != '\n')
+            .filter_map(|c| self.glyph_or_fallback(c))
             .map(|g| g.advance)
             .sum()
+    }
+
+    pub(crate) fn new(
+        atlas: Option<Handle<Texture>>,
+        line_height: f32,
+        glyphs: Vec<Glyph>,
+    ) -> Self {
+        Self {
+            atlas,
+            line_height,
+            glyphs,
+            warned: Warned::default(),
+        }
     }
 
     pub(crate) fn stub(px: f32) -> Self {
@@ -73,6 +127,7 @@ impl FontData {
             atlas: None,
             line_height: default_line_height(px),
             glyphs,
+            warned: Warned::default(),
         }
     }
 }
@@ -93,7 +148,7 @@ pub fn layout<'a>(
             cursor = Vec2::new(0.0, cursor.y - font.line_height);
             return None;
         }
-        let g = font.glyph(c).or_else(|| font.glyph('?'))?;
+        let g = font.glyph_or_fallback(c)?;
         let min = cursor + Vec2::new(g.xmin, g.ymin);
         cursor.x += g.advance;
         let size = Vec2::new(g.width, g.height);
@@ -302,6 +357,41 @@ mod tests {
         let font = font_with('?', q);
         assert_eq!(lay(&font, "я\t"), lay(&font, "??"));
         assert_eq!(lay(&font, "я")[0].size.x, 6.0);
+    }
+
+    #[test]
+    fn missing_char_warns_once_per_font() {
+        let font = FontData::stub(10.0);
+        assert!(font.warn_missing('я'));
+        assert!(!font.warn_missing('я'));
+        assert!(font.warn_missing('ё'));
+        assert!(FontData::stub(10.0).warn_missing('я'));
+    }
+
+    #[test]
+    fn warned_set_does_not_affect_font_equality() {
+        let a = FontData::stub(10.0);
+        a.warn_missing('я');
+        assert_eq!(a, FontData::stub(10.0));
+    }
+
+    #[test]
+    fn layout_and_width_share_warned_set() {
+        let font = FontData::stub(10.0);
+        let _ = lay(&font, "я");
+        assert!(!font.warn_missing('я'));
+        let _ = font.width("ё");
+        assert!(!font.warn_missing('ё'));
+    }
+
+    #[test]
+    fn ascii_and_newline_do_not_warn() {
+        let font = FontData::stub(10.0);
+        let _ = lay(&font, "Az ~\n");
+        let _ = font.width("Az ~\n");
+        assert!(font.warned.0.lock().unwrap().is_empty());
+        let _ = font.width("\t");
+        assert!(!font.warned.0.lock().unwrap().is_empty());
     }
 
     #[test]

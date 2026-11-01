@@ -246,11 +246,11 @@ impl Assets {
             .map_err(|e| e.to_string())
             .and_then(|ttf| text::rasterize(&ttf, px).map_err(str::to_owned));
         let font = match raster {
-            Ok(r) => FontData {
-                atlas: Some(self.add_coverage(r.width, r.height, &r.coverage)),
-                line_height: r.line_height,
-                glyphs: r.glyphs,
-            },
+            Ok(r) => FontData::new(
+                Some(self.add_coverage(r.width, r.height, &r.coverage)),
+                r.line_height,
+                r.glyphs,
+            ),
             Err(e) => {
                 log::warn!("font {}: {e}", path.display());
                 FontData::stub(px)
