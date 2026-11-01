@@ -427,13 +427,13 @@ shooter (старт):
 
 ### Task 23: Итоговая приёмка
 Идёт после разбора журнала и всех его правок: проверки до холодной сессии их не покрывают.
-- [ ] все пункты «Готово, когда»
-- [ ] `make check`, `make cov`, `make mutants-diff`
-- [ ] `REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p stapel`, `REQUIRE_GPU=1 REQUIRE_DISPLAY=1 cargo test -p trains --test replay`
-- [ ] игра холодной сессии пересобрана на итоговом rev, её сценарий зелёный, критерии выполняются
-- [ ] копия `AGENTS.md` в каталоге игры обновлена до итогового rev, игра пересобрана
-- [ ] сценарий без защиты (без событий, `ticks = 9000`, снимки 0/3000/6000/9000) прогнан как доказательство критерия 3: `phase=lost`, `lives=0`, `kills=0`, `towers=0`
-- [ ] ревью ветки через `revmux`
+- [x] все пункты «Готово, когда» (холодная сессия и критерии 1–9 — на итоговом rev; `replay.rs`: window_agrees_with_offscreen и two_offscreen_processes_agree ok; журнал разобран в задачах 15–22)
+- [x] `make check` exit=0, `make cov` exit=0 (TOTAL строк 99.01%), `make mutants-diff BASE=main`: 181 mutants tested in 9m: 149 caught, 32 unviable; правка ревью — отдельный прогон `--in-diff`
+- [x] `REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p stapel` (457 passed), `REQUIRE_GPU=1 REQUIRE_DISPLAY=1 cargo test -p trains --test replay` (2 passed)
+- [x] игра на rev 3e88954 (`cargo update -p stapel`): сборка без правок игры, `cargo test` 4 passed; win/lost/rules дали отчёт и PNG побайтно равные прежним `evidence/`, повторный прогон равен; критерии 1–9 выполнены. Ломающих изменений нет
+- [x] копия `AGENTS.md` обновлена из 3e88954, игра пересобрана
+- [x] сценарий без защиты: тик 6000 и 9000 `phase=lost`, `lives=0`, `kills=0`, `towers=0`; побайтно равен прежнему прогону
+- [x] ревью `revmux` (final, 2/2, не degraded): 1 major — параллельный `Gpu::headless` без замка; исправлено `Mutex` в `gpu.rs`
 
 ### Task 24: [Final] Документация
 - [ ] `README.md` и `CLAUDE.md` соответствуют итогу разбора журнала

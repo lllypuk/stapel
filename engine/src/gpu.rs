@@ -1,3 +1,5 @@
+use std::sync::{Mutex, PoisonError};
+
 /// Адаптер, устройство и очередь: общие у `Canvas`, `FrameRenderer` и вывода.
 #[derive(Clone)]
 pub struct Gpu {
@@ -27,10 +29,13 @@ impl Gpu {
     }
 
     /// Адаптер без поверхности, для офскрин-рендера.
+    /// Создание под замком: параллельные экземпляры Vulkan роняют загрузчик в SIGSEGV.
     ///
     /// # Errors
     /// Адаптера нет.
     pub fn headless() -> Result<Self, wgpu::RequestAdapterError> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(PoisonError::into_inner);
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter =
