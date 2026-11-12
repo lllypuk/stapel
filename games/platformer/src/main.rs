@@ -72,6 +72,8 @@ const STOMP_BOUNCE: f32 = 3.0;
 const COYOTE: u32 = 6;
 /// За сколько тиков до приземления нажатие прыжка ещё срабатывает.
 const JUMP_BUFFER: u32 = 6;
+/// Воздушных прыжков после отрыва от земли (двойной прыжок); на земле восстанавливаются.
+const AIR_JUMPS: u32 = 1;
 /// Тиков на кадр анимации бега.
 const RUN_FRAME: u32 = 8;
 /// Скролл камеры редактора, пикселей за тик.
@@ -301,6 +303,8 @@ struct Player {
     air: u32,
     /// Тиков с нажатия прыжка, ещё не потраченного.
     since_jump: u32,
+    /// Осталось воздушных прыжков; на земле — `AIR_JUMPS`.
+    air_jumps: u32,
     /// Тиков бега по земле подряд.
     run_ticks: u32,
 }
@@ -322,6 +326,7 @@ impl Player {
             facing: 1,
             air: 0,
             since_jump: u32::MAX,
+            air_jumps: AIR_JUMPS,
             run_ticks: 0,
         }
     }
@@ -340,6 +345,11 @@ impl Player {
         } else {
             self.air.saturating_add(1)
         };
+        self.air_jumps = if self.air == 0 {
+            AIR_JUMPS
+        } else {
+            self.air_jumps
+        };
         self.since_jump = if c.jump {
             0
         } else {
@@ -350,11 +360,18 @@ impl Player {
         }
         self.vel.x = approach(self.vel.x, c.run as f32 * RUN_MAX, RUN_ACCEL);
         self.vel.y = (self.vel.y - GRAVITY).max(-FALL_MAX);
-        if self.air <= COYOTE && self.since_jump <= JUMP_BUFFER {
-            self.vel.y = JUMP;
-            self.air = u32::MAX;
-            self.since_jump = u32::MAX;
-            sfx.push(Sfx::Jump);
+        if self.since_jump <= JUMP_BUFFER {
+            if self.air <= COYOTE {
+                self.vel.y = JUMP;
+                self.air = u32::MAX;
+                self.since_jump = u32::MAX;
+                sfx.push(Sfx::Jump);
+            } else if self.air_jumps > 0 {
+                self.vel.y = JUMP;
+                self.air_jumps -= 1;
+                self.since_jump = u32::MAX;
+                sfx.push(Sfx::Jump);
+            }
         }
         if c.release {
             self.vel.y = self.vel.y.min(self.vel.y * JUMP_CUT);
@@ -1496,17 +1513,41 @@ mod tests {
     }
 
     #[test]
-    fn no_jump_in_air_after_jump() {
+    fn air_jump_after_ground_jump_only_once() {
         let mut g = flat();
         g.tick(&input(SPACE));
+        g.tick(&Input::default());
+        g.tick(&input(SPACE));
+        assert_eq!(g.sfx, [Sfx::Jump]);
+        assert_eq!(g.player.vel.y, JUMP);
+        assert_eq!(g.player.air_jumps, 0);
         g.tick(&Input::default());
         g.tick(&input(SPACE));
         assert_eq!(g.sfx, []);
         assert_eq!(g.player.vel.y, JUMP - 2.0 * GRAVITY);
     }
 
-    /// Тик 1 после края — первый, начатый не на земле.
-    fn jumps_on_tick_after_edge(n: u32) -> bool {
+    #[test]
+    fn landing_restores_air_jump() {
+        let mut g = flat();
+        g.tick(&input(SPACE));
+        g.tick(&Input::default());
+        g.tick(&input(SPACE));
+        assert_eq!(g.player.air_jumps, 0);
+        for _ in 0..80 {
+            g.tick(&Input::default());
+        }
+        assert!(on_ground(&g));
+        assert_eq!(g.player.air_jumps, AIR_JUMPS);
+        g.tick(&input(SPACE));
+        g.tick(&Input::default());
+        g.tick(&input(SPACE));
+        assert_eq!(g.sfx, [Sfx::Jump]);
+        assert_eq!(g.player.air_jumps, 0);
+    }
+
+    /// Тик 1 после края — первый, начатый не на земле; `true` — прыжок с земли, не воздушный.
+    fn ground_jump_on_tick_after_edge(n: u32) -> bool {
         let mut g = ledge();
         for _ in 0..100 {
             if !on_ground(&g) {
@@ -1518,17 +1559,37 @@ mod tests {
             g.tick(&Input::default());
         }
         g.tick(&input(SPACE));
-        g.sfx == [Sfx::Jump]
+        g.sfx == [Sfx::Jump] && g.player.air_jumps == AIR_JUMPS
     }
 
     #[test]
     fn coyote_jump_lasts_six_ticks() {
-        assert!(jumps_on_tick_after_edge(1));
-        assert!(jumps_on_tick_after_edge(COYOTE));
-        assert!(!jumps_on_tick_after_edge(COYOTE + 1));
+        assert!(ground_jump_on_tick_after_edge(1));
+        assert!(ground_jump_on_tick_after_edge(COYOTE));
+        assert!(!ground_jump_on_tick_after_edge(COYOTE + 1));
     }
 
-    /// Прыжок нажат за `n` тиков до тика, начатого на земле.
+    #[test]
+    fn fall_off_ledge_keeps_one_air_jump() {
+        let mut g = ledge();
+        for _ in 0..100 {
+            if !on_ground(&g) {
+                break;
+            }
+            g.tick(&input(D));
+        }
+        for _ in 0..=COYOTE {
+            g.tick(&Input::default());
+        }
+        g.tick(&input(SPACE));
+        assert_eq!(g.sfx, [Sfx::Jump]);
+        assert_eq!(g.player.air_jumps, 0);
+        g.tick(&Input::default());
+        g.tick(&input(SPACE));
+        assert_eq!(g.sfx, []);
+    }
+
+    /// Прыжок нажат за `n` тиков до тика, начатого на земле; воздушный прыжок уже потрачен.
     fn jumps_when_pressed_before_landing(n: u32) -> bool {
         let mut fall = drop();
         let land = (0..100)
@@ -1539,6 +1600,8 @@ mod tests {
             })
             .unwrap();
         let mut g = drop();
+        // Без этого нажатие в падении сработало бы как воздушный прыжок.
+        g.player.air_jumps = 0;
         for t in 0..land {
             g.tick(&input(if t == land - n { SPACE } else { &[] }));
             assert_eq!(g.sfx, []);
