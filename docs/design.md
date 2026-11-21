@@ -151,10 +151,13 @@ Cargo workspace: `engine/` (библиотека, крейт `stapel`), `games/<
 
 - Событие сценария вне `1..=ticks` молча не сработало бы, а снимок вне `0..=ticks` не снялся бы: `Script::parse` отвергает и то и другое. → тесты `script::*`
 - `ctx.shown` пишется после рендера каждого кадра: без этого `cursor_world` и `cursor_ray` тика N шли бы по кадру N−2 или не работали вовсе. → тест `runner::cursor_queries_use_previous_frame`
+- При `pixel_perfect` дробный вьюпорт ошибочно сделал бы часть рамки кликабельной в 2D; ограничение луча тем же вьюпортом сломало бы выбор объектов 3D в рамке. → тест `runner::pixel_perfect_margins_only_exclude_2d_cursor`
+- Если PNG не удалось записать, прогон прерывается и снимок не попадает в отчёт: иначе отчёт ссылался бы на несуществующий кадр. → тест `runner::png_write_failure_is_not_a_successful_snapshot`
 - Альфа PNG принудительно 255: `Canvas` хранит альфу кадра, полупрозрачный спрайт дал бы прозрачные пиксели в просмотрщике. → тест `frame_renderer::translucent_sprite_over_translucent_clear_gives_opaque_png`
 - `texts` — отправленные строки, а не видимые: перекрытый или вышедший за кадр HUD в отчёте остаётся; видимое доказывает PNG. → тест `runner::tick_zero_has_no_update_and_snapshots_follow_listed_ticks`
-- Недетерминизм игры (время, `HashMap` в обходе, сид не из `ctx.seed`) делает отчёты двух прогонов разными без ошибки. → сквозной тест `trains` (этап 10, задача 11)
+- Недетерминизм игры (время, `HashMap` в обходе, сид не из `ctx.seed`) делает отчёты двух прогонов разными без ошибки. Равенство двух прогонов не ловит одинаково пропущенные снимки; проверяем также точный список тиков и имён PNG. → сквозные тесты `trains/tests/replay.rs`
 - Старые `tick-*.png` и `report.json` в `--out` агент принял бы за свежие: `run_script_file` удаляет только их в начале прогона, чужие файлы каталога остаются. → тесты `cli::stale_files_removed_and_foreign_kept`, `cli::rerun_without_png_leaves_no_old_pictures`
+- Если очистить каталог результатов до проверки сценария, опечатка в сценарии уничтожит отчёт и снимки предыдущего прогона. → тест `cli::malformed_script_leaves_previous_output_untouched`
 - `press` и `release` одной клавиши (кнопки) в одном тике применились бы до `update`, и нажатие молча потерялось бы; NaN и бесконечность в `cursor`, `motion`, `wheel` дали бы мусор в `Input` и `null` в отчёте: `Script::parse` отвергает оба случая с номером записи. → тесты `script::press_and_release_in_one_tick_is_error`, `script::non_finite_event_values_name_the_record`
 - `ctx.seed` берётся из сценария, не из часов: иначе прогоны расходятся без ошибки. → тест `runner::script_seed_reaches_init`
 - Окно `--window` не по размеру сценария показывает кадр обрезанным или растянутым (вывод 1:1 с зажимом): `warn` с обоими размерами, без letterbox. → запуск
@@ -229,6 +232,7 @@ Cargo workspace: `engine/` (библиотека, крейт `stapel`), `games/<
 
 ### Игры
 
+- В `clear-color` новый цвет выбирается только при нажатии Space, не при отпускании, а после четвёртого нажатия цикл возвращается к начальному цвету. → тест `clear-color::palette_cycles_and_wraps_to_initial_color`
 - Коллизия с движущимся телом — заметанием отрезка относительного движения против AABB, расширенного на полуразмер. Проверка только конечных положений пропускает касание угла: в Pong ракетка за тик сдвигается вниз, мяч вправо, и в обоих концах тика они не пересекаются. → тест `pong::moving_paddle_catches_ball_by_corner`
 - Телепорт (подача из центра) ставит `prev = cur`, иначе интерполяция нарисует пролёт через всё поле. → тест `pong::goal_scores_and_serves_to_loser`, `platformer::respawn_resets_motion_and_camera`, `maze::orc_touch_restarts_level`
 - Перенос через край мира сдвигает `prev` на тот же вектор, что и `pos`: иначе кадр между тиками нарисует пролёт через всё поле. → тест `asteroids::wrap_waits_until_fully_out_and_shifts_prev`

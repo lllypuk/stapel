@@ -892,6 +892,7 @@ mod tests {
         );
         let expected: Vec<_> = (0..4_i16).map(|k| Some(f32::from(k))).collect();
         for got in [&runner.game.worlds, &runner.game.rays] {
+            assert_eq!(got.len(), expected.len());
             assert!(
                 got.iter()
                     .zip(&expected)
@@ -899,6 +900,35 @@ mod tests {
                 "{got:?}"
             );
         }
+    }
+
+    #[test]
+    fn pixel_perfect_margins_only_exclude_2d_cursor() {
+        let Some(gpu) = gpu_full() else {
+            return;
+        };
+        let script = Script::parse(
+            "ticks = 2
+            size = [95, 79]
+            [[event]]
+            tick = 1
+            cursor = [12.0, 39.0]
+            [[event]]
+            tick = 2
+            cursor = [47.0, 39.0]",
+        )
+        .unwrap();
+        let config = Config {
+            pixel_perfect: true,
+            ..config(60)
+        };
+        let mut runner = Runner::<Toy>::new(&gpu, &config, &script).unwrap();
+        runner.drive(None).unwrap();
+
+        // Целый масштаб 1: левый отступ 15 вместо 8 при дробном масштабе.
+        // Во втором тике центр показанного вьюпорта соответствует x = 1 (камера тика 1).
+        assert_eq!(runner.game.worlds, [None, Some(1.0)]);
+        assert!(runner.game.rays[0].is_some(), "3D uses the full surface");
     }
 
     #[test]
@@ -947,6 +977,27 @@ mod tests {
         );
         let ok = Script::parse(&format!("ticks = 1\nsize = [{max}, 1]")).unwrap();
         assert!(Runner::<Toy>::new(&gpu, &config(60), &ok).is_ok());
+    }
+
+    #[test]
+    fn png_write_failure_is_not_a_successful_snapshot() {
+        let Some(gpu) = gpu_full() else {
+            return;
+        };
+        let dir = TempDir::new("runner-png-error");
+        fs::create_dir(dir.0.join("tick-000001.png")).unwrap();
+        let script = Script::parse("ticks = 2\nsnapshots = [0, 1]").unwrap();
+        let mut runner = Runner::<Toy>::new(&gpu, &config(60), &script).unwrap();
+
+        let err = runner.drive(Some(&dir.0)).unwrap_err();
+        assert!(
+            matches!(err, RunError::Png(image::ImageError::IoError(_))),
+            "{err}"
+        );
+        let report = runner.finish();
+        assert_eq!(report.ticks, 1);
+        assert_eq!(report.snapshots.len(), 1);
+        assert_eq!(report.snapshots[0].tick, 0);
     }
 
     #[test]

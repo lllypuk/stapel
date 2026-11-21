@@ -262,6 +262,34 @@ mod tests {
     }
 
     #[test]
+    fn malformed_script_leaves_previous_output_untouched() {
+        let dir = TempDir::new("invalid-script");
+        let script = dir.0.join("s.toml");
+        let out = dir.0.join("out");
+        fs::create_dir(&out).unwrap();
+        fs::write(&script, "ticks = 0").unwrap();
+        let files = [
+            ("report.json", "old report"),
+            ("tick-000001.png", "old image"),
+        ];
+        for (name, content) in files {
+            fs::write(out.join(name), content).unwrap();
+        }
+
+        assert!(matches!(
+            run_script_file::<Blank>(&config16(), &script, &args(&out, false, false)),
+            Err(RunError::Script(crate::ScriptError::Invalid(_)))
+        ));
+        for (name, content) in files {
+            assert_eq!(
+                fs::read_to_string(out.join(name)).unwrap(),
+                content,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn rerun_without_png_leaves_no_old_pictures() {
         if gpu_full().is_none() {
             return;
