@@ -36,8 +36,39 @@ fn main() -> Result<(), stapel::RunError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stapel::{ElementState::Pressed, FixedClock, step_frame};
+    use stapel::{
+        ElementState::{Pressed, Released},
+        FixedClock, step_frame,
+    };
     use std::time::Duration;
+
+    #[test]
+    fn palette_cycles_and_wraps_to_initial_color() {
+        let mut ctx = Context::default();
+        let mut game = ClearColor::init(&mut ctx);
+        let colors = [
+            Color::from_srgb8(30, 30, 46),
+            Color::from_srgb8(180, 60, 60),
+            Color::from_srgb8(60, 160, 90),
+            Color::from_srgb8(70, 110, 200),
+        ];
+        game.draw(&mut ctx, 0.0);
+        assert_eq!(ctx.gfx.clear_color, colors[0]);
+
+        for expected in colors.into_iter().cycle().skip(1).take(colors.len()) {
+            ctx.input.on_key(KeyCode::Space, Pressed, false);
+            game.update(&mut ctx);
+            ctx.input.end_tick();
+            game.draw(&mut ctx, 0.0);
+            assert_eq!(ctx.gfx.clear_color, expected);
+
+            ctx.input.on_key(KeyCode::Space, Released, false);
+            game.update(&mut ctx);
+            ctx.input.end_tick();
+            game.draw(&mut ctx, 0.0);
+            assert_eq!(ctx.gfx.clear_color, expected);
+        }
+    }
 
     #[test]
     fn space_switches_color_once_per_press() {

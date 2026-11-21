@@ -88,13 +88,18 @@ fn assert_same(a: &Path, b: &Path) {
         );
     }
     assert_eq!(ra, rb);
+    // Равенство само по себе не ловит снимки, одинаково пропущенные обоими процессами.
+    assert_eq!(ra["ticks"], 500);
     let snapshots = ra["snapshots"].as_array().expect("snapshots");
-    assert!(snapshots.len() > 1);
-    for s in snapshots {
-        let png = s["png"].as_str().expect("png");
-        let read = |dir: &Path| std::fs::read(dir.join(png)).expect("png");
+    let ticks = [0, 5, 9, 279, 285, 342, 472, 500];
+    assert_eq!(snapshots.len(), ticks.len());
+    for (s, tick) in snapshots.iter().zip(ticks) {
+        assert_eq!(s["tick"], tick);
+        let png = format!("tick-{tick:06}.png");
+        assert_eq!(s["png"], png);
+        let read = |dir: &Path| std::fs::read(dir.join(&png)).expect("png");
         let (pa, pb) = (read(a), read(b));
-        assert!(!pa.is_empty(), "{png}");
+        assert!(pa.starts_with(b"\x89PNG\r\n\x1a\n"), "{png}: не PNG");
         assert!(pa == pb, "{png}: пиксели разошлись");
     }
 }
