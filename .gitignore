@@ -2,3 +2,4 @@
 /.revmux/tasks/
 /mutants.out*
 /.cargo-ci/
+/paseo.json
