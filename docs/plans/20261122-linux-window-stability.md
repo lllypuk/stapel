@@ -110,15 +110,15 @@
 - Read/verify: `engine/src/runner.rs`
 - Read/verify: `engine/src/renderer.rs`
 
-- [ ] Подключить планировщик к `ScriptApp`; перенести выполнение сценария из `RedrawRequested` в сработавший срок `about_to_wait`, используя только `WaitUntil` и не более одного кадра за срабатывание.
-- [ ] Удалить redraw-цепочку только из `ScriptApp`; не менять `App::frame`, `Running::resume_redraw` и интерактивный `ControlFlow::Wait`.
-- [ ] Хранить pending-тик между `advance` и успешным `present_canvas`; при `Ok(false)` повторять только показ, при ошибке вернуть `Present`, при успехе обновить прогресс.
-- [ ] Завершать прогон сразу после `Ok(true)` для последнего тика через `finish`; сохранить существующие ошибки `advance`, `Closed` и `Stalled`.
-- [ ] На resize и occlusion обновлять `Output`, приостанавливать недоступную поверхность и немедленно пробуждать её только при переходе `false → true` без сброса `last_progress`; resize между ненулевыми размерами не меняет срок кадра.
-- [ ] Создать `minimal.toml` с `ticks = 1`, снимками 0 и 1 и явным размером окна.
-- [ ] **Регрессионный/успешный тест:** прогнать минимальный `ticks = 1` и `switch.toml` в окне; команда минимального прогона: `RUST_LOG=info,stapel=debug cargo run -p trains -- --script games/trains/tests/scripts/minimal.toml --out target/linux-window/minimal --window`. Убедиться по отчёту и диагностике, что все тики подготовлены ровно один раз и последний кадр получил `Ok(true)`.
-- [ ] **Edge/error-проверки:** серия resize и ранние события не добавляют тики; временный `Ok(false)` не создаёт повторный снимок; закрытие с pending даёт `Closed`. Паузу, восстановление и длительную недоступность воспроизводимо проверить на чистом планировщике: сворачивание на Wayland не гарантирует `Occluded(true)`. В оконном прогоне записать только фактически полученные события/статусы, не требуя искусственной имитации `Timeout`, `Outdated` и `Lost`.
-- [ ] Проверка: `cargo test --workspace` проходит; затем `REQUIRE_GPU=1 REQUIRE_DISPLAY=1 WGPU_BACKEND=vulkan cargo test -p trains --test replay -- --include-ignored` проходит на доступном дисплее.
+- [x] Подключить планировщик к `ScriptApp`; перенести выполнение сценария из `RedrawRequested` в сработавший срок `about_to_wait`, используя только `WaitUntil` и не более одного кадра за срабатывание.
+- [x] Удалить redraw-цепочку только из `ScriptApp`; не менять `App::frame`, `Running::resume_redraw` и интерактивный `ControlFlow::Wait`.
+- [x] Хранить pending-тик между `advance` и успешным `present_canvas`; при `Ok(false)` повторять только показ, при ошибке вернуть `Present`, при успехе обновить прогресс.
+- [x] Завершать прогон сразу после `Ok(true)` для последнего тика через `finish`; сохранить существующие ошибки `advance`, `Closed` и `Stalled`.
+- [x] На resize и occlusion обновлять `Output`, приостанавливать недоступную поверхность и немедленно пробуждать её только при переходе `false → true` без сброса `last_progress`; resize между ненулевыми размерами не меняет срок кадра.
+- [x] Создать `minimal.toml` с `ticks = 1`, снимками 0 и 1 и явным размером окна.
+- [x] **Регрессионный/успешный тест:** прогнать минимальный `ticks = 1` и `switch.toml` в окне; команда минимального прогона: `RUST_LOG=info,stapel=debug cargo run -p trains -- --script games/trains/tests/scripts/minimal.toml --out target/linux-window/minimal --window`. Убедиться по отчёту и диагностике, что все тики подготовлены ровно один раз и последний кадр получил `Ok(true)`.
+- [x] **Edge/error-проверки:** серия resize и ранние события не добавляют тики; временный `Ok(false)` не создаёт повторный снимок; закрытие с pending даёт `Closed`. Паузу, восстановление и длительную недоступность воспроизводимо проверить на чистом планировщике: сворачивание на Wayland не гарантирует `Occluded(true)`. В оконном прогоне записать только фактически полученные события/статусы, не требуя искусственной имитации `Timeout`, `Outdated` и `Lost`.
+- [x] Проверка: `cargo test --workspace` проходит; затем `REQUIRE_GPU=1 REQUIRE_DISPLAY=1 WGPU_BACKEND=vulkan cargo test -p trains --test replay -- --include-ignored` проходит на доступном дисплее.
 
 ### Task 4: Усилить интеграционную приёмку окна и проверить оба Linux backend
 

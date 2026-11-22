@@ -47,10 +47,6 @@ pub mod runner;
 pub mod scene;
 /// Сценарий runner: TOML со входом по тикам.
 pub mod script;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "ScriptApp подключит планировщик в Task 3")
-)]
 mod script_window;
 /// Спрайты и их батчинг в инстансы.
 pub mod sprite;

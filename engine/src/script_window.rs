@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use crate::runner::STALL_TIMEOUT;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     WaitUntil(Instant),
     Stalled,
@@ -143,6 +143,38 @@ mod tests {
                 assert_eq!(schedule.poll(next), expected);
             }
         }
+    }
+
+    #[test]
+    fn late_failed_present_checks_stall_instead_of_granting_a_second_attempt() {
+        let start = Instant::now();
+        let mut schedule = ScriptWindow::new(start, 4, 1, true);
+
+        assert_eq!(schedule.poll(start), Action::Advance);
+        schedule.record_advance(0);
+        let returned = start + STALL_TIMEOUT;
+        assert!(!schedule.record_present(returned, false));
+        assert_eq!(schedule.poll(returned), Action::Stalled);
+    }
+
+    #[test]
+    fn repeated_available_resizes_do_not_advance_before_the_frame_deadline() {
+        let start = Instant::now();
+        let mut schedule = ScriptWindow::new(start, 4, 1, true);
+
+        assert_eq!(schedule.poll(start), Action::Advance);
+        schedule.record_advance(0);
+        assert!(!schedule.record_present(start, true));
+        for event in 1..4 {
+            let now = start + event * (PERIOD / 4);
+            schedule.set_available(now, true);
+            assert_eq!(schedule.poll(now), Action::WaitUntil(start + PERIOD));
+        }
+        let due = start + PERIOD;
+        schedule.set_available(due, true);
+        assert_eq!(schedule.poll(due), Action::Advance);
+        schedule.record_advance(1);
+        assert!(schedule.record_present(due, true));
     }
 
     #[test]
