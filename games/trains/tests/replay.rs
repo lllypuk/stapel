@@ -5,6 +5,7 @@
     reason = "SKIPPED в stderr, как у офскрин-тестов движка"
 )]
 
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -16,6 +17,8 @@ const SWITCH_TICKS: u32 = 500;
 const SWITCH_SNAPSHOTS: &[u32] = &[0, 5, 9, 279, 285, 342, 472, 500];
 const MINIMAL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/scripts/minimal.toml");
 const TIMEOUT: Duration = Duration::from_secs(300);
+const KILL_GRACE: Duration = Duration::from_secs(5);
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 fn env_set(name: &str) -> bool {
     std::env::var(name).as_deref() == Ok("1")
@@ -56,24 +59,51 @@ fn out_dir(name: &str) -> PathBuf {
     dir
 }
 
-fn wait_for_replay(child: &mut Child, timeout: Duration) -> Result<ExitStatus, String> {
+fn try_wait_for(
+    timeout: Duration,
+    mut try_wait: impl FnMut() -> io::Result<Option<ExitStatus>>,
+) -> io::Result<Option<ExitStatus>> {
     let start = Instant::now();
-    let failure = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) if start.elapsed() >= timeout => break format!("тайм-аут {timeout:?}"),
-            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-            Err(e) => break format!("ошибка ожидания: {e}"),
+    loop {
+        if let Some(status) = try_wait()? {
+            return Ok(Some(status));
         }
-    };
-    // kill не забирает статус завершения: нужно дождаться ребёнка до падения теста.
-    let pid = child.id();
-    match child.kill().and_then(|()| child.wait()) {
-        Ok(status) => Err(format!("{failure}; PID {pid} завершён: {status}")),
-        Err(e) => Err(format!(
-            "{failure}; не удалось завершить и дождаться PID {pid}: {e}"
-        )),
+        let remaining = timeout.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            return Ok(None);
+        }
+        std::thread::sleep(POLL_INTERVAL.min(remaining));
     }
+}
+
+fn reap_after_kill(
+    pid: u32,
+    grace: Duration,
+    try_wait: impl FnMut() -> io::Result<Option<ExitStatus>>,
+) -> String {
+    // SIGKILL не гарантирует немедленный выход (например, при непрерываемом ожидании в драйвере).
+    match try_wait_for(grace, try_wait) {
+        Ok(Some(status)) => format!("PID {pid} завершён: {status}"),
+        Ok(None) => format!("PID {pid} не завершился за {grace:?} после попытки SIGKILL"),
+        Err(e) => format!("не удалось получить статус завершения PID {pid}: {e}"),
+    }
+}
+
+fn wait_for_replay(child: &mut Child, timeout: Duration) -> Result<ExitStatus, String> {
+    let failure = match try_wait_for(timeout, || child.try_wait()) {
+        Ok(Some(status)) => return Ok(status),
+        Ok(None) => format!("тайм-аут {timeout:?}"),
+        Err(e) => format!("ошибка ожидания: {e}"),
+    };
+    let pid = child.id();
+    let kill_error = child.kill().err();
+    let cleanup = reap_after_kill(pid, KILL_GRACE, || child.try_wait());
+    if let Some(e) = kill_error {
+        return Err(format!(
+            "{failure}; ошибка SIGKILL для PID {pid}: {e}; {cleanup}"
+        ));
+    }
+    Err(format!("{failure}; {cleanup}"))
 }
 
 fn run(script: &str, out: &Path, window: bool) {
@@ -158,6 +188,8 @@ fn minimal_window_agrees_with_offscreen() {
 
 #[test]
 fn replay_timeout_kills_and_reaps_child() {
+    use std::os::unix::process::ExitStatusExt;
+
     let mut child = Command::new("sleep").arg("60").spawn().expect("sleep");
     let pid = child.id();
     let error = wait_for_replay(&mut child, Duration::ZERO).expect_err("тайм-аут");
@@ -166,4 +198,23 @@ fn replay_timeout_kills_and_reaps_child() {
         "{error}"
     );
     assert!(!Path::new(&format!("/proc/{pid}")).exists(), "PID {pid}");
+    let status = child.try_wait().expect("статус").expect("процесс завершён");
+    assert_eq!(status.signal(), Some(9));
+}
+
+#[test]
+fn reap_after_kill_reports_pid_when_grace_expires() {
+    let grace = Duration::from_millis(10);
+    let start = Instant::now();
+    let mut polls = 0;
+    let diagnostic = reap_after_kill(1234, grace, || {
+        polls += 1;
+        assert!(polls < 10, "ожидание после SIGKILL не ограничено");
+        Ok(None)
+    });
+    assert!(start.elapsed() >= grace);
+    assert_eq!(
+        diagnostic,
+        "PID 1234 не завершился за 10ms после попытки SIGKILL"
+    );
 }
