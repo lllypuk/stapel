@@ -391,27 +391,37 @@ impl<G: Game> ApplicationHandler for ScriptApp<'_, G> {
                 let tick = runner.tick();
                 self.stop(event_loop, Err(RunError::Closed { tick }));
             }
-            WindowEvent::RedrawRequested => match runner.advance(Some(self.out)) {
-                Ok(Some(_)) => match out.present_canvas(runner.canvas()) {
-                    Ok(_) => {
-                        self.last_frame = Instant::now();
-                        let (canvas, surface) = (runner.canvas().size(), out.size());
-                        if canvas != surface && !self.size_warned {
-                            self.size_warned = true;
-                            log::warn!(
-                                "размер окна {surface:?} не равен размеру сценария {canvas:?}: картинка искажена"
-                            );
+            WindowEvent::RedrawRequested => {
+                log::debug!("script advance begin: current tick {}", runner.tick());
+                let advanced = runner.advance(Some(self.out));
+                log::debug!("script advance end: tick {}, {advanced:?}", runner.tick());
+                match advanced {
+                    Ok(Some(tick)) => {
+                        log::debug!("script present_canvas attempt: tick {tick}");
+                        let presented = out.present_canvas(runner.canvas());
+                        log::debug!("script present_canvas result: tick {tick}, {presented:?}");
+                        match presented {
+                            Ok(_) => {
+                                self.last_frame = Instant::now();
+                                let (canvas, surface) = (runner.canvas().size(), out.size());
+                                if canvas != surface && !self.size_warned {
+                                    self.size_warned = true;
+                                    log::warn!(
+                                        "размер окна {surface:?} не равен размеру сценария {canvas:?}: картинка искажена"
+                                    );
+                                }
+                                resume_redraw(window, out.is_available());
+                            }
+                            Err(e) => self.stop(event_loop, Err(RunError::Present(e.to_string()))),
                         }
-                        resume_redraw(window, out.is_available());
                     }
-                    Err(e) => self.stop(event_loop, Err(RunError::Present(e.to_string()))),
-                },
-                Ok(None) => {
-                    let (_, _, runner) = self.running.take().expect("running");
-                    self.stop(event_loop, Ok(runner.finish()));
+                    Ok(None) => {
+                        let (_, _, runner) = self.running.take().expect("running");
+                        self.stop(event_loop, Ok(runner.finish()));
+                    }
+                    Err(e) => self.stop(event_loop, Err(e)),
                 }
-                Err(e) => self.stop(event_loop, Err(e)),
-            },
+            }
             _ => {}
         }
     }
