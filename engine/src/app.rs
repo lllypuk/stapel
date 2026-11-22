@@ -11,7 +11,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::audio::device;
 use crate::renderer::Output;
-use crate::runner::STALL_TIMEOUT;
+use crate::script_window::{Action, ScriptWindow};
 use crate::{
     Config, Context, CursorGrab, FixedClock, FrameStats, Game, InputEvent, RateCounter, Renderer,
     RunError, RunReport, Runner, Script, Vec2, step_visual, ui, wheel_lines,
@@ -328,15 +328,12 @@ pub(crate) fn run_script_window<G: Game>(
     out: &Path,
 ) -> Result<RunReport, RunError> {
     let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = ScriptApp::<G> {
         config,
         script,
         out,
         running: None,
-        size_warned: false,
         result: None,
-        last_frame: Instant::now(),
     };
     event_loop.run_app(&mut app)?;
     app.result.unwrap_or(Err(RunError::Closed { tick: 0 }))
@@ -346,10 +343,15 @@ struct ScriptApp<'a, G: Game> {
     config: &'a Config,
     script: &'a Script,
     out: &'a Path,
-    running: Option<(Arc<Window>, Output, Runner<G>)>,
-    size_warned: bool,
+    running: Option<ScriptRunning<G>>,
     result: Option<Result<RunReport, RunError>>,
-    last_frame: Instant,
+}
+
+struct ScriptRunning<G: Game> {
+    output: Output,
+    runner: Runner<G>,
+    schedule: ScriptWindow,
+    size_warned: bool,
 }
 
 impl<G: Game> ApplicationHandler for ScriptApp<'_, G> {
@@ -362,71 +364,111 @@ impl<G: Game> ApplicationHandler for ScriptApp<'_, G> {
             .with_title(self.config.title.clone())
             .with_inner_size(PhysicalSize::new(w, h));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
-        // Без vsync: под Fifo на Wayland прогон вставал после тика 0 (design.md, «Рендер»).
-        let out = Output::new(window.clone(), false);
-        self.last_frame = Instant::now();
-        match Runner::<G>::new(&out.gpu, self.config, self.script) {
+        let output = Output::new(window, false);
+        match Runner::<G>::new(&output.gpu, self.config, self.script) {
             Ok(runner) => {
-                window.request_redraw();
-                self.running = Some((window, out, runner));
+                let schedule = ScriptWindow::new(
+                    Instant::now(),
+                    self.config.tick_hz,
+                    self.script.ticks,
+                    output.is_available(),
+                );
+                self.running = Some(ScriptRunning {
+                    output,
+                    runner,
+                    schedule,
+                    size_warned: false,
+                });
             }
             Err(e) => self.stop(event_loop, Err(e)),
         }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        let Some((window, out, runner)) = self.running.as_mut() else {
+        let Some(r) = self.running.as_mut() else {
             return;
         };
         match event {
             WindowEvent::Resized(size) => {
-                out.resize(size);
-                resume_redraw(window, out.is_available());
+                r.output.resize(size);
             }
-            WindowEvent::Occluded(occluded) => {
-                out.set_occluded(occluded);
-                resume_redraw(window, out.is_available());
-            }
+            WindowEvent::Occluded(occluded) => r.output.set_occluded(occluded),
             WindowEvent::CloseRequested => {
-                let tick = runner.tick();
+                let tick = r.runner.tick();
                 self.stop(event_loop, Err(RunError::Closed { tick }));
+                return;
             }
-            WindowEvent::RedrawRequested => match runner.advance(Some(self.out)) {
-                Ok(Some(_)) => match out.present_canvas(runner.canvas()) {
-                    Ok(_) => {
-                        self.last_frame = Instant::now();
-                        let (canvas, surface) = (runner.canvas().size(), out.size());
-                        if canvas != surface && !self.size_warned {
-                            self.size_warned = true;
-                            log::warn!(
-                                "размер окна {surface:?} не равен размеру сценария {canvas:?}: картинка искажена"
-                            );
-                        }
-                        resume_redraw(window, out.is_available());
-                    }
-                    Err(e) => self.stop(event_loop, Err(RunError::Present(e.to_string()))),
-                },
-                Ok(None) => {
-                    let (_, _, runner) = self.running.take().expect("running");
-                    self.stop(event_loop, Ok(runner.finish()));
-                }
-                Err(e) => self.stop(event_loop, Err(e)),
-            },
-            _ => {}
+            _ => return,
         }
+        r.schedule
+            .set_available(Instant::now(), r.output.is_available());
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let Some((_, _, runner)) = self.running.as_ref() else {
+        if event_loop.exiting() {
+            return;
+        }
+        let Some(r) = self.running.as_mut() else {
             return;
         };
-        let idle = self.last_frame.elapsed();
-        if idle >= STALL_TIMEOUT {
-            let tick = runner.tick();
-            self.stop(event_loop, Err(RunError::Stalled { tick }));
-        } else {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.last_frame + STALL_TIMEOUT));
+        let next = match r.schedule.poll(Instant::now()) {
+            action @ (Action::Advance | Action::Retry(_)) => {
+                let shown = match r.attempt(action, self.out) {
+                    Ok(shown) => shown,
+                    Err(e) => return self.stop(event_loop, Err(e)),
+                };
+                // GPU мог израсходовать прежний срок; опрашиваем уже обновлённый таймер.
+                let now = Instant::now();
+                if r.schedule.record_present(now, shown) {
+                    let runner = self.running.take().expect("running").runner;
+                    return self.stop(event_loop, Ok(runner.finish()));
+                }
+                r.schedule.poll(now)
+            }
+            action => action,
+        };
+        match next {
+            Action::WaitUntil(deadline) => {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+            }
+            Action::Stalled => {
+                let tick = r.runner.tick();
+                self.stop(event_loop, Err(RunError::Stalled { tick }));
+            }
+            Action::Advance | Action::Retry(_) => unreachable!("second frame in about_to_wait"),
         }
+    }
+}
+
+impl<G: Game> ScriptRunning<G> {
+    fn attempt(&mut self, action: Action, path: &Path) -> Result<bool, RunError> {
+        let tick = match action {
+            Action::Advance => {
+                log::debug!("script advance begin: current tick {}", self.runner.tick());
+                let advanced = self.runner.advance(Some(path));
+                log::debug!(
+                    "script advance end: tick {}, {advanced:?}",
+                    self.runner.tick()
+                );
+                let tick = advanced?.expect("advance after the final script tick");
+                self.schedule.record_advance(tick);
+                tick
+            }
+            Action::Retry(tick) => tick,
+            Action::WaitUntil(_) | Action::Stalled => unreachable!("no frame to attempt"),
+        };
+        log::debug!("script present_canvas attempt: tick {tick}");
+        let presented = self.output.present_canvas(self.runner.canvas());
+        log::debug!("script present_canvas result: tick {tick}, {presented:?}");
+        let shown = presented.map_err(|e| RunError::Present(e.to_string()))?;
+        let (canvas, surface) = (self.runner.canvas().size(), self.output.size());
+        if canvas != surface && !self.size_warned {
+            self.size_warned = true;
+            log::warn!(
+                "размер окна {surface:?} не равен размеру сценария {canvas:?}: картинка искажена"
+            );
+        }
+        Ok(shown)
     }
 }
 

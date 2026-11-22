@@ -47,6 +47,7 @@ pub mod runner;
 pub mod scene;
 /// Сценарий runner: TOML со входом по тикам.
 pub mod script;
+mod script_window;
 /// Спрайты и их батчинг в инстансы.
 pub mod sprite;
 /// GPU-путь спрайтов.

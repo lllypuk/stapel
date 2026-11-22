@@ -61,12 +61,12 @@ pub enum RunError {
         /// Тик снимка.
         tick: u32,
     },
-    /// Окно закрыли раньше последнего тика.
+    /// Окно закрыли до успешной отправки последнего кадра на поверхность.
     Closed {
         /// Последний выполненный тик.
         tick: u32,
     },
-    /// Нет прогресса дольше `STALL_TIMEOUT`.
+    /// Оконный сценарий не отправил ни одного кадра на поверхность за время тайм-аута.
     Stalled {
         /// Последний выполненный тик.
         tick: u32,
@@ -79,7 +79,7 @@ pub enum RunError {
     Png(image::ImageError),
 }
 
-/// Сколько окно режима `--window` может не просить кадров, прежде чем прогон кончится ошибкой.
+/// Срок с запуска планировщика или последней успешной отправки кадра на поверхность.
 pub(crate) const STALL_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl fmt::Display for RunError {
@@ -98,7 +98,7 @@ impl fmt::Display for RunError {
             Self::Closed { tick } => write!(f, "окно закрыто на тике {tick}, сценарий не кончился"),
             Self::Stalled { tick } => write!(
                 f,
-                "нет прогресса {} с на тике {tick}; попробуйте env -u WAYLAND_DISPLAY",
+                "тик {tick}: за {} с ни один кадр не отправлен на поверхность",
                 STALL_TIMEOUT.as_secs()
             ),
             Self::Present(e) => write!(f, "вывод кадра: {e}"),
@@ -108,7 +108,7 @@ impl fmt::Display for RunError {
     }
 }
 
-/// `main` возвращает `Result`, и без этого пользователь видит `Stalled { tick: 0 }` вместо причины.
+/// `main` возвращает `Result`, и без этого пользователь видит `Stalled { tick: 0 }` без тайм-аута.
 impl fmt::Debug for RunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
@@ -786,7 +786,7 @@ mod tests {
         let text = RunError::Stalled { tick: 7 }.to_string();
         assert_eq!(
             text,
-            "нет прогресса 10 с на тике 7; попробуйте env -u WAYLAND_DISPLAY"
+            "тик 7: за 10 с ни один кадр не отправлен на поверхность"
         );
     }
 
