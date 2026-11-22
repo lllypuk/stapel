@@ -8,6 +8,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use stapel::Gpu;
@@ -19,6 +20,9 @@ const MINIMAL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/scripts/minima
 const TIMEOUT: Duration = Duration::from_secs(300);
 const KILL_GRACE: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+// На X11 одно окно реплея может перекрыть другое и приостановить его сценарий.
+static WINDOW_REPLAY: Mutex<()> = Mutex::new(());
 
 fn env_set(name: &str) -> bool {
     std::env::var(name).as_deref() == Ok("1")
@@ -170,7 +174,10 @@ fn assert_window_matches_offscreen(script: &str, prefix: &str, ticks: u32, snaps
     let off = out_dir(&format!("{prefix}-off"));
     let win = out_dir(&format!("{prefix}-win"));
     run(script, &off, false);
-    run(script, &win, true);
+    {
+        let _window = WINDOW_REPLAY.lock().expect("оконный реплей уже упал");
+        run(script, &win, true);
+    }
     assert_same(&off, &win, ticks, snapshots);
 }
 
