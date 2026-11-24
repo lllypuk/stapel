@@ -62,7 +62,8 @@ impl ScriptWindow {
         self.pending_tick = Some(tick);
     }
 
-    /// `now` берётся после попытки показа. `true` означает, что пора завершить сценарий.
+    /// `now` берётся после `present_canvas`; `shown` означает `Ok(true)`, а не факт показа.
+    /// Возвращает `true`, если пора завершить сценарий.
     pub(crate) fn record_present(&mut self, now: Instant, shown: bool) -> bool {
         self.skip_expired_deadline(now);
         if !shown {

@@ -152,7 +152,7 @@ Ticks:
 What to rely on and what not to:
 
 - Linux only. Offscreen needs a Vulkan adapter (a software one, such as lavapipe, is enough); `--window` needs a display.
-- `--window` advances on a timer, not on redraw events, and exits after submitting the final frame to the surface. Submission does not confirm that the compositor displayed it. If no submission succeeds for 10 s, the run ends with `Stalled` and the current tick, provided the event loop is still responsive. The timer cannot interrupt a blocked GPU call.
+- `--window` advances on a timer, not on redraw events, and exits when `present_canvas` returns `Ok(true)` for the final frame. This means the present call returned without reporting an error at this layer; it does not confirm swapchain acceptance or physical display. If no attempt returns `Ok(true)` for 10 s, the run ends with `Stalled` and the current tick, provided the event loop is still responsive. The timer cannot interrupt a blocked GPU call.
 - Text typed into egui panels and modifier keys (Ctrl, Shift, Alt) cannot be scripted yet; clicks, drags, keys and the wheel work, including over panels.
 - `--window` shows the picture 1:1 from the top left corner: a window of another size than the scenario crops or smears it (one `warn` with both sizes); byte equality with the offscreen run holds for equal sizes.
 - `texts` shows what the game sent to `draw_text`, not what is visible: a HUD covered by something else still appears there. Look at the PNG.

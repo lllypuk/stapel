@@ -61,12 +61,12 @@ pub enum RunError {
         /// Тик снимка.
         tick: u32,
     },
-    /// Окно закрыли до успешной отправки последнего кадра на поверхность.
+    /// Окно закрыли до `Ok(true)` от `present_canvas` для последнего кадра.
     Closed {
         /// Последний выполненный тик.
         tick: u32,
     },
-    /// Оконный сценарий не отправил ни одного кадра на поверхность за время тайм-аута.
+    /// Оконный сценарий не получил `Ok(true)` от `present_canvas` за время тайм-аута.
     Stalled {
         /// Последний выполненный тик.
         tick: u32,
@@ -79,7 +79,7 @@ pub enum RunError {
     Png(image::ImageError),
 }
 
-/// Срок с запуска планировщика или последней успешной отправки кадра на поверхность.
+/// Срок с запуска планировщика или последнего `Ok(true)` от `present_canvas`.
 pub(crate) const STALL_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl fmt::Display for RunError {
@@ -98,7 +98,7 @@ impl fmt::Display for RunError {
             Self::Closed { tick } => write!(f, "окно закрыто на тике {tick}, сценарий не кончился"),
             Self::Stalled { tick } => write!(
                 f,
-                "тик {tick}: за {} с ни один кадр не отправлен на поверхность",
+                "тик {tick}: оконный сценарий без прогресса {} с",
                 STALL_TIMEOUT.as_secs()
             ),
             Self::Present(e) => write!(f, "вывод кадра: {e}"),
@@ -784,10 +784,7 @@ mod tests {
     #[test]
     fn stalled_error_names_tick_and_timeout() {
         let text = RunError::Stalled { tick: 7 }.to_string();
-        assert_eq!(
-            text,
-            "тик 7: за 10 с ни один кадр не отправлен на поверхность"
-        );
+        assert_eq!(text, "тик 7: оконный сценарий без прогресса 10 с");
     }
 
     #[test]

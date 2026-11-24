@@ -131,7 +131,9 @@ impl Output {
         fitted
     }
 
-    /// Выводит `Canvas` на поверхность; `false` — кадр не показан.
+    /// Пытается вывести `Canvas` на поверхность. `Ok(false)` — до `present` дело не дошло.
+    /// `Ok(true)` — `present` вернулся без ошибки, сообщённой на этом уровне;
+    /// это не подтверждение принятия кадра swapchain или его физического показа.
     pub(crate) fn present_canvas(&mut self, canvas: &Canvas) -> Result<bool, RenderError> {
         let shown = self.with_frame(|this, frame| {
             let target = this.target_view(&frame);
